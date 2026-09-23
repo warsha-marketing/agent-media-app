@@ -23,12 +23,21 @@ import { registerDraftRoutes } from '../routes/v1/drafts.js';
 import {
   AddVoiceInputSchema,
   VoiceError,
+  type CandidateSearch,
   type NewVoiceRow,
   type VoiceCandidate,
   type VoiceDeps,
   type VoiceRow,
 } from '../voices/catalog.js';
-import { normalizeCandidate, safeSampleUrl, suggestedDialect } from '../voices/candidates.js';
+import {
+  DIALECT_ACCENTS,
+  elevenLabsCandidateFinder,
+  mergeCandidatePages,
+  normalizeCandidate,
+  safeSampleUrl,
+  sharedVoiceQueries,
+  suggestedDialect,
+} from '../voices/candidates.js';
 import { adminEmailOperatorCheck } from '../voices/providers.js';
 import type { DraftDeps, DraftRow } from '../drafts/product-hero-draft.js';
 
@@ -53,6 +62,7 @@ interface Harness {
   drafts: DraftRow[];
   voiced: Array<{ script: string; provider: string; provider_voice_id: string }>;
   written: number;
+  searches: CandidateSearch[];
   ids: Record<string, string>;
   close: () => Promise<void>;
 }
@@ -64,11 +74,12 @@ afterEach(async () => {
 
 let clock = Date.parse('2026-09-23T12:00:00.000Z');
 
-async function start(opts: { seed?: Record<string, Seed>; candidates?: VoiceCandidate[] } = {}): Promise<Harness> {
+async function start(opts: { seed?: Record<string, Seed>; candidates?: VoiceCandidate[]; hasMore?: boolean } = {}): Promise<Harness> {
   const voices: VoiceRow[] = [];
   const drafts: DraftRow[] = [];
   const voiced: Harness['voiced'] = [];
   const ids: Record<string, string> = {};
+  const searches: CandidateSearch[] = [];
   let seq = 0;
   const uuid = (prefix: string) => `${prefix}-0000-4000-8000-${String(++seq).padStart(12, '0')}`;
 
@@ -124,12 +135,15 @@ async function start(opts: { seed?: Record<string, Seed>; candidates?: VoiceCand
   const voiceDeps: VoiceDeps = {
     repo,
     isOperator: async (userId) => userId === OPERATOR,
-    findCandidates: async (page) => ({ candidates: opts.candidates ?? [], has_more: false, page }),
+    findCandidates: async (query) => {
+      searches.push(query);
+      return { candidates: opts.candidates ?? [], has_more: opts.hasMore ?? false, page: query.page };
+    },
     now: () => new Date((clock += 60_000)),
     newId: () => uuid('20000000'),
   };
 
-  const h = { voices, drafts, voiced, written: 0, ids } as unknown as Harness;
+  const h = { voices, drafts, voiced, written: 0, searches, ids } as unknown as Harness;
   const draftDeps: DraftDeps = {
     writeScript: async () => {
       h.written += 1;
@@ -390,6 +404,36 @@ describe('operator routes', () => {
     expect(r.body.candidates[0].catalog).toEqual({ id: h.ids.rami, state: 'approved', dialect: 'levantine' });
     expect(r.body.candidates[1].catalog).toBeNull();
   });
+
+  it('passes validated filters to the finder and has_more / page back to the operator', async () => {
+    const h = await start({ seed: CATALOG, hasMore: true });
+    const r = await call(h, 'GET', '/v1/operator/voice-candidates?page=3&dialect=gulf&gender=male&age=young&use_case=advertisement&sort=trending&search=%20deep%20', OPERATOR);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ page: 3, has_more: true });
+    expect(h.searches).toEqual([{ page: 3, dialect: 'gulf', gender: 'male', age: 'young', use_case: 'advertisement', sort: 'trending', search: 'deep' }]);
+    await call(h, 'GET', '/v1/operator/voice-candidates', OPERATOR);
+    expect(h.searches[1]).toEqual({ page: 0 });
+  });
+
+  it.each([
+    ['gender=neutral', 'gender'],
+    ['dialect=iraqi', 'dialect'],
+    ['age=teen', 'age'],
+    ['use_case=asmr', 'use_case'],
+    ['sort=random', 'sort'],
+    ['accent=syrian;drop', 'accent'],
+    ['dialect=levantine&accent=syrian', 'accent'],
+    [`search=${'a'.repeat(61)}`, 'search'],
+    ['page=-1', 'page'],
+    ['language=en', 'input'],
+  ])('rejects %s with INVALID_INPUT before asking the provider', async (qs, field) => {
+    const h = await start();
+    const r = await call(h, 'GET', `/v1/operator/voice-candidates?${qs}`, OPERATOR);
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe('INVALID_INPUT');
+    expect(r.body.error.message.startsWith(`${field}:`)).toBe(true);
+    expect(h.searches).toHaveLength(0);
+  });
 });
 
 // ── Candidate finder (ElevenLabs shared library, from the c556541 prototype) ─
@@ -418,6 +462,99 @@ describe('candidate normalisation', () => {
     'drops unsafe sample URLs: %s',
     (url) => expect(safeSampleUrl(url)).toBeNull(),
   );
+});
+
+// ── Candidate search → ElevenLabs GET /v1/shared-voices ────────────────────
+
+const params = (qs: string) => Object.fromEntries(new URLSearchParams(qs));
+
+describe('candidate search query mapping', () => {
+  it('always asks for Arabic, a page of 100, and nothing else when unfiltered', () => {
+    expect(sharedVoiceQueries({ page: 0 }).map(params)).toEqual([{ language: 'ar', page_size: '100', page: '0' }]);
+  });
+
+  it('maps every filter onto its shared-voices parameter', () => {
+    const [qs, ...rest] = sharedVoiceQueries({
+      page: 2, accent: 'syrian', gender: 'female', age: 'middle_aged', use_case: 'narrative_story', sort: 'created_date', search: 'warm & calm',
+    });
+    expect(rest).toHaveLength(0);
+    expect(params(qs!)).toEqual({
+      language: 'ar', page_size: '100', page: '2', accent: 'syrian', gender: 'female', age: 'middle_aged',
+      use_cases: 'narrative_story', sort: 'created_date', search: 'warm & calm',
+    });
+    expect(qs).toContain('search=warm+%26+calm');
+  });
+
+  it.each(Object.entries(DIALECT_ACCENTS))('fans %s out to one query per provider accent, same page and filters', (dialect, accents) => {
+    const qs = sharedVoiceQueries({ page: 4, dialect: dialect as keyof typeof DIALECT_ACCENTS, gender: 'male' }).map(params);
+    expect(qs.map((q) => q.accent)).toEqual(accents);
+    for (const q of qs) expect(q).toMatchObject({ language: 'ar', page: '4', gender: 'male' });
+    const size = Number(qs[0]!.page_size);
+    expect(size).toBeGreaterThanOrEqual(20);
+    expect(size * accents.length).toBeLessThanOrEqual(Math.max(100, 20 * accents.length));
+  });
+
+  it('covers the accents the ask named for each Dialect', () => {
+    expect(DIALECT_ACCENTS.levantine).toEqual(['levantine', 'lebanese', 'syrian', 'palestinian', 'jordanian']);
+    expect(DIALECT_ACCENTS.gulf).toEqual(['gulf', 'saudi', 'emirati', 'kuwaiti', 'qatari', 'bahraini', 'omani']);
+    expect(DIALECT_ACCENTS.maghrebi).toEqual(['moroccan', 'algerian', 'tunisian', 'libyan']);
+    expect(DIALECT_ACCENTS.msa).toEqual(['modern standard', 'standard']);
+  });
+});
+
+describe('the ElevenLabs candidate finder (fetch faked)', () => {
+  const voice = (id: string, extra: Record<string, unknown> = {}) => ({ voice_id: `${id}_0000000000`, name: id, ...extra });
+
+  function fakeFetch(byAccent: Record<string, { voices: unknown[]; has_more: boolean } | number>) {
+    const urls: URL[] = [];
+    const impl = (async (input: string | URL) => {
+      const url = new URL(String(input));
+      urls.push(url);
+      const reply = byAccent[url.searchParams.get('accent') ?? ''];
+      if (typeof reply === 'number') return new Response('{}', { status: reply });
+      return new Response(JSON.stringify(reply ?? { voices: [], has_more: false }), { status: 200 });
+    }) as typeof fetch;
+    return { urls, impl };
+  }
+
+  it('merges the per-accent pages round-robin, dropping duplicates, and reports has_more if any accent has more', async () => {
+    const f = fakeFetch({
+      levantine: { voices: [voice('lev1'), voice('both'), voice('lev2')], has_more: false },
+      syrian: { voices: [voice('syr1'), voice('both')], has_more: true },
+    });
+    const find = elevenLabsCandidateFinder({ apiKey: 'k', fetch: f.impl });
+    const r = await find({ page: 1, dialect: 'levantine' });
+    expect(f.urls).toHaveLength(5);
+    expect(f.urls.every((u) => u.origin + u.pathname === 'https://api.elevenlabs.io/v1/shared-voices')).toBe(true);
+    expect(f.urls.every((u) => u.searchParams.get('page') === '1' && u.searchParams.get('language') === 'ar')).toBe(true);
+    expect(r.candidates.map((c) => c.display_name)).toEqual(['lev1', 'syr1', 'both', 'lev2']);
+    expect(r).toMatchObject({ page: 1, has_more: true });
+  });
+
+  it('reports has_more false once every accent is exhausted', async () => {
+    const f = fakeFetch({ egyptian: { voices: [voice('eg1')], has_more: false } });
+    const r = await elevenLabsCandidateFinder({ apiKey: 'k', fetch: f.impl })({ page: 7, dialect: 'egyptian' });
+    expect(r).toMatchObject({ page: 7, has_more: false });
+    expect(r.candidates).toHaveLength(1);
+  });
+
+  it('keeps a gender-neutral voice genderless rather than offering it as neutral', async () => {
+    const f = fakeFetch({ '': { voices: [voice('neu', { gender: 'neutral' }), voice('fem', { gender: 'female' })], has_more: false } });
+    const r = await elevenLabsCandidateFinder({ apiKey: 'k', fetch: f.impl })({ page: 0 });
+    expect(r.candidates.map((c) => c.gender)).toEqual([null, 'female']);
+  });
+
+  it('fails the whole search when any accent request fails, and needs a key', async () => {
+    const f = fakeFetch({ saudi: 500 });
+    await expect(elevenLabsCandidateFinder({ apiKey: 'k', fetch: f.impl })({ page: 0, dialect: 'gulf' })).rejects.toMatchObject({ code: 'VOICE_PROVIDER_UNAVAILABLE', status: 502 });
+    await expect(elevenLabsCandidateFinder({ apiKey: undefined, fetch: f.impl })({ page: 0 })).rejects.toMatchObject({ code: 'VOICE_PROVIDER_UNCONFIGURED' });
+  });
+
+  it('mergeCandidatePages keeps the first sighting of a voice', () => {
+    const c = (id: string, accent: string) => ({ ...normalizeCandidate(voice(id, { accent }))! });
+    const merged = mergeCandidatePages([[c('a', 'lebanese')], [c('a', 'syrian'), c('b', 'syrian')]]);
+    expect(merged.map((m) => [m.display_name, m.accent])).toEqual([['a', 'lebanese'], ['b', 'syrian']]);
+  });
 });
 
 // ── Drafting only with an Approved Voice of the draft's Dialect ──────────────
@@ -509,6 +646,9 @@ describe('voice routes in the OpenAPI spec', () => {
     registerVoiceRoutes(recorder, { generateLimiter: NOOP, readLimiter: NOOP, authMiddleware: NOOP }, {} as VoiceDeps);
     expect(routes).toHaveLength(6);
     const spec = voiceOpenApi();
+    const candidateParams = (spec.paths['/v1/operator/voice-candidates'] as any).get.parameters as Array<{ name: string; schema: any }>;
+    expect(candidateParams.map((p) => p.name).sort()).toEqual(['accent', 'age', 'dialect', 'gender', 'page', 'search', 'sort', 'use_case']);
+    expect(candidateParams.find((p) => p.name === 'gender')!.schema.enum).toEqual(['female', 'male']);
     for (const { method, path } of routes) {
       const op = (spec.paths[path.replace(/:(\w+)/g, '{$1}')] as Record<string, any> | undefined)?.[method];
       expect(op, `${method.toUpperCase()} ${path}`).toBeDefined();

@@ -12,7 +12,8 @@
  *   POST /v1/operator/voices                     → 201 { voice }            add a candidate (pending)
  *   POST /v1/operator/voices/:id/approve         → 200 { voice }            records approved_by/at
  *   POST /v1/operator/voices/:id/revoke          → 200 { voice }            records revoked_by/at
- *   GET  /v1/operator/voice-candidates?page=     → 200 { candidates, ... }  ElevenLabs shared library
+ *   GET  /v1/operator/voice-candidates?page=&dialect=&accent=&gender=&age=&use_case=&sort=&search=
+ *                                                → 200 { candidates, has_more, page }  ElevenLabs shared library
  *
  * Approve a Voice only after a native speaker of its Dialect accepted its sample:
  *
@@ -144,7 +145,7 @@ export function registerVoiceRoutes(app: express.Express, middleware: VoiceRoute
     const parsed = CandidatesQuerySchema.safeParse(req.query ?? {});
     if (!parsed.success) return sendInvalidInput(res, parsed.error.issues);
     try {
-      const [found, catalog] = await Promise.all([deps.findCandidates(parsed.data.page), deps.repo.list({})]);
+      const [found, catalog] = await Promise.all([deps.findCandidates(parsed.data), deps.repo.list({})]);
       const byProviderId = new Map(catalog.map((v) => [`${v.provider}:${v.provider_voice_id}`, v]));
       res.status(200).json({
         ...found,
@@ -256,7 +257,9 @@ export function voiceOpenApi(): { paths: Record<string, unknown>; schemas: Recor
       '/v1/operator/voice-candidates': {
         get: {
           operationId: 'operatorFindVoiceCandidates',
-          summary: "Operator: browse the provider's shared Arabic voices to find candidates for review.",
+          summary:
+            "Operator: browse the provider's shared Arabic voices to find candidates for review. Filter by Dialect (or one provider accent), " +
+            'gender (male or female), age, use case and a search text; sort; page through with page until has_more is false.',
           tags: ['voices'],
           security: [{ bearerAuth: [] }],
           parameters: queryParams(CandidatesQuerySchema, 'candidates_query'),

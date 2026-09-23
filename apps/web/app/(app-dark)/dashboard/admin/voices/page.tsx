@@ -9,7 +9,9 @@
  * approve it only after a native speaker of that Dialect accepted it; revoke it
  * the moment it turns out wrong. api-v2 records who and when, and answers 403
  * OPERATOR_ONLY to anyone outside ADMIN_EMAILS, so this page does no gating of
- * its own. "Find candidates" browses the provider's shared Arabic voices.
+ * its own. "Find candidates" browses the provider's shared Arabic voices,
+ * filtered by Dialect, gender, age, use case and search text, a page at a time
+ * ("Load more" appends the next page while the provider has more).
  */
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
@@ -45,6 +47,19 @@ interface Candidate {
 
 const DIALECTS = ['levantine', 'gulf', 'egyptian', 'maghrebi', 'msa'];
 const GENDERS = ['female', 'male'];
+const AGES = [['young', 'Young'], ['middle_aged', 'Middle-aged'], ['old', 'Old']] as const;
+const USE_CASES = [
+  ['advertisement', 'Advertisement'],
+  ['social_media', 'Social media'],
+  ['narrative_story', 'Narrative / story'],
+  ['conversational', 'Conversational'],
+  ['characters_animation', 'Characters / animation'],
+  ['informative_educational', 'Informative / educational'],
+  ['entertainment_tv', 'Entertainment / TV'],
+] as const;
+const SORTS = [['trending', 'Trending'], ['created_date', 'Newest'], ['usage_character_count_1y', 'Most used (1y)'], ['cloned_by_count', 'Most added']] as const;
+
+const EMPTY_SEARCH = { dialect: '', gender: '', age: '', use_case: '', sort: '', search: '' };
 const CARD = { backgroundColor: '#14151F', border: '1px solid rgba(255,255,255,0.06)' } as const;
 const FIELD = { backgroundColor: '#0F1015', color: '#E9E9F0', border: '1px solid rgba(255,255,255,0.1)' } as const;
 const MUTED = { color: 'rgba(255,255,255,0.45)' } as const;
@@ -68,6 +83,9 @@ export default function VoiceCatalogPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  const [search, setSearch] = useState(EMPTY_SEARCH);
+  // The filters and last page of the loaded list, so "Load more" continues the same search.
+  const [more, setMore] = useState<{ query: typeof EMPTY_SEARCH; page: number } | null>(null);
 
   const load = useCallback(async () => {
     const r = await api<{ voices?: OperatorVoice[] }>(`/api/v1/operator/voices${filter ? `?state=${filter}` : ''}`);
@@ -104,13 +122,21 @@ export default function VoiceCatalogPage() {
     await load();
   }
 
-  async function findCandidates() {
-    setBusy('candidates');
+  async function findCandidates(query: typeof EMPTY_SEARCH, page: number) {
+    setBusy(page === 0 ? 'candidates' : 'more');
     setError(null);
-    const r = await api<{ candidates?: Candidate[] }>('/api/v1/operator/voice-candidates?page=0');
+    const qs = new URLSearchParams({ page: String(page) });
+    for (const [k, v] of Object.entries(query)) if (v.trim()) qs.set(k, v.trim());
+    const r = await api<{ candidates?: Candidate[]; has_more?: boolean; page?: number }>(`/api/v1/operator/voice-candidates?${qs}`);
     setBusy(null);
     if (!r.ok) return setError(r.data.error?.message ?? `HTTP ${r.status}`);
-    setCandidates(r.data.candidates ?? []);
+    const found = r.data.candidates ?? [];
+    setCandidates((prev) => {
+      if (page === 0 || !prev) return found;
+      const seen = new Set(prev.map((c) => c.provider_voice_id));
+      return [...prev, ...found.filter((c) => !seen.has(c.provider_voice_id))];
+    });
+    setMore(r.data.has_more ? { query, page: r.data.page ?? page } : null);
   }
 
   function pickCandidate(c: Candidate) {
@@ -180,7 +206,52 @@ export default function VoiceCatalogPage() {
           <button type="submit" disabled={!!busy} className="h-9 rounded-lg px-4 text-sm font-semibold disabled:opacity-60" style={{ backgroundColor: '#A78BFA', color: '#0F1015' }}>
             {busy === 'add' ? 'Adding…' : 'Add candidate'}
           </button>
-          <button type="button" onClick={findCandidates} disabled={!!busy} className="h-9 rounded-lg px-4 text-sm disabled:opacity-60" style={{ border: '1px solid rgba(167,139,250,0.5)', color: '#C9B8FF' }}>
+        </div>
+      </form>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void findCandidates(search, 0);
+        }}
+        className="mt-4 flex flex-col gap-3 rounded-2xl p-5"
+        style={CARD}
+      >
+        <p className="text-[11px] uppercase tracking-wider" style={MUTED}>Find candidates in the provider&apos;s shared Arabic voices</p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
+          <select aria-label="Dialect" value={search.dialect} onChange={(e) => setSearch({ ...search, dialect: e.target.value })} className="h-9 rounded-lg px-2 text-sm" style={FIELD}>
+            <option value="">Any Dialect</option>
+            {DIALECTS.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <select aria-label="Gender" value={search.gender} onChange={(e) => setSearch({ ...search, gender: e.target.value })} className="h-9 rounded-lg px-2 text-sm" style={FIELD}>
+            <option value="">Male or female</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+          </select>
+          <select aria-label="Age" value={search.age} onChange={(e) => setSearch({ ...search, age: e.target.value })} className="h-9 rounded-lg px-2 text-sm" style={FIELD}>
+            <option value="">Any age</option>
+            {AGES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <select aria-label="Use case" value={search.use_case} onChange={(e) => setSearch({ ...search, use_case: e.target.value })} className="h-9 rounded-lg px-2 text-sm" style={FIELD}>
+            <option value="">Any use case</option>
+            {USE_CASES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <select aria-label="Sort" value={search.sort} onChange={(e) => setSearch({ ...search, sort: e.target.value })} className="h-9 rounded-lg px-2 text-sm" style={FIELD}>
+            <option value="">Default order</option>
+            {SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <input
+            aria-label="Search"
+            value={search.search}
+            maxLength={60}
+            onChange={(e) => setSearch({ ...search, search: e.target.value })}
+            placeholder="Search name or description"
+            className="h-9 rounded-lg px-2 text-sm outline-none"
+            style={FIELD}
+          />
+        </div>
+        <div>
+          <button type="submit" disabled={!!busy} className="h-9 rounded-lg px-4 text-sm disabled:opacity-60" style={{ border: '1px solid rgba(167,139,250,0.5)', color: '#C9B8FF' }}>
             {busy === 'candidates' ? 'Searching…' : 'Find candidates'}
           </button>
         </div>
@@ -227,7 +298,9 @@ export default function VoiceCatalogPage() {
 
       {candidates ? (
         <section className="mt-8">
-          <p className="text-[11px] uppercase tracking-wider" style={MUTED}>Provider candidates (not reviewed)</p>
+          <p className="text-[11px] uppercase tracking-wider" style={MUTED}>
+            Provider candidates (not reviewed) · {candidates.length} loaded{more ? '' : ' · no more'}
+          </p>
           <ul className="mt-2 flex flex-col gap-2">
             {candidates.map((c) => (
               <li key={c.provider_voice_id} className="flex flex-wrap items-center gap-3 rounded-xl px-3 py-2 text-sm" style={CARD}>
@@ -244,7 +317,19 @@ export default function VoiceCatalogPage() {
                 )}
               </li>
             ))}
+            {candidates.length === 0 ? <li className="text-sm" style={MUTED}>No voices match these filters.</li> : null}
           </ul>
+          {more ? (
+            <button
+              type="button"
+              onClick={() => findCandidates(more.query, more.page + 1)}
+              disabled={!!busy}
+              className="mt-3 h-9 rounded-lg px-4 text-sm disabled:opacity-60"
+              style={{ border: '1px solid rgba(167,139,250,0.5)', color: '#C9B8FF' }}
+            >
+              {busy === 'more' ? 'Loading…' : 'Load more'}
+            </button>
+          ) : null}
         </section>
       ) : null}
     </div>

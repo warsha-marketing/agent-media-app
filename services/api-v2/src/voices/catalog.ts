@@ -92,9 +92,47 @@ export const AddVoiceInputSchema = z
   .strict();
 export type AddVoiceInput = z.infer<typeof AddVoiceInputSchema>;
 
+// Candidate search filters, mapped onto ElevenLabs GET /v1/shared-voices by
+// voices/candidates.ts. Each list is the provider's own vocabulary.
+export const CANDIDATE_AGES = ['young', 'middle_aged', 'old'] as const;
+export const CANDIDATE_USE_CASES = [
+  'advertisement',
+  'narrative_story',
+  'social_media',
+  'conversational',
+  'characters_animation',
+  'informative_educational',
+  'entertainment_tv',
+] as const;
+export const CANDIDATE_SORTS = ['trending', 'created_date', 'usage_character_count_1y', 'cloned_by_count'] as const;
+
 export const CandidatesQuerySchema = z
-  .object({ page: z.coerce.number().int().min(0).max(1_000).default(0) })
-  .strict();
+  .object({
+    page: z.coerce.number().int().min(0).max(1_000).default(0),
+    /** Fans out to every provider accent of the Dialect (voices/candidates.ts DIALECT_ACCENTS). */
+    dialect: VoiceDialectSchema.optional(),
+    /** One provider accent label, e.g. "syrian". Use instead of dialect, not with it. */
+    accent: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(/^[a-z][a-z -]{0,39}$/, 'accent is a short lowercase label, e.g. syrian')
+      .optional(),
+    // Male or female only; "neutral" is refused here and dropped from results.
+    gender: z.enum(VOICE_GENDERS).optional(),
+    age: z.enum(CANDIDATE_AGES).optional(),
+    use_case: z.enum(CANDIDATE_USE_CASES).optional(),
+    sort: z.enum(CANDIDATE_SORTS).optional(),
+    search: z
+      .string()
+      .trim()
+      .max(60)
+      .regex(/^[^\u0000-\u001f\u007f]*$/, 'search has control characters')
+      .optional(),
+  })
+  .strict()
+  .refine((q) => !(q.dialect && q.accent), { message: 'pass dialect or accent, not both', path: ['accent'] });
+export type CandidateSearch = z.infer<typeof CandidatesQuerySchema>;
 
 // ── Rows ─────────────────────────────────────────────────────────────────────
 
@@ -149,7 +187,7 @@ export interface VoiceDeps {
     transition(id: string, from: VoiceState[], patch: VoiceStatePatch): Promise<VoiceRow | null>;
   };
   isOperator(userId: string): Promise<boolean>;
-  findCandidates(page: number): Promise<{ candidates: VoiceCandidate[]; has_more: boolean; page: number }>;
+  findCandidates(query: CandidateSearch): Promise<{ candidates: VoiceCandidate[]; has_more: boolean; page: number }>;
   now(): Date;
   newId(): string;
 }
