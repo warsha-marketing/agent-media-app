@@ -15,6 +15,7 @@
 
 import { PRODUCT_HERO, type Modesty, type PresetDefinition, type ProductHeroShotKind } from '@agentmedia/schema';
 import { modestyPrompt } from './modesty.js';
+import { REACTION_RENDER } from './reaction.js';
 
 /** A Preset as the render pipeline reads it: its definition plus a prompt per shot kind. */
 export interface PresetRenderDefinition<Kind extends string = string> extends PresetDefinition<Kind> {
@@ -56,6 +57,7 @@ export function presetShotPrompt<Kind extends string>(
 /** Every Preset the worker can render, by id. Server-side only. */
 export const PRESET_RENDERS: Readonly<Record<string, PresetRenderDefinition>> = {
   [PRODUCT_HERO_RENDER.id]: PRODUCT_HERO_RENDER,
+  [REACTION_RENDER.id]: REACTION_RENDER,
 };
 
 /** The render definition of Preset `id`; throws on an id the worker does not know. */

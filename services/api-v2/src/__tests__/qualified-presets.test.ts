@@ -271,6 +271,9 @@ describe('operator qualification routes', () => {
     expect(r.body.qualifications).toEqual([
       expect.objectContaining({ preset: 'product_hero', dialect: 'levantine', state: 'qualified', qualified_by: null, notes: SEED.notes }),
       expect.objectContaining({ preset: 'product_hero', dialect: 'gulf', state: 'not_reviewed', qualified_at: null }),
+      // Reaction (#19): in the registry, not reviewed in any Dialect yet.
+      expect.objectContaining({ preset: 'reaction', dialect: 'levantine', state: 'not_reviewed', qualified_at: null }),
+      expect.objectContaining({ preset: 'reaction', dialect: 'gulf', state: 'not_reviewed', qualified_at: null }),
     ]);
   });
 

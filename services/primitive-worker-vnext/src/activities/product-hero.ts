@@ -122,6 +122,11 @@ export interface ProductHeroClipInput {
   prompt: string;
   /** Preset visuals are always silent: the draft audio is the only voice. */
   generate_audio: false;
+  /**
+   * R2-hosted reference of the person on screen (`@image2` in the prompt), set
+   * only on shots that show a person (Reaction, #19). Never on a product shot.
+   */
+  character_image_url?: string;
 }
 
 export interface ProductHeroClipResult {
@@ -171,6 +176,13 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
         'REFERENCE_URL_NOT_ALLOWED',
       );
     }
+    const characterImageUrl = input.character_image_url;
+    if (characterImageUrl !== undefined && !characterImageUrl.startsWith(allowedPrefix)) {
+      throw ApplicationFailure.nonRetryable(
+        `character_image_url must be hosted on the configured R2 public URL (${allowedPrefix})`,
+        'REFERENCE_URL_NOT_ALLOWED',
+      );
+    }
 
     // Spend: the per-primitive cap does not apply (the Preset's budget governs
     // the whole render; see the header). The day cap still does.
@@ -208,6 +220,7 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
           shot_kind: input.shot_kind,
           generate_audio: false,
           prompt,
+          ...(characterImageUrl ? { character_image_url: characterImageUrl } : {}),
         },
         estimated_credits_usd: estimatedUsd,
         started_at: new Date().toISOString(),
@@ -239,7 +252,8 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
         try {
           const result = await generateSimpleSelfieEvolink({
             prompt,
-            imageUrls: [input.product_image_url],
+            // @image1 the product; @image2 the person, on a shot that shows one.
+            imageUrls: characterImageUrl ? [input.product_image_url, characterImageUrl] : [input.product_image_url],
             duration: input.duration,
             aspectRatio: '9:16',
             // ADR 0001: the video model never speaks.
@@ -301,6 +315,7 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
           generate_audio: false,
           shot_index: input.shot_index,
           source_product_image_url: input.product_image_url,
+          ...(characterImageUrl ? { source_character_image_url: characterImageUrl } : {}),
         },
       });
       if (artErr) throw new Error(`primitive_artifacts insert failed: ${artErr.message}`);
@@ -346,6 +361,12 @@ export interface MuxProductHeroInput {
   aspect_ratio: '9:16';
   /** The Preset this Short was rendered as (recorded on the Short). */
   preset: string;
+  /**
+   * How long each shot stays on screen, in ms, in shot order (an intercut
+   * Preset's plan, e.g. Reaction #19). Absent: the clips play whole and the
+   * tail is trimmed to the audio.
+   */
+  shot_ms?: number[];
 }
 
 export interface MuxProductHeroResult {
@@ -361,10 +382,12 @@ export interface MuxProductHeroResult {
  * the last frame if the clips fall a few ms short, and trims the visuals to
  * exactly `seconds`. Clip audio (there should be none) is never mapped.
  */
-export function productHeroCutFilter(clipCount: number, seconds: number): string {
+export function productHeroCutFilter(clipCount: number, seconds: number, shotMs?: readonly number[]): string {
+  // An intercut Preset's shot is cut to its planned share before the concat.
+  const cut = (i: number) => (shotMs ? `trim=duration=${(shotMs[i] / 1000).toFixed(3)},` : '');
   const segs = Array.from({ length: clipCount }, (_, i) =>
     `[${i}:v]scale=${CANVAS.w}:${CANVAS.h}:force_original_aspect_ratio=increase,` +
-    `crop=${CANVAS.w}:${CANVAS.h},fps=${FPS},format=yuv420p,setsar=1,setpts=PTS-STARTPTS[v${i}]`,
+    `crop=${CANVAS.w}:${CANVAS.h},fps=${FPS},format=yuv420p,setsar=1,${cut(i)}setpts=PTS-STARTPTS[v${i}]`,
   );
   const ins = Array.from({ length: clipCount }, (_, i) => `[v${i}]`).join('');
   const s = seconds.toFixed(3);
@@ -385,6 +408,13 @@ export function makeMuxProductHeroActivity(cfg: WorkerConfig) {
       if (!url.startsWith(allowedPrefix)) {
         throw ApplicationFailure.nonRetryable(`clip ${url} must be hosted on the configured R2 public URL`, 'REFERENCE_URL_NOT_ALLOWED');
       }
+    }
+    const shotMs = input.shot_ms;
+    if (
+      shotMs !== undefined &&
+      (!Array.isArray(shotMs) || shotMs.length !== input.clip_urls.length || !shotMs.every((ms) => Number.isFinite(ms) && ms > 0))
+    ) {
+      throw ApplicationFailure.nonRetryable('shot_ms must give every clip a positive length', 'INVALID_INPUT');
     }
     const startedAt = new Date().toISOString();
 
@@ -414,7 +444,7 @@ export function makeMuxProductHeroActivity(cfg: WorkerConfig) {
           '-y',
           ...clipPaths.flatMap((p) => ['-i', p]),
           '-i', audioPath,
-          '-filter_complex', productHeroCutFilter(clipPaths.length, audioSeconds),
+          '-filter_complex', productHeroCutFilter(clipPaths.length, audioSeconds, shotMs),
           '-map', '[v]',
           // The whole draft audio: no -t, no -shortest, no atempo.
           '-map', `${clipPaths.length}:a:0`,

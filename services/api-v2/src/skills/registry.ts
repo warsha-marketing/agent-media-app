@@ -14,7 +14,9 @@
  */
 
 import { z } from 'zod';
-import { CAPTIONS_MOVED_MESSAGE, hasCaptionsField } from './product-hero-render.js';
+import { refuseCaptionsField } from './product-hero-render.js';
+import type { PresetInputResolver } from './preset-inputs.js';
+import { MakeReactionSkillInputSchema, resolveReactionInputs } from './reaction.js';
 import {
   PortraitGpt2ToolInputSchema,
   CharacterSheetGpt2ToolInputSchema,
@@ -24,6 +26,7 @@ import {
   LipSyncToolInputSchema,
   BrollTalkingHeadToolInputSchema,
   PRODUCT_HERO,
+  REACTION,
   type PresetDefinition,
 } from '@agentmedia/schema';
 
@@ -334,19 +337,6 @@ export const MakeProductHeroSkillInputSchema = refuseCaptionsField(
     }),
 );
 
-/**
- * Wrap a Preset render's input schema so #10's old `captions` field (any value)
- * is refused with the Caption editor pointer instead of being silently dropped.
- * The run and quote routes answer the same case first, as 400 captions_moved;
- * this keeps the schema itself honest for anyone else validating with it.
- */
-function refuseCaptionsField<T extends z.ZodTypeAny>(schema: T) {
-  return z.preprocess((raw, ctx) => {
-    if (hasCaptionsField(raw)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['captions'], message: CAPTIONS_MOVED_MESSAGE });
-    return raw;
-  }, schema);
-}
-
 export interface SkillEntry {
   slug: string;
   name: string;
@@ -367,6 +357,12 @@ export interface SkillEntry {
    * the worker renders from the same definition.
    */
   preset?: PresetDefinition;
+  /**
+   * Set on a Preset render skill that takes inputs of its own beyond the draft
+   * and the product photo (Reaction: a saved character and the Modesty Default,
+   * #19). The quote and the run call it after the draft is resolved.
+   */
+  presetInputs?: PresetInputResolver;
 }
 
 export const SKILLS: Record<string, SkillEntry> = {
@@ -485,6 +481,19 @@ export const SKILLS: Record<string, SkillEntry> = {
     inputSchema: MakeProductHeroSkillInputSchema,
     agentFacing: true,
     preset: PRODUCT_HERO,
+  },
+  make_reaction: {
+    slug: 'make_reaction',
+    name: 'Reaction',
+    version: '1.0.0',
+    description:
+      'Render an APPROVED draft into a finished 9:16 Reaction Short: one of the user\'s saved characters reacts SILENTLY to the product (a smile, a nod, surprise, enjoying it — mouth closed, never speaking) in short shots intercut with product shots, always ending on the product, while the draft\'s voice-over plays unchanged. Needs `draft_id` (an approved 5–15 s draft voiced by an Approved Voice), the product photo (`product_image_url` or `product_image_base64`), `character_id` (a saved char_… id from list_characters) and `character_gender` ("female" | "male"). Modest by default: arms covered, and a woman wears a hijab by default for Gulf drafts; pass `modesty` only to change that. Show the user the Script and play the voice preview, and get their OK and the quoted cost, before calling this.',
+    primitive: 'composed:make_reaction',
+    workflowType: 'makeReactionWorkflow',
+    inputSchema: MakeReactionSkillInputSchema,
+    agentFacing: true,
+    preset: REACTION,
+    presetInputs: resolveReactionInputs,
   },
   make_ugc: {
     slug: 'make_ugc',

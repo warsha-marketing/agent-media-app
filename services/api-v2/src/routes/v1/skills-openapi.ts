@@ -12,6 +12,7 @@ import { RENDER_REFUSALS, type RenderRefusalCode } from '../../skills/product-he
 import { RUN_CREDITS_OPENAPI } from '../../skills/run-credits.js';
 import { IDEMPOTENCY_KEY_REUSED } from '../../skills/idempotency.js';
 import { PRESET_NOT_QUALIFIED as PRESET_NOT_QUALIFIED_CODE } from '../../presets/qualification.js';
+import { REACTION_REFUSALS } from '../../skills/reaction.js';
 
 const skillError = (description: string) => ({
   description,
@@ -22,14 +23,20 @@ const skillError = (description: string) => ({
 function refusalLines(status: number): string[] {
   return (Object.keys(RENDER_REFUSALS) as RenderRefusalCode[])
     .filter((code) => RENDER_REFUSALS[code].status === status)
-    .map((code) => `\`${code}\` (make_product_hero): ${RENDER_REFUSALS[code].when}`);
+    .map((code) => `\`${code}\` (make_product_hero): ${RENDER_REFUSALS[code].when}`)
+    .concat(
+      // make_reaction's own refusals (#19): saved character, Modesty Default.
+      Object.entries(REACTION_REFUSALS)
+        .filter(([, r]) => r.status === status)
+        .map(([code, r]) => `\`${code}\` (make_reaction): ${r.when}`),
+    );
 }
 
 const sentences = (...parts: string[]) => parts.join('. ');
 
 /** The Qualified Preset gate (#8, presets/qualification.ts), checked after the draft refusals.
  *  The same code string the drafts routes send (upper snake, the domain's own). */
-const PRESET_NOT_QUALIFIED = `\`${PRESET_NOT_QUALIFIED_CODE}\` (make_product_hero): Product Hero is not a Qualified Preset in the draft's Dialect (carries preset, dialect and available; see GET /v1/presets)`;
+const PRESET_NOT_QUALIFIED = `\`${PRESET_NOT_QUALIFIED_CODE}\` (make_product_hero, make_reaction): the skill's Preset is not a Qualified Preset in the draft's Dialect (carries preset, dialect and available; see GET /v1/presets)`;
 
 const SLUG = { name: 'slug', in: 'path', required: true, schema: { type: 'string' } };
 

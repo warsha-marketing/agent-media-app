@@ -33,7 +33,7 @@ export type PresetClipSeconds = 5 | 10;
  * start without every input its Preset requires. (Later Presets add their own,
  * e.g. hand gender and setting for Hands-on, a character for Reaction.)
  */
-export type PresetInput = 'product_image';
+export type PresetInput = 'product_image' | 'character';
 
 /**
  * The shot plan's order rule, as data: shot i takes `order[i]`, cycling when a
@@ -43,6 +43,14 @@ export type PresetInput = 'product_image';
 export interface PresetShotOrder<Kind extends string = string> {
   order: readonly [Kind, ...Kind[]];
   last?: Kind;
+  /**
+   * The longest any one shot stays on screen, in ms (at most 5 000: one 5 s
+   * clip). Set, the Preset is cut on the intercut rule (intercutShots) instead
+   * of the shared 5/10 s rule: every clip renders 5 s and the speech is shared
+   * evenly between whole cycles of `order` — the fewest that keep each shot
+   * within this. Reaction uses it so no face lingers (#19).
+   */
+  maxShotMs?: number;
 }
 
 export interface PresetDefinition<Kind extends string = string> {
@@ -97,6 +105,11 @@ export interface PresetDefinition<Kind extends string = string> {
 export interface PlannedShot<Kind extends string = string> {
   kind: Kind;
   seconds: PresetClipSeconds;
+  /**
+   * How long this shot stays on screen in the cut (intercut rule only). Absent,
+   * the clips play whole, back to back, and the cut trims the tail to the audio.
+   */
+  onScreenMs?: number;
 }
 
 /**
@@ -133,11 +146,39 @@ export function planPresetShots<Kind extends string>(
       `${preset.name} speech must be ${preset.minSpeechMs}–${preset.maxSpeechMs} ms; got ${durationMs}`,
     );
   }
-  const { order, last } = preset.shotPlan;
+  const { order, last, maxShotMs } = preset.shotPlan;
+  if (maxShotMs !== undefined) return intercutShots(preset.shotPlan, durationMs);
   const lengths = clipLengths(durationMs);
   return lengths.map((seconds, i) => ({
     kind: last !== undefined && i === lengths.length - 1 ? last : order[i % order.length],
     seconds,
+  }));
+}
+
+/** The longest a shot may stay on screen: one 5 s clip, the shortest a video model renders. */
+const MAX_SHOT_MS_LIMIT = 5_000;
+
+/**
+ * The intercut rule (PresetShotOrder.maxShotMs): the fewest whole cycles of
+ * `order` whose shots, sharing the speech evenly, each stay within
+ * `maxShotMs`. Every shot renders as a 5 s clip and is cut to its share; the
+ * shares sum to `durationMs` exactly (the first few take the leftover ms).
+ *
+ *   order [reaction, product], max 5 s:  5–10 s → 2 shots   10.001–15 s → 4 shots
+ */
+function intercutShots<Kind extends string>(plan: PresetShotOrder<Kind>, durationMs: number): PlannedShot<Kind>[] {
+  const { order, last, maxShotMs } = plan;
+  if (maxShotMs === undefined || !Number.isInteger(maxShotMs) || maxShotMs <= 0 || maxShotMs > MAX_SHOT_MS_LIMIT) {
+    throw new RangeError(`maxShotMs must be a whole number of ms in 1–${MAX_SHOT_MS_LIMIT}; got ${maxShotMs}`);
+  }
+  const cycles = Math.ceil(durationMs / (maxShotMs * order.length));
+  const n = cycles * order.length;
+  const base = Math.floor(durationMs / n);
+  const extra = durationMs - base * n;
+  return Array.from({ length: n }, (_, i) => ({
+    kind: last !== undefined && i === n - 1 ? last : order[i % order.length],
+    seconds: 5 as const,
+    onScreenMs: base + (i < extra ? 1 : 0),
   }));
 }
 
