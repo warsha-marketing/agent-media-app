@@ -5,8 +5,8 @@
 // exactly one event per cue with the cue's own timing.
 
 import { describe, it, expect } from 'vitest';
-import type { CaptionCue } from '@agentmedia/schema';
-import { ARABIC_CAPTION_STYLE, arabicCaptionsAss, captionBurnArgs } from '../lib/arabic-captions-ass.js';
+import { CAPTION_COLOURS, CAPTION_POSITIONS, CAPTION_SIZES, DEFAULT_CAPTION_STYLE, type CaptionCue, type CaptionStyle } from '@agentmedia/schema';
+import { ARABIC_CAPTION_STYLE, arabicCaptionsAss, assCaptionStyle, captionBurnArgs } from '../lib/arabic-captions-ass.js';
 import { assTime } from '../lib/ass-format.js';
 
 /** RIGHT-TO-LEFT MARK: a strong RTL character that makes the line's paragraph right-to-left, even when it starts with a Latin word. */
@@ -62,7 +62,7 @@ describe('arabicCaptionsAss', () => {
   });
 
   it('cannot be steered by the text: override braces and backslashes are neutralised, line breaks flattened', () => {
-    const [line] = dialogue(arabicCaptionsAss([{ words: [], text: 'أ {\\b1} ب\\Nج\nد', start: 0, end: 1 }]));
+    const [line] = dialogue(arabicCaptionsAss([{ text: 'أ {\\b1} ب\\Nج\nد', start: 0, end: 1 }]));
     const text = line.split(',').slice(9).join(',');
     expect(text).not.toMatch(/[{}\\\n]/);
     expect(text).toContain('أ');
@@ -70,7 +70,59 @@ describe('arabicCaptionsAss', () => {
   });
 
   it('skips a cue with no time on screen', () => {
-    expect(dialogue(arabicCaptionsAss([{ words: ['أ'], text: 'أ', start: 1, end: 1 }]))).toHaveLength(0);
+    expect(dialogue(arabicCaptionsAss([{ text: 'أ', start: 1, end: 1 }]))).toHaveLength(0);
+  });
+});
+
+describe('caption styles (#22): the whitelist mapped to ASS', () => {
+  const styleLine = (style: CaptionStyle) => arabicCaptionsAss(cues, style).split('\n').find((l) => l.startsWith('Style: '))!.split(',');
+
+  it('the default style draws exactly #10\'s look', () => {
+    expect(arabicCaptionsAss(cues, DEFAULT_CAPTION_STYLE)).toBe(arabicCaptionsAss(cues));
+    expect(assCaptionStyle(DEFAULT_CAPTION_STYLE)).toMatchObject({
+      fontSize: ARABIC_CAPTION_STYLE.fontSize,
+      alignment: ARABIC_CAPTION_STYLE.alignment,
+      marginV: ARABIC_CAPTION_STYLE.marginV,
+      primaryColour: ARABIC_CAPTION_STYLE.primaryColour,
+    });
+  });
+
+  it('position: lower third (bottom centre), centre (middle centre), top (top centre, below the status bar)', () => {
+    const at = (position: CaptionStyle['position']) => styleLine({ ...DEFAULT_CAPTION_STYLE, position }).slice(-5, -1).map(Number);
+    expect(at('lower_third')[0]).toBe(2);
+    expect(at('centre')[0]).toBe(5);
+    const [align, , , marginV] = at('top');
+    expect(align).toBe(8);
+    expect(marginV).toBeGreaterThanOrEqual(1920 * 0.12); // below the platform's top bar
+  });
+
+  it('size: small < medium < large', () => {
+    const size = (s: CaptionStyle['size']) => Number(styleLine({ ...DEFAULT_CAPTION_STYLE, size: s })[2]);
+    expect(size('s')).toBeLessThan(size('m'));
+    expect(size('m')).toBeLessThan(size('l'));
+    expect(size('l')).toBeLessThanOrEqual(128); // a line still fits the frame
+  });
+
+  it('colour: the palette hex as ASS &H00BBGGRR (fill and karaoke colour), outline stays black', () => {
+    const line = styleLine({ ...DEFAULT_CAPTION_STYLE, colour: 'yellow' });
+    const hex = CAPTION_COLOURS.yellow; // #RRGGBB
+    const ass = `&H00${hex.slice(5, 7)}${hex.slice(3, 5)}${hex.slice(1, 3)}`;
+    expect(line[3]).toBe(ass);
+    expect(line[4]).toBe(ass);
+    expect(line[5]).toBe(ARABIC_CAPTION_STYLE.outlineColour);
+  });
+
+  it('every whitelisted style maps; anything else is refused before an .ass is written', () => {
+    for (const position of CAPTION_POSITIONS)
+      for (const size of CAPTION_SIZES)
+        for (const colour of Object.keys(CAPTION_COLOURS) as CaptionStyle['colour'][]) expect(() => assCaptionStyle({ position, size, colour })).not.toThrow();
+    expect(() => arabicCaptionsAss(cues, { ...DEFAULT_CAPTION_STYLE, colour: '&H000000FF' } as unknown as CaptionStyle)).toThrow(/caption style/);
+    expect(() => arabicCaptionsAss(cues, { ...DEFAULT_CAPTION_STYLE, size: 'constructor' } as unknown as CaptionStyle)).toThrow(/caption style/);
+  });
+
+  it('draws edited lines (text + timing, no words) the same way as cues', () => {
+    const [line] = dialogue(arabicCaptionsAss([{ text: 'جلد ومسك', start: 0.5, end: 1.25 }]));
+    expect(line).toBe(`Dialogue: 0,0:00:00.50,0:00:01.25,Arabic,,0,0,0,,${RLM}جلد ومسك`);
   });
 });
 

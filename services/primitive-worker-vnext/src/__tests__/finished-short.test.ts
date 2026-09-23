@@ -44,4 +44,15 @@ describe('a pass over the finished Short', () => {
       nonRetryable: true,
     });
   });
+
+  it('burnCaptions refuses a style off the whitelist before fetching anything (#22)', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const style = { position: 'top', size: 'l', colour: '&H000000FF' } as unknown as BurnCaptionsInput['style'];
+    await expect(makeBurnCaptionsActivity(cfg)({ ...base, short_url: 'https://r2.example.test/s.mp4', cues: [cue], style })).rejects.toMatchObject({
+      type: 'INVALID_INPUT',
+      nonRetryable: true,
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });

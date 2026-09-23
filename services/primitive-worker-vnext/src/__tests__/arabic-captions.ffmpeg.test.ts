@@ -20,8 +20,8 @@ import { promisify } from 'node:util';
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { captionCuesFromAlignment, type CharacterAlignment } from '@agentmedia/schema';
-import { ARABIC_CAPTION_STYLE, arabicCaptionsAss, captionBurnArgs } from '../lib/arabic-captions-ass.js';
+import { captionCuesFromAlignment, type CaptionLine, type CaptionStyle, type CharacterAlignment } from '@agentmedia/schema';
+import { ARABIC_CAPTION_STYLE, arabicCaptionsAss, assCaptionStyle, captionBurnArgs } from '../lib/arabic-captions-ass.js';
 
 const run = promisify(execFile);
 
@@ -79,7 +79,7 @@ async function grayRows(path: string, t: number, y0: number, y1: number): Promis
   return stdout as unknown as Buffer;
 }
 
-const brightPixels = (b: Buffer) => b.reduce((n, v) => n + (v > 200 ? 1 : 0), 0);
+const brightPixels = (b: Buffer, over = 200) => b.reduce((n, v) => n + (v > over ? 1 : 0), 0);
 
 describe.skipIf(!canBurnArabic)('Arabic Captions burn (real ffmpeg + libass)', () => {
   it('draws the cues in the lower third, in Noto Sans Arabic, without changing frames, length or audio', async () => {
@@ -137,5 +137,40 @@ describe.skipIf(!canBurnArabic)('Arabic Captions burn (real ffmpeg + libass)', (
         await run('ffmpeg', ['-y', '-v', 'error', '-ss', String((c.start + c.end) / 2), '-i', outPath, '-frames:v', '1', f]);
       }
     }
+  }, 120_000);
+});
+
+describe.skipIf(!canBurnArabic)('Caption export burn (#22): edited lines in a chosen style (real ffmpeg + libass)', () => {
+  it('draws exactly the given lines at the top in the chosen colour, and leaves frames, length and audio untouched', async () => {
+    const seconds = 4;
+    const inPath = join(dir, 'clean.mp4');
+    await run('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', `color=c=0x1d3557:s=1080x1920:r=30:d=${seconds}`,
+      '-f', 'lavfi', '-i', `sine=frequency=440:duration=${seconds}`,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', inPath,
+    ]);
+    // What the Caption editor sends: edited words, edited timing, a whitelisted style.
+    const lines: CaptionLine[] = [
+      { text: 'جلد ومسك', start: 0.5, end: 1.6 },
+      { text: 'Rumi رويال {\\fs300}', start: 2, end: 3.4 },
+    ];
+    const style: CaptionStyle = { position: 'top', size: 'l', colour: 'yellow' };
+    const assPath = join(dir, 'export.ass');
+    writeFileSync(assPath, arabicCaptionsAss(lines, style), 'utf8');
+    const outPath = join(dir, 'captioned-export.mp4');
+    await run('ffmpeg', captionBurnArgs({ inPath, assPath, outPath }), { maxBuffer: 64 * 1024 * 1024 });
+
+    const [vIn, vOut] = [await probeStream(inPath, 'v:0'), await probeStream(outPath, 'v:0')];
+    expect(vOut.nb_read_frames).toBe(vIn.nb_read_frames);
+    expect(Math.abs(parseFloat(vOut.duration) - parseFloat(vIn.duration))).toBeLessThan(0.034);
+    expect(await audioMd5(outPath)).toBe(await audioMd5(inPath));
+
+    // Top placement: text hangs from marginV, nothing in the lower half.
+    const top = assCaptionStyle(style).marginV;
+    const t = 1;
+    expect(brightPixels(await grayRows(outPath, t, top - 10, top + 220), 150)).toBeGreaterThan(1500);
+    expect(brightPixels(await grayRows(outPath, t, 960, 1920), 150)).toBe(0);
+    // Between the lines, nothing is drawn.
+    expect(brightPixels(await grayRows(outPath, 1.8, 0, 1920), 150)).toBe(0);
   }, 120_000);
 });

@@ -16,3 +16,5 @@ export { makePodcastWorkflow } from './make-podcast.js';
 // Only the per-Preset wrappers are workflow types; the shared pipeline they call
 // (./render-preset.ts, renderPreset) is internal and must never be exported here.
 export { makeProductHeroWorkflow } from './make-product-hero.js';
+// Caption export (#22): burns the Caption editor's lines onto a clean Short.
+export { captionExportWorkflow } from './caption-export.js';

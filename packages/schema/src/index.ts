@@ -29,6 +29,8 @@ export * from './modesty.js';
 export * from './delivery-tags.js';
 // Arabic Captions (#10) — words and cues from the voiced Script's alignment (no speech-to-text).
 export * from './captions.js';
+// Edited caption lines (#22) — the Caption editor's lines and style, checked by the export route and workflow.
+export * from './caption-lines.js';
 // Music Bed — per-Preset licensed track set (data) + the on/off/which-track
 // decision the quote and the render share. See src/music-bed/.
 export * from './music-bed/index.js';
