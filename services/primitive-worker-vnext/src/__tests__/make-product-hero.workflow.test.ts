@@ -33,8 +33,22 @@ function renderInput(durationMs: number): MakeProductHeroWorkflowInput {
   };
 }
 
+/** The fake mux's measured cut differs from the audio by this much (a real cut
+ *  lands within about a frame, never exactly), so a workflow that reports the
+ *  audio's length instead of the MEASURED cut is caught. */
+const CUT_DRIFT_MS = 23;
+
+/** A mux whose finished Short measures `audio + driftMs`. */
+const muxMeasuring = (driftMs: number) => (i: MuxProductHeroInput) => ({
+  primitive_run_id: i.primitive_run_id,
+  video_url: 'https://r2.example.test/shorts/final.mp4',
+  duration_ms: i.audio_duration_ms + driftMs,
+  artifact_id: 'artifact-short',
+});
+
 /** Fakes that behave like the real steps: the audio is measured, each clip is as
- *  long as requested, and the mux trims the visuals to the audio it is given. */
+ *  long as requested, and the mux cuts the visuals to the audio it is given
+ *  (measuring a few ms off, as a real cut does). */
 function happyFakes(overrides: CannedActivities = {}) {
   return fakeActivities({
     composedSkillState: undefined,
@@ -52,12 +66,7 @@ function happyFakes(overrides: CannedActivities = {}) {
       duration_seconds: i.duration,
       credits_actual_usd: i.duration === 10 ? 1.2 : 0.6,
     }),
-    muxProductHero: (i: MuxProductHeroInput) => ({
-      primitive_run_id: i.primitive_run_id,
-      video_url: 'https://r2.example.test/shorts/final.mp4',
-      duration_ms: i.audio_duration_ms,
-      artifact_id: 'artifact-short',
-    }),
+    muxProductHero: muxMeasuring(CUT_DRIFT_MS),
     ...overrides,
   });
 }
@@ -95,7 +104,7 @@ describe('makeProductHeroWorkflow — audio first, silent visuals cut to the aud
   });
 
   it.each([5_000, 7_300, 10_000, 12_480, 15_000])(
-    'returns a Short exactly as long as %i ms of audio, never trimming the audio',
+    'cuts a Short to %i ms of audio and reports its measured length, never trimming the audio',
     async (durationMs) => {
       const fakes = happyFakes();
       const result = await harness.execute('makeProductHeroWorkflow', [renderInput(durationMs)], fakes);
@@ -106,10 +115,21 @@ describe('makeProductHeroWorkflow — audio first, silent visuals cut to the aud
       const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
       expect(mux.audio_duration_ms).toBe(durationMs); // cut to the audio's length
       expect(mux.clip_urls).toHaveLength(clips.length);
-      expect(result.duration_ms).toBe(durationMs);
+      // The Short's length is what the mux MEASURED, and it matches the audio.
+      expect(result.duration_ms).toBe(durationMs + CUT_DRIFT_MS);
       expect(result.video_url).toBe('https://r2.example.test/shorts/final.mp4');
     },
   );
+
+  it('cuts to the audio as measured from its bytes, not the length stored on the draft', async () => {
+    const fakes = happyFakes({
+      fetchDraftAudio: (i: FetchDraftAudioInput) => ({ primitive_run_id: i.primitive_run_id, audio_key: i.audio_key, duration_ms: 9_012 }),
+    });
+    const result = await harness.execute('makeProductHeroWorkflow', [renderInput(9_000)], fakes);
+    const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+    expect(mux.audio_duration_ms).toBe(9_012);
+    expect(result.duration_ms).toBe(9_012 + CUT_DRIFT_MS);
+  });
 
   it('ships the draft’s own audio: no voicing step exists, and the mux uses the draft audio key', async () => {
     const fakes = happyFakes();
@@ -132,7 +152,7 @@ describe('makeProductHeroWorkflow — audio first, silent visuals cut to the aud
     expect(done.status).toBe('succeeded');
     expect(done.final_output).toMatchObject({
       video_url: 'https://r2.example.test/shorts/final.mp4',
-      duration_ms: 8_000,
+      duration_ms: 8_000 + CUT_DRIFT_MS, // measured, not assumed
       draft_id: 'draft-1',
     });
   });
@@ -220,18 +240,23 @@ describe('makeProductHeroWorkflow — failure refunds every charged child', () =
     expect(fakes.names()).not.toContain('releaseDraftRender');
   });
 
-  it('fails when the cut does not match the audio length, and refunds', async () => {
-    const fakes = happyFakes({
-      muxProductHero: (i: MuxProductHeroInput) => ({
-        primitive_run_id: i.primitive_run_id,
-        video_url: 'https://r2.example.test/shorts/final.mp4',
-        duration_ms: i.audio_duration_ms - 500,
-        artifact_id: 'a',
-      }),
-    });
+  it.each([-50, 50])('accepts a cut measured %i ms off the audio (within a frame or so)', async (drift) => {
+    const fakes = happyFakes({ muxProductHero: muxMeasuring(drift) });
+    const result = await harness.execute('makeProductHeroWorkflow', [renderInput(10_000)], fakes);
+    expect(result.duration_ms).toBe(10_000 + drift);
+    expect(fakes.names()).not.toContain('refundCredits');
+  });
+
+  it.each([-500, -51, 51, 2_000])('fails a cut measured %i ms off the audio, and refunds', async (drift) => {
+    const fakes = happyFakes({ muxProductHero: muxMeasuring(drift) });
     const run = harness.execute('makeProductHeroWorkflow', [renderInput(10_000)], fakes);
     await expect(run).rejects.toBeInstanceOf(WorkflowFailedError);
-    expect(fakes.callsTo('refundCredits').length).toBeGreaterThan(0);
+    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const refunded = (fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id);
+    for (const c of clips) expect(refunded).toContain(c.primitive_run_id);
+    const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
+    expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'CUT_DURATION_MISMATCH' });
+    expect(states.some((st) => st.status === 'succeeded')).toBe(false);
   });
 });
 

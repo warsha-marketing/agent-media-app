@@ -50,6 +50,7 @@ export interface MakeProductHeroWorkflowResult {
   skill_run_id: string;
   draft_id: string;
   video_url: string;
+  /** The finished Short's length as MEASURED from the output file. */
   duration_ms: number;
   credits_actual_usd: number;
 }
@@ -158,9 +159,12 @@ export async function makeProductHeroWorkflow(
     }
     currentChild = undefined;
 
+    // Report what the mux measured — checked against the audio above — never
+    // the audio's length assumed as the Short's.
     const finalOutput = {
       video_url: short.video_url,
-      duration_ms: audio.duration_ms,
+      duration_ms: short.duration_ms,
+      audio_duration_ms: audio.duration_ms,
       draft_id: input.draft_id,
       aspect_ratio: '9:16',
       credits_actual_usd: totalUsd,
@@ -176,7 +180,7 @@ export async function makeProductHeroWorkflow(
       skill_run_id: skillRunId,
       draft_id: input.draft_id,
       video_url: short.video_url,
-      duration_ms: audio.duration_ms,
+      duration_ms: short.duration_ms,
       credits_actual_usd: totalUsd,
     };
   } catch (err) {
