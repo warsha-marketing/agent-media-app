@@ -20,7 +20,7 @@ import {
   type RenderableDraft,
 } from '../../skills/product-hero-render.js';
 import { musicBedView, musicBedWorkflowInput, presetMusicBed } from '../../skills/preset-music-bed.js'; // #9
-import { captionsOn, captionsView, captionsWorkflowInput } from '../../skills/preset-captions.js'; // #10
+import { captionsView } from '../../skills/preset-captions.js'; // #10
 import { summarizeRunCredits, type RunCredits } from '../../skills/run-credits.js';
 import { replayMatches, requestFingerprint, sendIdempotencyKeyReused } from '../../skills/idempotency.js';
 import type { PresetDefinition } from '@agentmedia/schema';
@@ -203,7 +203,7 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     input = { ...input, duration_ms: draft.duration_ms };
     quoteExtras = {
       music_bed: musicBedView(presetMusicBed(skill.preset, input.music, draft.id)),
-      captions: captionsView(captionsOn(input.captions)), // free: never changes the price
+      captions: captionsView(input.captions === true), // free: never changes the price
     };
   }
   // Match the run preflight and worker ledger in self-hosted billing mode.
@@ -838,7 +838,7 @@ async function dispatchPresetRender(
   // Music Bed (#9): the same decision the quote made (seeded by the draft).
   const musicBed = presetMusicBed(preset, body.music, draft.id);
   // Captions (#10): opt-in and free; the run records the choice, the workflow gets the alignment.
-  const captions = captionsOn(body.captions);
+  const captions = body.captions === true;
   const runInput: Record<string, unknown> = {
     draft_id: draft.id,
     product_image_url: productImageUrl,
@@ -927,7 +927,7 @@ async function dispatchPresetRender(
     product_image_url: productImageUrl,
     aspect_ratio: preset.aspectRatio,
     music_bed: musicBedWorkflowInput(musicBed), // #9
-    captions: captionsWorkflowInput(captions, draft.alignment), // #10
+    captions: captions ? { alignment: draft.alignment } : null, // #10: the worker cues from the draft alignment
   };
 
   try {
