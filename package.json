@@ -7,7 +7,8 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
-    "test": "turbo test",
+    "test": "turbo run test test:scripts",
+    "test:scripts": "node --import tsx --test scripts/tests/*.test.ts",
     "e2e:cli:live": "pnpm --filter agent-media-cli build && node scripts/cli-live-e2e.mjs"
   },
   "devDependencies": {
@@ -16,6 +17,7 @@
     "@typescript-eslint/parser": "^8.24.1",
     "eslint": "^9.20.0",
     "prettier": "^3.5.2",
+    "tsx": "^4.19.0",
     "turbo": "^2.4.4",
     "typescript": "^5.7.3"
   },

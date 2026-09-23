@@ -13,7 +13,7 @@ the same terms. No CLA, no follow-on obligations.
 ```bash
 pnpm install
 pnpm build          # turbo build across the monorepo
-pnpm test           # vitest
+pnpm test           # vitest per package + node:test suites in scripts/tests
 ```
 
 The monorepo layout:
