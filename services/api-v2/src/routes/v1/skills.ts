@@ -19,7 +19,7 @@ import {
   supabaseProductHeroDraftStore,
   type RenderableDraft,
 } from '../../skills/product-hero-render.js';
-import { musicBedView, musicBedWorkflowInput, presetMusicBed } from '../../skills/product-hero-music.js'; // #9
+import { musicBedView, musicBedWorkflowInput, presetMusicBed } from '../../skills/preset-music-bed.js'; // #9
 import { summarizeRunCredits, type RunCredits } from '../../skills/run-credits.js';
 import type { PresetDefinition } from '@agentmedia/schema';
 import { PresetError, assertPresetAvailable } from '../../presets/qualification.js';

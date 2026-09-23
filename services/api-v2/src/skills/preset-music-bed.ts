@@ -1,16 +1,17 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * Product Hero × Music Bed (#9) — the API side of the one decision.
+ * Preset × Music Bed (#9) — the API side of the one decision.
  *
- * The quote and the run both call productHeroMusicBed with the draft id as the
+ * The quote and the run both call presetMusicBed with the draft id as the
  * seed, so the quote names the track the render will mix (or says why the Short
  * is voice only), and the worker is handed that track — it never picks. The set
- * and its licence records are data in @agentmedia/schema (src/music-bed/).
+ * is the Preset's own (PresetDefinition.musicBed); the tracks and their licence
+ * records are data in @agentmedia/schema (src/music-bed/).
  * Mixing is free: the Music Bed never changes the price.
  */
 
-import { resolveMusicBed, type MusicBedDecision } from '@agentmedia/schema';
+import { resolveMusicBed, type MusicBedDecision, type PresetDefinition } from '@agentmedia/schema';
 
 /** What the quote and run responses say about the Music Bed. */
 export interface MusicBedView {
@@ -30,8 +31,8 @@ export const MUSIC_BED_DETAIL = {
 } as const;
 
 /** `music` is the parsed input (default on); `draftId` seeds the track choice. */
-export function productHeroMusicBed(music: unknown, draftId: string): MusicBedDecision {
-  return resolveMusicBed({ preset: 'product_hero', music: music !== false, seed: draftId });
+export function presetMusicBed(preset: PresetDefinition, music: unknown, draftId: string): MusicBedDecision {
+  return resolveMusicBed(preset, { music: music !== false, seed: draftId });
 }
 
 export function musicBedView(d: MusicBedDecision): MusicBedView {

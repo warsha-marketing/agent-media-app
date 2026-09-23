@@ -1,7 +1,7 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
-/** Presets that declare a Music Bed set. */
-export type MusicBedPreset = 'product_hero';
+/** The id of the Preset a track belongs to (PresetDefinition.id, e.g. 'product_hero'). */
+export type MusicBedPreset = string;
 
 /** The licence record every track carries (the full entry lives in ./LICENSES.md). */
 export interface MusicBedLicence {

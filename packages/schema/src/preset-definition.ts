@@ -21,6 +21,7 @@
  */
 
 import { VIDEO_CLIP_CREDITS, VIDEO_CLIP_USD } from './video-pricing.js';
+import type { MusicBedTrack } from './music-bed/types.js';
 
 /** Clip lengths a Preset renders from. 15 s clips are never needed: two clips
  *  (10 + 5) already cover the longest allowed speech. */
@@ -66,10 +67,16 @@ export interface PresetDefinition<Kind extends string = string> {
     maxCredits: number;
     maxProviderUsd: number;
   };
-  // Extension points (later tickets, deliberately not declared yet): the Music
-  // Bed (#9) — a licensed track set per Preset, applied at the mix step — and
-  // any Preset-specific steps before the clips (e.g. product-in-hands frames)
-  // join here as further fields, priced by quotePresetCredits.
+  /**
+   * The Preset's Music Bed set (#9): licensed tracks only, mixed ducked under
+   * the voice at the mix step. Data — the tracks and their licence records live
+   * in ./music-bed/ (tracks.ts + LICENSES.md); a Preset selects its own with
+   * musicBedSet(id). Empty = every Short of this Preset is voice only.
+   */
+  musicBed: readonly MusicBedTrack[];
+  // Extension points (later tickets, deliberately not declared yet): any
+  // Preset-specific steps before the clips (e.g. product-in-hands frames) join
+  // here as further fields, priced by quotePresetCredits.
 }
 
 /** One planned clip: what kind of shot it is, and how long it renders. */

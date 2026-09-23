@@ -3,8 +3,9 @@
 /**
  * Music Bed — a licensed track mixed under a Short's voice with fixed ducking.
  *
- * The set is data (./tracks.ts, licences in ./LICENSES.md). resolveMusicBed is
- * the ONE decision: api-v2 calls it for the quote and again for the render with
+ * The set is data (./tracks.ts, licences in ./LICENSES.md); each Preset
+ * declares its own as PresetDefinition.musicBed (= musicBedSet(its id)).
+ * resolveMusicBed is the ONE decision: api-v2 calls it for the quote and again for the render with
  * the same seed (the draft id), so both agree on whether there is a bed and
  * which track; the worker is handed the chosen track and never picks.
  *
@@ -50,11 +51,11 @@ function fnv1a(s: string): number {
  * render sounds the same. An empty set never fails a Short — it is voice only.
  */
 export function resolveMusicBed(
-  args: { preset: MusicBedPreset; music: boolean; seed: string },
-  tracks: readonly MusicBedTrack[] = MUSIC_BED_TRACKS,
+  preset: { musicBed: readonly MusicBedTrack[] },
+  args: { music: boolean; seed: string },
 ): MusicBedDecision {
   if (!args.music) return { on: false, reason: 'off' };
-  const set = musicBedSet(args.preset, tracks);
+  const set = preset.musicBed;
   if (set.length === 0) return { on: false, reason: 'no_tracks' };
   return { on: true, track: set[fnv1a(args.seed) % set.length] };
 }

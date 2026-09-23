@@ -18,6 +18,7 @@ import {
   MUSIC_BED_STORAGE_PREFIX,
   type MusicBedTrack,
 } from '../music-bed/index.js';
+import { PRODUCT_HERO } from '../product-hero.js';
 
 function track(id: string, over: Partial<MusicBedTrack> = {}): MusicBedTrack {
   return {
@@ -44,28 +45,24 @@ describe('resolveMusicBed', () => {
   const set = [track('ph-a'), track('ph-b'), track('ph-c')];
 
   it('music off → no bed, whatever the set holds', () => {
-    expect(resolveMusicBed({ preset: 'product_hero', music: false, seed: 'draft-1' }, set)).toEqual({ on: false, reason: 'off' });
+    expect(resolveMusicBed({ musicBed: set }, { music: false, seed: 'draft-1' })).toEqual({ on: false, reason: 'off' });
   });
 
   it('music on with an empty set → no bed, and says the set is empty (never fails the Short)', () => {
-    expect(resolveMusicBed({ preset: 'product_hero', music: true, seed: 'draft-1' }, [])).toEqual({ on: false, reason: 'no_tracks' });
+    expect(resolveMusicBed({ musicBed: [] }, { music: true, seed: 'draft-1' })).toEqual({ on: false, reason: 'no_tracks' });
   });
 
   it('music on → a track from the Preset’s own set', () => {
-    const d = resolveMusicBed({ preset: 'product_hero', music: true, seed: 'draft-1' }, set);
+    const d = resolveMusicBed({ musicBed: set }, { music: true, seed: 'draft-1' });
     expect(d.on).toBe(true);
     if (d.on) expect(set).toContain(d.track);
   });
 
-  it('ignores tracks that belong to another Preset', () => {
-    const other = [track('x-1', { preset: 'hands_on' as MusicBedTrack['preset'] })];
-    expect(resolveMusicBed({ preset: 'product_hero', music: true, seed: 's' }, other)).toEqual({ on: false, reason: 'no_tracks' });
-  });
 
   it('is deterministic per seed, so the quote and the render (and a retry) pick the same track', () => {
     for (const seed of ['a', 'draft-1', '7f3c0d4e-1111-4222-8333-444455556666']) {
-      const a = resolveMusicBed({ preset: 'product_hero', music: true, seed }, set);
-      const b = resolveMusicBed({ preset: 'product_hero', music: true, seed }, set);
+      const a = resolveMusicBed({ musicBed: set }, { music: true, seed });
+      const b = resolveMusicBed({ musicBed: set }, { music: true, seed });
       expect(a).toEqual(b);
     }
   });
@@ -73,7 +70,7 @@ describe('resolveMusicBed', () => {
   it('spreads seeds over the whole set', () => {
     const picked = new Set<string>();
     for (let i = 0; i < 200; i += 1) {
-      const d = resolveMusicBed({ preset: 'product_hero', music: true, seed: `draft-${i}` }, set);
+      const d = resolveMusicBed({ musicBed: set }, { music: true, seed: `draft-${i}` });
       if (d.on) picked.add(d.track.id);
     }
     expect([...picked].sort()).toEqual(['ph-a', 'ph-b', 'ph-c']);
@@ -109,7 +106,13 @@ describe('the shipped track set', () => {
   });
 
   it('musicBedSet returns only that Preset’s tracks', () => {
+    const mixed = [track('ph-a'), track('other-1', { preset: 'hands_on' })];
+    expect(musicBedSet('product_hero', mixed).map((t) => t.id)).toEqual(['ph-a']);
     for (const t of musicBedSet('product_hero')) expect(t.preset).toBe('product_hero');
+  });
+
+  it('Product Hero declares its Music Bed set on its Preset definition', () => {
+    expect(PRODUCT_HERO.musicBed).toEqual(musicBedSet('product_hero'));
   });
 
   it('LICENSES.md records the source terms with the date they were checked', () => {

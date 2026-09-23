@@ -19,8 +19,8 @@ vi.mock('@agentmedia/schema', async (orig) => {
   return {
     ...real,
     // The real decision, over a test set when one is staged (else the shipped set).
-    resolveMusicBed: (args: Parameters<typeof real.resolveMusicBed>[0]) =>
-      real.resolveMusicBed(args, TEST_TRACKS.set ?? real.MUSIC_BED_TRACKS),
+    resolveMusicBed: (...[preset, args]: Parameters<typeof real.resolveMusicBed>) =>
+      real.resolveMusicBed({ musicBed: TEST_TRACKS.set ?? preset.musicBed }, args),
   };
 });
 
@@ -216,8 +216,8 @@ describe('make_product_hero Music Bed — the Preset has no licensed tracks yet'
   it('the shipped set behaves the same while it is empty', async () => {
     const id = seedDraft();
     const q = await call(quoteSkillRoute, { draft_id: id, product_image_url: PHOTO });
-    const { MUSIC_BED_TRACKS } = await import('@agentmedia/schema');
-    if (MUSIC_BED_TRACKS.length === 0) expect(q.body.music_bed).toMatchObject({ on: false, reason: 'no_tracks' });
+    const { PRODUCT_HERO } = await import('@agentmedia/schema');
+    if (PRODUCT_HERO.musicBed.length === 0) expect(q.body.music_bed).toMatchObject({ on: false, reason: 'no_tracks' });
     else expect(q.body.music_bed).toMatchObject({ on: true });
   });
 });
