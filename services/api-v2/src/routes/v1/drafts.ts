@@ -36,6 +36,7 @@ import {
   type DraftDeps,
   type DraftRow,
 } from '../../drafts/product-hero-draft.js';
+import { isUuid } from '../../lib/uuid.js';
 
 interface DraftRouteMiddleware {
   generateLimiter: RequestHandler;
@@ -43,8 +44,6 @@ interface DraftRouteMiddleware {
   authMiddleware: RequestHandler;
   draftLimiter: RequestHandler;
 }
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function sendDraftError(res: Response, err: unknown, tag: string): void {
   if (err instanceof DraftError) {
@@ -103,7 +102,7 @@ export function registerDraftRoutes(app: express.Express, middleware: DraftRoute
   app.get('/v1/drafts/:id', readLimiter, authMiddleware, async (req, res) => {
     const id = String(req.params.id ?? '');
     const notFound = () => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Draft not found.' } });
-    if (!UUID.test(id)) return void notFound();
+    if (!isUuid(id)) return void notFound();
     try {
       // Owner-scoped lookup: another user's draft is indistinguishable from none.
       const row = await deps.repo.getOwned(id, userOf(req));

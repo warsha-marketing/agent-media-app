@@ -13,8 +13,10 @@ import { describe, it, expect } from 'vitest';
 import {
   PRODUCT_HERO,
   planProductHeroShots,
+  productHeroProviderUsd,
   quoteProductHeroCredits,
 } from '../product-hero.js';
+import { VIDEO_CLIP_CREDITS, VIDEO_CLIP_USD } from '../video-pricing.js';
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
@@ -54,9 +56,20 @@ describe('quoteProductHeroCredits', () => {
     expect(quoteProductHeroCredits(15_000)).toBe(420);
   });
 
+  it('prices clips from the shared clip table, like every other video', () => {
+    for (const ms of [5_000, 8_000, 12_000]) {
+      const shots = planProductHeroShots(ms);
+      expect(quoteProductHeroCredits(ms)).toBe(sum(shots.map((s) => VIDEO_CLIP_CREDITS[s])));
+      expect(productHeroProviderUsd(ms)).toBeCloseTo(sum(shots.map((s) => VIDEO_CLIP_USD[s])), 9);
+    }
+  });
+
+  // The Preset's declared budget is enforced here, not at run time: no duration
+  // in the band may plan a render over it (credits charged or provider USD).
   it('never exceeds the Preset budget anywhere in the band', () => {
     for (let ms = PRODUCT_HERO.minSpeechMs; ms <= PRODUCT_HERO.maxSpeechMs; ms += 101) {
       expect(quoteProductHeroCredits(ms)).toBeLessThanOrEqual(PRODUCT_HERO.budget.maxCredits);
+      expect(productHeroProviderUsd(ms)).toBeLessThanOrEqual(PRODUCT_HERO.budget.maxProviderUsd + 1e-9);
     }
   });
 });

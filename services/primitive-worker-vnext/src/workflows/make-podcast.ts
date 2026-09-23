@@ -34,6 +34,7 @@
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
 import { countWords, fitDuration } from '@agentmedia/schema';
 import type { PrimitiveActivities } from '../activities/index.js';
+import { makeChildRunId, seedFromString } from './child-run-id.js';
 import type { SimpleSelfieActivityInput, SimpleSelfieActivityResult } from '../activities/simple-selfie.js';
 import type { ExtractAudioActivityResult } from '../activities/extract-audio.js';
 import type { ComposeBrollOverlayInput, ComposeBrollOverlayResult } from '../activities/compose-broll-overlay.js';
@@ -322,21 +323,6 @@ export async function makePodcastWorkflow(
 
 // ── deterministic helpers (safe inside the workflow isolate: no crypto/Date/random) ──
 
-/** FNV-1a 32-bit hash. Deterministic + side-effect-free. */
-function fnv1a(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i += 1) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
-/** Deterministic non-negative 31-bit seed from a string (never 0). */
-function seedFromString(s: string): number {
-  return (fnv1a(s) % 2147483646) + 1;
-}
-
 /** Use the actor's pinned seed when valid, else derive one deterministically so A
  *  and B each stay individually consistent across their own cuts. */
 function pinSeed(provided: number | undefined, skillRunId: string, speaker: string): number {
@@ -346,12 +332,6 @@ function pinSeed(provided: number | undefined, skillRunId: string, speaker: stri
   return seedFromString(`${skillRunId}:${speaker}`);
 }
 
-/** Deterministic child primitive_run_id from skill_run_id + step (unique per step). */
-function makeChildRunId(skillRunId: string, step: string): string {
-  const suffix = (fnv1a(step).toString(16).padStart(8, '0') + '0000').slice(0, 12);
-  const base = skillRunId.replace(/[^a-f0-9-]/gi, '').toLowerCase();
-  return base.slice(0, base.length - 12) + suffix;
-}
 
 /**
  * Pick the take length whose word band [d, d*2.2] holds the chunk (5s:5-11,

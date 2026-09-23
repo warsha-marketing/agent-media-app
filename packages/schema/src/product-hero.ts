@@ -13,6 +13,8 @@
  * shots anywhere else.
  */
 
+import { VIDEO_CLIP_CREDITS, VIDEO_CLIP_USD } from './video-pricing.js';
+
 /** Clip lengths Product Hero renders from. 15 s clips are never needed: two
  *  clips (10 + 5) already cover the longest allowed speech. */
 export type ProductHeroClipSeconds = 5 | 10;
@@ -21,6 +23,12 @@ export type ProductHeroClipSeconds = 5 | 10;
  * The Preset's declaration: its fixed format and its own cost budget. The
  * budget replaces the per-primitive cap for this Preset's clips — a 10 s clip
  * costs more than that cap, but the render as a whole stays within this.
+ *
+ * Clips are priced from the shared clip table (./video-pricing.ts), never a
+ * Preset-local copy. The budget is a declaration the plan is held to by tests
+ * (every duration in the band plans within it), not a runtime check: with this
+ * plan and these prices no render can exceed it, so a change that would is
+ * caught in CI instead of refusing users at run time.
  */
 export const PRODUCT_HERO = {
   preset: 'product_hero',
@@ -29,10 +37,10 @@ export const PRODUCT_HERO = {
   minSpeechMs: 5_000,
   maxSpeechMs: 15_000,
   budget: {
-    /** Credits per silent clip — the same per-second rate as every other video. */
-    clipCredits: { 5: 140, 10: 280 } as Readonly<Record<ProductHeroClipSeconds, number>>,
-    /** The most one render may cost: two clips (10 + 5) for 15 s of speech. */
+    /** The most one render may charge: two clips (10 + 5) for 15 s of speech. */
     maxCredits: 420,
+    /** The most one render may cost us at the provider (same two clips). */
+    maxProviderUsd: 1.8,
   },
 } as const;
 
@@ -64,5 +72,10 @@ export function planProductHeroShots(durationMs: number): ProductHeroClipSeconds
 
 /** Credits for rendering `durationMs` of speech: the sum of its planned clips. */
 export function quoteProductHeroCredits(durationMs: number): number {
-  return planProductHeroShots(durationMs).reduce((sum, s) => sum + PRODUCT_HERO.budget.clipCredits[s], 0);
+  return planProductHeroShots(durationMs).reduce((sum, s) => sum + VIDEO_CLIP_CREDITS[s], 0);
+}
+
+/** Provider USD for rendering `durationMs` of speech: the sum of its planned clips. */
+export function productHeroProviderUsd(durationMs: number): number {
+  return planProductHeroShots(durationMs).reduce((sum, s) => sum + VIDEO_CLIP_USD[s], 0);
 }

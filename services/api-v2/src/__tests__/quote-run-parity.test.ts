@@ -9,7 +9,7 @@
 // that shared behavior at the pure-module level (no server/DB import).
 
 import { describe, it, expect } from 'vitest';
-import { planProductHeroShots, PRODUCT_HERO } from '@agentmedia/schema';
+import { planProductHeroShots, VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
 import { MakeUgcSkillInputSchema, MakeProductHeroSkillInputSchema } from '../skills/registry.js';
 import { quoteSkillCredits } from '../skills/credit-quotes.js';
 import { decideMakeUgcRoute } from '../skills/make-ugc-router.js';
@@ -46,7 +46,7 @@ describe('quote/route credit coherence (invariant 9)', () => {
 describe('make_product_hero quote == charge (invariant 9)', () => {
   // The worker charges each planned clip its Preset price; the quote must be that sum.
   const charged = (ms: number) =>
-    planProductHeroShots(ms).reduce((sum, d) => sum + PRODUCT_HERO.budget.clipCredits[d], 0);
+    planProductHeroShots(ms).reduce((sum, d) => sum + VIDEO_CLIP_CREDITS[d], 0);
 
   it('quotes representative draft durations at exactly the planned clips', () => {
     for (const ms of [5_000, 5_001, 9_999, 10_000, 10_001, 12_000, 15_000]) {

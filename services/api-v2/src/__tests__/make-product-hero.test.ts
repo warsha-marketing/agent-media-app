@@ -12,7 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Request, Response } from 'express';
-import { planProductHeroShots, PRODUCT_HERO } from '@agentmedia/schema';
+import { planProductHeroShots, PRODUCT_HERO, VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
 
 // ── In-memory tables behind a supabase-shaped client ────────────────────────
 
@@ -166,7 +166,7 @@ describe('make_product_hero skill', () => {
 
 describe('make_product_hero quote/charge parity', () => {
   const clipCharge = (ms: number) =>
-    planProductHeroShots(ms).reduce((s, d) => s + PRODUCT_HERO.budget.clipCredits[d], 0);
+    planProductHeroShots(ms).reduce((s, d) => s + VIDEO_CLIP_CREDITS[d], 0);
 
   it.each([5_000, 6_200, 10_000, 10_001, 13_750, 15_000])(
     'quotes a %i ms draft at exactly what its planned clips are charged',
@@ -184,7 +184,7 @@ describe('make_product_hero quote/charge parity', () => {
   it('never quotes above the Preset’s declared budget', () => {
     for (let ms = 5_000; ms <= 15_000; ms += 500) {
       expect(quoteSkillCredits('make_product_hero', { duration_ms: ms })).toBeLessThanOrEqual(
-        SKILLS.make_product_hero.costBudget!.maxCredits,
+        PRODUCT_HERO.budget.maxCredits,
       );
     }
   });

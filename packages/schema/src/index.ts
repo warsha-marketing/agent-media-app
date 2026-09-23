@@ -14,6 +14,8 @@ export * from './tooling/contracts.js';
 // Shared take planner — quote (api-v2) and execution (primitive-worker-vnext)
 // MUST plan identically. See src/take-planner.ts.
 export * from './take-planner.js';
+// Clip prices (credits + provider USD) — the one table quote and charge share.
+export * from './video-pricing.js';
 // Product Hero shot plan + cost budget — quote (api-v2) and render
 // (primitive-worker-vnext) plan identically. See src/product-hero.ts.
 export * from './product-hero.js';

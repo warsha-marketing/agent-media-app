@@ -11,8 +11,10 @@
  *                      never stretched)
  *
  * Each writes its own primitive_runs row under the parent skill run. Only the
- * clips are charged, at the Preset's per-clip price, and they are held to the
- * Preset's budget rather than the per-primitive cap (lib/preset-budget.ts).
+ * clips are charged, at the shared per-clip price. They are exempt from the
+ * per-primitive cap (a 10 s clip alone exceeds it): the Preset's declared budget
+ * (PRODUCT_HERO.budget in @agentmedia/schema) governs the whole render, and the
+ * shot plan is held to it by tests. The day cap still applies.
  *
  * Extension points (later tickets, deliberately not built here): the Music Bed
  * and Captions attach at the mux — a ducked bed as one more audio input, and
@@ -30,7 +32,7 @@ import { getDb } from '../client/db.js';
 import { r2GetPrivateObject, r2UploadVnext } from '../client/r2.js';
 import { generateSimpleSelfieEvolink } from '../client/evolink.js';
 import { deductPrimitiveCredits, refundPrimitiveCredits } from '../client/credits.js';
-import { assertWithinProductHeroBudget, PRODUCT_HERO_BUDGET } from '../lib/preset-budget.js';
+import { VIDEO_CLIP_USD } from '@agentmedia/schema';
 
 const execFileP = promisify(execFile);
 
@@ -128,8 +130,6 @@ export interface ProductHeroClipInput {
   /** 0-based position of this shot in the Short, and how many shots it has. */
   shot_index: number;
   shot_count: number;
-  /** Speech length of the whole render — the Preset budget is checked on its plan. */
-  run_duration_ms: number;
   /** Product Hero visuals are always silent: the draft audio is the only voice. */
   generate_audio: false;
 }
@@ -193,11 +193,9 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
       );
     }
 
-    // Budget: the Preset's declared budget for the whole planned render stands in
-    // for the per-primitive cap (a 10 s clip alone exceeds that cap). The day cap
-    // still applies.
-    assertWithinProductHeroBudget(input.run_duration_ms);
-    const estimatedUsd = PRODUCT_HERO_BUDGET.clipUsd[input.duration];
+    // Spend: the per-primitive cap does not apply (the Preset's budget governs
+    // the whole render; see the header). The day cap still does.
+    const estimatedUsd = VIDEO_CLIP_USD[input.duration];
     const since = new Date();
     since.setUTCHours(0, 0, 0, 0);
     const { data: dayRows, error: dayErr } = await db

@@ -28,6 +28,7 @@
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
 import { planProductHeroShots } from '@agentmedia/schema';
 import type { PrimitiveActivities } from '../activities/index.js';
+import { makeChildRunId } from './child-run-id.js';
 import { failureInfo } from './failure-info.js';
 
 export interface MakeProductHeroWorkflowInput {
@@ -56,7 +57,7 @@ export interface MakeProductHeroWorkflowResult {
 const MAX_CUT_DRIFT_MS = 50;
 
 const NON_RETRYABLE = [
-  'INVALID_INPUT', 'BUDGET_CAP_PRESET', 'BUDGET_CAP_DAY',
+  'INVALID_INPUT', 'BUDGET_CAP_DAY',
   'REFERENCE_URL_NOT_ALLOWED', 'PROVIDER_UNCONFIGURED', 'INSUFFICIENT_CREDITS',
   'DRAFT_AUDIO_MISSING',
   // A moderation verdict is final; resubmitting is another paid render of a
@@ -131,7 +132,6 @@ export async function makeProductHeroWorkflow(
         duration: shots[i],
         shot_index: i,
         shot_count: shots.length,
-        run_duration_ms: input.duration_ms,
         generate_audio: false,
       });
       clipUrls.push(clip.video_url);
@@ -196,22 +196,4 @@ export async function makeProductHeroWorkflow(
     });
     throw err;
   }
-}
-
-// ── deterministic helpers (isolate-safe: no crypto/Date/random) ─────────────
-
-function fnv1a(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i += 1) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
-/** Deterministic child primitive_run_id from skill_run_id + step (unique per step). */
-function makeChildRunId(skillRunId: string, step: string): string {
-  const suffix = (fnv1a(step).toString(16).padStart(8, '0') + '0000').slice(0, 12);
-  const base = skillRunId.replace(/[^a-f0-9-]/gi, '').toLowerCase();
-  return base.slice(0, base.length - 12) + suffix;
 }

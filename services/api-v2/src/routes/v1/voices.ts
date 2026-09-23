@@ -44,14 +44,13 @@ import {
   toOperatorVoiceView,
   type VoiceDeps,
 } from '../../voices/catalog.js';
+import { isUuid } from '../../lib/uuid.js';
 
 interface VoiceRouteMiddleware {
   generateLimiter: RequestHandler;
   readLimiter: RequestHandler;
   authMiddleware: RequestHandler;
 }
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function userOf(req: Request): string {
   return (req as { userId?: string }).userId as string;
@@ -129,7 +128,7 @@ export function registerVoiceRoutes(app: express.Express, middleware: VoiceRoute
   for (const [action, apply] of [['approve', approveVoice], ['revoke', revokeVoice]] as const) {
     app.post(`/v1/operator/voices/:id/${action}`, generateLimiter, authMiddleware, operatorOnly, async (req, res) => {
       const id = String(req.params.id ?? '');
-      if (!UUID.test(id)) {
+      if (!isUuid(id)) {
         res.status(404).json({ error: { code: 'VOICE_NOT_FOUND', message: 'Voice not found.' } });
         return;
       }

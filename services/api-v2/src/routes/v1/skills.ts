@@ -713,7 +713,7 @@ async function resolveDraftOrRespond(
 /**
  * make_product_hero: render an approved draft into a Product Hero Short.
  *
- * Order matters: every refusal (draft, photo moderation, budget, credits) comes
+ * Order matters: every refusal (draft, photo moderation, credits) comes
  * BEFORE the draft is claimed, because a claim is final — rendered_at is
  * set-once, and a claimed draft never renders again. The claim is conditional
  * on rendered_at still being NULL, so two concurrent calls cannot both start.
@@ -747,19 +747,6 @@ async function dispatchProductHero(
     aspect_ratio: '9:16',
     duration_ms: draft.duration_ms,
   };
-
-  // The Preset's own cost budget (its plan never exceeds it; this guards a
-  // future plan or price change from silently overspending).
-  const budget = SKILLS[slug].costBudget;
-  const credits = quoteSkillCredits(slug, runInput);
-  if (budget && credits > budget.maxCredits) {
-    res.status(422).json({
-      error: 'over_preset_budget',
-      skill: slug,
-      detail: `This render would cost ${credits} credits, over the Product Hero budget of ${budget.maxCredits}.`,
-    });
-    return;
-  }
 
   const preflight = await preflightCreditCheck(userId, slug, runInput);
   if (!preflight.ok) {

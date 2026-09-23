@@ -55,10 +55,10 @@ Three caps enforced in code before any provider call:
 
 Exceeding any cap rejects the Activity with a non-retryable failure.
 
-A Preset's clips are held to the Preset's own declared budget instead of
-`PRIMITIVE_CAP_USD` (a whole planned render must fit it; see
-`src/lib/preset-budget.ts`). The day cap still applies. Every other activity
-keeps the per-primitive cap.
+A Preset's clips are exempt from `PRIMITIVE_CAP_USD`: the Preset declares its
+own budget for the whole render (`PRODUCT_HERO.budget` in `@agentmedia/schema`),
+and its shot plan is held to it by tests. The day cap still applies. Every
+other activity keeps the per-primitive cap.
 
 `R2_PRIVATE_BUCKET` (default `R2_BUCKET`) must match api-v2's: the Product Hero
 render reads the draft's private audio from it by key.

@@ -37,6 +37,7 @@
 
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
 import type { PrimitiveActivities } from '../activities/index.js';
+import { makeChildRunId, seedFromString } from './child-run-id.js';
 import type { SimpleSelfieActivityInput, SimpleSelfieActivityResult } from '../activities/simple-selfie.js';
 import type { LipSyncActivityInput, LipSyncActivityResult } from '../activities/lip-sync.js';
 import type { ExtractAudioActivityResult } from '../activities/extract-audio.js';
@@ -384,39 +385,3 @@ export async function brollTalkingHeadWorkflow(
   }
 }
 
-/** FNV-1a 32-bit hash. Deterministic + side-effect-free, so it is safe inside
- *  the Temporal workflow isolate (no crypto / Date / random). */
-function fnv1a(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i += 1) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
-/**
- * Deterministic non-negative 31-bit seed from a string. The broll workflow
- * derives ONE seed per render (from skill_run_id) and passes the SAME value to
- * every take so Seedance pins the look (face/framing/wardrobe) across cuts.
- */
-function seedFromString(s: string): number {
-  // Map into [1, 2^31-1] — never 0, since some providers treat seed 0 as
-  // "pick a random seed", which would defeat the cross-take consistency lock.
-  return (fnv1a(s) % 2147483646) + 1;
-}
-
-/**
- * Deterministic child primitive_run_id derived from skill_run_id + step.
- * Replaces the last 12 hex chars of the uuid with a per-step hash so IDs stay
- * idempotent across workflow retries (no Node crypto inside the workflow isolate).
- * The hash is computed per step label so EVERY step — seg0, seg1, … seg9,
- * compose, subs, voiceref — gets a UNIQUE id. (The previous hardcoded map only
- * covered seg0-2 and collided on every take past the third, handing back a
- * cached/wrong clip for renders that chunk into 4+ takes.)
- */
-function makeChildRunId(skillRunId: string, step: string): string {
-  const suffix = (fnv1a(step).toString(16).padStart(8, '0') + '0000').slice(0, 12);
-  const base = skillRunId.replace(/[^a-f0-9-]/gi, '').toLowerCase();
-  return base.slice(0, base.length - 12) + suffix;
-}

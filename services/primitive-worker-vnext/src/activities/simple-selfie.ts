@@ -1,7 +1,7 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 import { ApplicationFailure, Context } from '@temporalio/activity';
-import { SimpleSelfieToolInputSchema } from '@agentmedia/schema';
+import { SimpleSelfieToolInputSchema, VIDEO_CLIP_USD } from '@agentmedia/schema';
 import type { WorkerConfig } from '../config.js';
 import { getDb } from '../client/db.js';
 import { r2UploadVnext } from '../client/r2.js';
@@ -58,11 +58,8 @@ export interface SimpleSelfieActivityResult {
   duration_seconds: 5 | 10 | 15;
 }
 
-const PER_DURATION_USD: Record<5 | 10 | 15, number> = {
-  5: 0.6,
-  10: 1.2,
-  15: 1.8,
-};
+// Provider-cost estimate per clip: the shared table in @agentmedia/schema.
+const PER_DURATION_USD = VIDEO_CLIP_USD;
 
 export function makeSimpleSelfieActivity(cfg: WorkerConfig) {
   return async function simpleSelfie(

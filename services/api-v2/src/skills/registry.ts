@@ -335,10 +335,6 @@ export interface SkillEntry {
   /** When true, this is the curated agent surface (make_ugc). The MCP tools/list
    *  and public-skill pack filter to these once MAKE_UGC_ENABLED is on. */
   agentFacing?: boolean;
-  /** A Preset declares its own cost budget: the most one run may be charged.
-   *  Dispatch refuses a quote above it; the worker holds the Preset's clips to
-   *  the matching provider budget in place of the per-primitive cap. */
-  costBudget?: { maxCredits: number };
 }
 
 export const SKILLS: Record<string, SkillEntry> = {
@@ -456,7 +452,6 @@ export const SKILLS: Record<string, SkillEntry> = {
     workflowType: 'makeProductHeroWorkflow',
     inputSchema: MakeProductHeroSkillInputSchema,
     agentFacing: true,
-    costBudget: { maxCredits: PRODUCT_HERO.budget.maxCredits },
   },
   make_ugc: {
     slug: 'make_ugc',

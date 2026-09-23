@@ -13,7 +13,7 @@
 import { decideMakeUgcRoute, type MakeUgcProps } from './make-ugc-router.js';
 // Shared take planner — the SAME module the worker plans with, so quote and run
 // cannot disagree. See packages/schema/src/take-planner.ts.
-import { countWords, fitDuration, planTakeDurations, quoteProductHeroCredits } from '@agentmedia/schema';
+import { countWords, fitDuration, planTakeDurations, quoteProductHeroCredits, VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
 
 // Portraits are free; a character sheet is charged only standalone (a sheet
 // generated inside make_ugc_video is free — see the make_ugc_video case).
@@ -21,13 +21,9 @@ const PORTRAIT_CREDITS = 0;
 const CHARACTER_SHEET_CREDITS = 35;
 const WIREFRAME_CREDITS = 35;
 const SUBTITLES_CREDITS = 15;
-// Video pricing set for >=50% margin vs the upstream Seedance 720p provider:
-// 10s costs us $1.99; at 68 credits/$ revenue, 280 cr = $4.12 => 51.7% margin.
-const SELFIE_BY_DURATION: Record<5 | 10 | 15, number> = {
-  5: 140,
-  10: 280,
-  15: 420,
-};
+// Video clip prices come from the shared table in @agentmedia/schema — the SAME
+// one the worker charges from (see packages/schema/src/video-pricing.ts).
+const SELFIE_BY_DURATION = VIDEO_CLIP_CREDITS;
 
 function selfieFor(duration: unknown): number {
   const d = typeof duration === 'number' ? duration : Number(duration) || 10;

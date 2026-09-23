@@ -10,7 +10,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ApplicationFailure } from '@temporalio/activity';
-import { PRODUCT_HERO } from '@agentmedia/schema';
+import { VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
 
 /**
  * Is billing explicitly disabled for this deployment?
@@ -45,25 +45,21 @@ export type PrimitiveCreditableId =
 const PORTRAIT_CREDITS = 0;
 const CHARACTER_SHEET_CREDITS = 35;
 
-// Video pricing set for >=50% margin vs EvoLink Seedance 720p ($0.199/s).
-// 10s costs us $1.99; 280 credits @ 68 cr/$ = $4.12 => ~51.7% margin.
-const SELFIE_CREDITS_BY_DURATION: Record<5 | 10 | 15, number> = {
-  5: 140,
-  10: 280,
-  15: 420,
-};
+// Video clip prices come from the shared table in @agentmedia/schema — the SAME
+// one api-v2 quotes from (see packages/schema/src/video-pricing.ts).
+const SELFIE_CREDITS_BY_DURATION = VIDEO_CLIP_CREDITS;
 
 export function quotePrimitiveCredits(
   primitive: PrimitiveCreditableId,
   duration?: 5 | 10 | 15,
 ): number {
   if (primitive === 'product_hero_clip') {
-    // Priced by the Preset's own budget — the SAME table api-v2 quotes from
-    // (@agentmedia/schema), so the quote is exactly the sum of these charges.
+    // A silent clip costs what any clip of its length costs; api-v2 quotes the
+    // planned clips from the same table, so the quote is exactly these charges.
     if (duration !== 5 && duration !== 10) {
       throw ApplicationFailure.nonRetryable(`product_hero_clip has no ${duration}s price`, 'INVALID_INPUT');
     }
-    return PRODUCT_HERO.budget.clipCredits[duration];
+    return VIDEO_CLIP_CREDITS[duration];
   }
   switch (primitive) {
     case 'portrait_gpt2':
