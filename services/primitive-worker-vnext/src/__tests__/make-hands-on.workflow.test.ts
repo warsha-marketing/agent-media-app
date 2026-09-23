@@ -160,9 +160,9 @@ describe('makeHandsOnWorkflow — the order of the render', () => {
       const frames = fakes.callsTo('presetStartingFrame') as PresetStartingFrameInput[];
       const charged =
         clips.reduce((s, c) => s + quotePrimitiveCredits('product_hero_clip', c.duration), 0) +
-        frames.length * quotePrimitiveCredits('preset_frame');
+        frames.reduce((s, f) => s + quotePrimitiveCredits('preset_frame', undefined, f.frame), 0);
       expect(charged).toBe(quotePresetCredits(HANDS_ON, ms));
-      expect(quotePrimitiveCredits('preset_frame')).toBe(STARTING_FRAME_CREDITS.product_in_hands);
+      expect(quotePrimitiveCredits('preset_frame', undefined, 'product_in_hands')).toBe(STARTING_FRAME_CREDITS.product_in_hands);
     }
   });
 });

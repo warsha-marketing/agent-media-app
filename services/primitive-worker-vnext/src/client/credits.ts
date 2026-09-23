@@ -10,7 +10,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ApplicationFailure } from '@temporalio/activity';
-import { STARTING_FRAME_CREDITS, VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
+import { STARTING_FRAME_CREDITS, VIDEO_CLIP_CREDITS, type StartingFrame } from '@agentmedia/schema';
 
 /**
  * Is billing explicitly disabled for this deployment?
@@ -50,9 +50,15 @@ const CHARACTER_SHEET_CREDITS = 35;
 // one api-v2 quotes from (see packages/schema/src/video-pricing.ts).
 const SELFIE_CREDITS_BY_DURATION = VIDEO_CLIP_CREDITS;
 
+/**
+ * Credits for one run of `primitive`. `duration` prices a clip; `frame` prices a
+ * Preset's starting frame (`preset_frame`) by its kind, from the same table
+ * api-v2 quotes from — so a second frame kind is charged its own price.
+ */
 export function quotePrimitiveCredits(
   primitive: PrimitiveCreditableId,
   duration?: 5 | 10 | 15,
+  frame?: StartingFrame,
 ): number {
   if (primitive === 'product_hero_clip') {
     // A silent clip costs what any clip of its length costs; api-v2 quotes the
@@ -78,8 +84,11 @@ export function quotePrimitiveCredits(
     case 'lip_sync':
       return SELFIE_CREDITS_BY_DURATION[duration ?? 10];
     case 'preset_frame':
-      // A Preset's starting frame (#18): the shared price api-v2 quotes from.
-      return STARTING_FRAME_CREDITS.product_in_hands;
+      // A Preset's starting frame (#18), by kind: the shared price api-v2 quotes from.
+      if (frame === undefined || !Object.hasOwn(STARTING_FRAME_CREDITS, frame)) {
+        throw ApplicationFailure.nonRetryable(`preset_frame has no price for frame ${String(frame)}`, 'INVALID_INPUT');
+      }
+      return STARTING_FRAME_CREDITS[frame];
   }
 }
 
@@ -97,6 +106,8 @@ export async function deductPrimitiveCredits(args: {
   primitiveRunId: string;
   primitive: PrimitiveCreditableId;
   duration?: 5 | 10 | 15;
+  /** The starting frame's kind: prices a `preset_frame`. */
+  frame?: StartingFrame;
   description: string;
   /** Charge this exact amount instead of the list price — pass 0 to make the
    *  primitive free (e.g. a character sheet generated inside a video). */
@@ -114,7 +125,7 @@ export async function deductPrimitiveCredits(args: {
   // and every worker.
   if (isBillingDisabled()) return 0;
 
-  const credits = args.creditsOverride ?? quotePrimitiveCredits(args.primitive, args.duration);
+  const credits = args.creditsOverride ?? quotePrimitiveCredits(args.primitive, args.duration, args.frame);
   // Free primitive (portrait, or a sheet inside a video): stamp 0 and skip the
   // ledger RPC entirely — there is nothing to charge.
   if (credits <= 0) {

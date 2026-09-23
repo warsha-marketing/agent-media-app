@@ -18,7 +18,7 @@
  */
 
 import { ApplicationFailure, Context } from '@temporalio/activity';
-import { STARTING_FRAME_USD, type StartingFrame } from '@agentmedia/schema';
+import { STARTING_FRAMES, STARTING_FRAME_USD, type StartingFrame } from '@agentmedia/schema';
 import type { WorkerConfig } from '../config.js';
 import { getDb } from '../client/db.js';
 import { generateImageWithFallback, classifyOpenAIError } from '../client/openai.js';
@@ -55,7 +55,7 @@ export function makePresetStartingFrameActivity(cfg: WorkerConfig) {
   return async function presetStartingFrame(input: PresetStartingFrameInput): Promise<PresetStartingFrameResult> {
     const db = getDb(cfg.supabase.url, cfg.supabase.serviceRoleKey);
 
-    if (input.frame !== 'product_in_hands') {
+    if (!(STARTING_FRAMES as readonly string[]).includes(input.frame)) {
       throw ApplicationFailure.nonRetryable(`unknown starting frame ${String(input.frame)}`, 'INVALID_INPUT');
     }
     if (typeof input.prompt !== 'string' || input.prompt.trim() === '') {
@@ -135,6 +135,7 @@ export function makePresetStartingFrameActivity(cfg: WorkerConfig) {
       userId: input.user_id,
       primitiveRunId: input.primitive_run_id,
       primitive: 'preset_frame',
+      frame: input.frame,
       description: `vNext ${input.preset} ${input.frame} frame ${input.shot_index + 1}`,
     });
 
