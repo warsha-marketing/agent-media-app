@@ -55,7 +55,7 @@ The exact dialect text spoken in a Short, in plain dialect spelling with Targete
 _Avoid_: copy, text, prompt
 
 **Targeted Diacritics**:
-تشكيل placed only on words the voice could misread (product nouns, notes, ingredients, and words with a common second reading, e.g. جِلد, مِسك); everything else stays unmarked.
+تشكيل on every word a voice could misread (product nouns, notes, ingredients, and words with a common second reading, e.g. جِلد, مِسك); everything else stays unmarked. Enforced by the writer's own report of the product terms it marked plus a growing list of known misreadable words (homographs) that native reviewers extend when they hear a mis-read (`HOMOGRAPHS` in `services/api-v2/src/drafts/script-check.ts`).
 _Avoid_: full diacritics, tashkeel (alone)
 
 **Delivery Tag**:
