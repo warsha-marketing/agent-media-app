@@ -5,8 +5,10 @@ import {
   defaultPreset,
   dialectChoices,
   parsePresets,
+  WEB_FLOWS,
   type PresetOption,
 } from '../../apps/web/lib/preset-picker.ts';
+import { PRESETS } from '../../packages/schema/src/preset-registry.ts';
 
 /** GET /v1/presets as api-v2 answers a user today: Product Hero, Levantine only. */
 const USER_BODY = {
@@ -110,5 +112,14 @@ describe('defaultPreset', () => {
     assert.equal(defaultPreset(op, null)!.slug, 'product_hero');
     assert.equal(defaultPreset(op, 'hands_on')!.slug, 'product_hero'); // listed, but no web flow yet
     assert.equal(defaultPreset(parsePresets({ presets: [] }), null), null);
+  });
+});
+
+// WEB_FLOWS stays in the web app: it says which Presets have a page here, which
+// the API cannot know. It may only name Presets the registry defines.
+describe('WEB_FLOWS', () => {
+  it('names only Presets in the Preset registry (@agentmedia/schema PRESETS)', () => {
+    assert.ok(WEB_FLOWS.size > 0);
+    for (const slug of WEB_FLOWS) assert.ok(Object.hasOwn(PRESETS, slug), `${slug} is not a Preset in the registry`);
   });
 });

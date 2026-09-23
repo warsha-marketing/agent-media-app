@@ -28,14 +28,13 @@
 import type express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { DIALECTS, SCRIPT_DIALECTS } from '@agentmedia/schema';
 import {
-  ALL_DIALECTS,
   PRESET_SLUGS,
   PresetError,
   QUALIFICATION_STATES,
   QualificationBodySchema,
   QualificationPathSchema,
-  SCRIPT_DIALECTS,
   listPresetsFor,
   operatorQualifications,
   qualifyPreset,
@@ -225,7 +224,7 @@ export function presetOpenApi(): { paths: Record<string, unknown>; schemas: Reco
                   items: {
                     type: 'object',
                     properties: {
-                      dialect: { type: 'string', enum: [...ALL_DIALECTS] },
+                      dialect: { type: 'string', enum: [...DIALECTS] },
                       name: { type: 'string' },
                       status: { type: 'string', enum: ['available', 'coming_soon'] },
                       sample: { type: 'boolean', description: 'Operators only: an unqualified Dialect they can draft to make reviewer samples.' },

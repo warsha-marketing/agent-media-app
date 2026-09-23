@@ -18,10 +18,10 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { registerPresetRoutes, presetOpenApi } from '../routes/v1/presets.js';
 import { registerDraftRoutes } from '../routes/v1/drafts.js';
-import { DIALECTS, type DraftDeps, type DraftRow } from '../drafts/product-hero-draft.js';
+import { DialectSchema, type DraftDeps, type DraftRow } from '../drafts/product-hero-draft.js';
 import { systemPrompt } from '../drafts/providers.js';
+import { SCRIPT_DIALECTS } from '@agentmedia/schema';
 import {
-  SCRIPT_DIALECTS,
   type PresetDeps,
   type QualifiedPresetRow,
 } from '../presets/qualification.js';
@@ -324,7 +324,7 @@ describe('operator qualification routes', () => {
 
 describe('drafting honours qualification', () => {
   it('Script Dialects are exactly the Dialects a draft can be written in', () => {
-    expect([...SCRIPT_DIALECTS]).toEqual([...DIALECTS]);
+    expect(DialectSchema.options).toEqual([...SCRIPT_DIALECTS]);
   });
 
   it('refuses a user draft for an unqualified pair with PRESET_NOT_QUALIFIED before any provider is paid', async () => {
@@ -404,5 +404,21 @@ describe('preset routes in the OpenAPI spec', () => {
     expect(paths['/v1/operator/presets/{preset}/dialects/{dialect}/withdraw'].post.operationId).toBe('operatorWithdrawPreset');
     expect(schemas).toHaveProperty('PresetList');
     expect(schemas).toHaveProperty('Qualification');
+  });
+});
+
+describe('one spelling of the not-qualified refusal', () => {
+  it('the drafts routes and the skill routes document the same code string', async () => {
+    const { PRESET_NOT_QUALIFIED } = await import('../presets/qualification.js');
+    const { draftOpenApi } = await import('../routes/v1/drafts.js');
+    const { skillRouteOpenApi } = await import('../routes/v1/skills-openapi.js');
+    expect(PRESET_NOT_QUALIFIED).toBe('PRESET_NOT_QUALIFIED');
+    const drafts = draftOpenApi().paths as Record<string, any>;
+    expect(drafts['/v1/drafts/product-hero'].post.responses['422'].description).toContain(PRESET_NOT_QUALIFIED);
+    const skills = skillRouteOpenApi().paths as Record<string, any>;
+    for (const path of ['/v1/skills/{slug}/run', '/v1/skills/{slug}/quote']) {
+      expect(skills[path].post.responses['422'].description).toContain(`\`${PRESET_NOT_QUALIFIED}\``);
+      expect(skills[path].post.responses['422'].description).not.toContain('preset_not_qualified');
+    }
   });
 });

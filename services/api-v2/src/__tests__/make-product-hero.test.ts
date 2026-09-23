@@ -584,7 +584,7 @@ describe('make_product_hero renders only a Qualified Preset', () => {
     for (const route of [quoteSkillRoute, runSkillRoute]) {
       const r = await call(route, OWNER, { draft_id: id, product_image_url: PHOTO });
       expect(r.status).toBe(422);
-      expect(r.body).toMatchObject({ error: 'preset_not_qualified', skill: 'make_product_hero', preset: 'product_hero', dialect: 'gulf' });
+      expect(r.body).toMatchObject({ error: 'PRESET_NOT_QUALIFIED', skill: 'make_product_hero', preset: 'product_hero', dialect: 'gulf' });
     }
     expect(uploads).toHaveLength(0);
     expect(started).toHaveLength(0);
@@ -596,7 +596,7 @@ describe('make_product_hero renders only a Qualified Preset', () => {
     const id = seedDraft();
     const r = await call(runSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO });
     expect(r.status).toBe(422);
-    expect(r.body.error).toBe('preset_not_qualified');
+    expect(r.body.error).toBe('PRESET_NOT_QUALIFIED');
     expect(started).toHaveLength(0);
   });
 
@@ -621,7 +621,7 @@ describe('make_product_hero renders only a Qualified Preset', () => {
     const id = seedDraft({ user_id: OPERATOR, dialect: 'gulf', voice_catalog_id: gulfVoice() });
     const r = await call(runSkillRoute, OPERATOR, { draft_id: id, product_image_url: PHOTO });
     expect(r.status).toBe(422);
-    expect(r.body.error).toBe('preset_not_qualified');
+    expect(r.body.error).toBe('PRESET_NOT_QUALIFIED');
   });
 });
 
@@ -644,7 +644,7 @@ describe('make_product_hero in the OpenAPI spec', () => {
     expect(paths['/v1/skills/{slug}/run'].post.responses['409'].description).toContain('`idempotency_key_reused`');
     expect(paths['/v1/skills/{slug}/quote'].post.responses['422'].description).toContain('`unpriceable_input`');
     for (const path of ['/v1/skills/{slug}/run', '/v1/skills/{slug}/quote']) {
-      expect(paths[path].post.responses['422'].description).toContain('`preset_not_qualified`');
+      expect(paths[path].post.responses['422'].description).toContain('`PRESET_NOT_QUALIFIED`');
     }
     const runStatus = (skillRouteOpenApi().paths['/v1/skills/runs/{skill_run_id}'] as {
       get: { responses: { '200': { content: { 'application/json': { schema: { properties: Record<string, { properties?: Record<string, { enum?: string[] }> }> } } } } } };

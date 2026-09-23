@@ -29,7 +29,6 @@ import type { Request, RequestHandler, Response } from 'express';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
   CreateDraftInputSchema,
-  DIALECTS,
   DraftError,
   MAX_SPEECH_MS,
   MIN_SPEECH_MS,
@@ -41,7 +40,8 @@ import {
   type DraftRow,
 } from '../../drafts/product-hero-draft.js';
 import { isUuid } from '../../lib/uuid.js';
-import { formatDeliveryTags } from '@agentmedia/schema';
+import { PRESET_NOT_QUALIFIED } from '../../presets/qualification.js';
+import { SCRIPT_DIALECTS, formatDeliveryTags } from '@agentmedia/schema';
 
 interface DraftRouteMiddleware {
   generateLimiter: RequestHandler;
@@ -165,13 +165,13 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
         'createProductHeroDraft',
         'Product Hero draft: write a Script (plain dialect spelling, Targeted Diacritics, Delivery Tags) that sells the Product Details, in a Dialect, and voice it. Free (no credits).',
         bodySchema(CreateDraftInputSchema, 'create_draft_input'),
-        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, stray brackets, Latin letters) — carries the Script and issues, to fix in the editor and re-voice; PRESET_NOT_QUALIFIED: Product Hero is not a Qualified Preset in this Dialect yet (carries preset, dialect and available; see GET /v1/presets); BRIEF_REFUSED; ${voiceRefused}`,
+        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, stray brackets, Latin letters) — carries the Script and issues, to fix in the editor and re-voice; ${PRESET_NOT_QUALIFIED}: Product Hero is not a Qualified Preset in this Dialect yet (carries preset, dialect and available; see GET /v1/presets); BRIEF_REFUSED; ${voiceRefused}`,
       ),
       '/v1/drafts/product-hero/revoice': post(
         'revoiceProductHeroDraft',
         `Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief, Product Details and Dialect carry over. The Script may carry Delivery Tags: ${tagList}.`,
         bodySchema(RevoiceDraftInputSchema, 'revoice_draft_input'),
-        `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_STRAY_BRACKETS: a [ or ] outside a Delivery Tag (carries found); SCRIPT_NO_ARABIC: no Arabic text to speak (Latin words such as a brand name are allowed in an edit); DIALECT_MISMATCH (dialect differs from the parent's); PRESET_NOT_QUALIFIED; ${voiceRefused}`,
+        `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_STRAY_BRACKETS: a [ or ] outside a Delivery Tag (carries found); SCRIPT_NO_ARABIC: no Arabic text to speak (Latin words such as a brand name are allowed in an edit); DIALECT_MISMATCH (dialect differs from the parent's); ${PRESET_NOT_QUALIFIED}; ${voiceRefused}`,
       ),
       '/v1/drafts/{id}': {
         get: {
@@ -190,7 +190,7 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
         properties: {
           id: { type: 'string', format: 'uuid' },
           preset: { type: 'string', enum: ['product_hero'] },
-          dialect: { type: 'string', enum: [...DIALECTS] },
+          dialect: { type: 'string', enum: [...SCRIPT_DIALECTS] },
           brief: { type: ['string', 'null'] },
           product_details: { type: ['string', 'null'], description: 'The facts the Script sells (name, notes or ingredients, benefits); carried over on re-voice.' },
           script: {

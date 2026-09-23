@@ -11,6 +11,7 @@
 import { RENDER_REFUSALS, type RenderRefusalCode } from '../../skills/product-hero-render.js';
 import { RUN_CREDITS_OPENAPI } from '../../skills/run-credits.js';
 import { IDEMPOTENCY_KEY_REUSED } from '../../skills/idempotency.js';
+import { PRESET_NOT_QUALIFIED as PRESET_NOT_QUALIFIED_CODE } from '../../presets/qualification.js';
 
 const skillError = (description: string) => ({
   description,
@@ -26,9 +27,9 @@ function refusalLines(status: number): string[] {
 
 const sentences = (...parts: string[]) => parts.join('. ');
 
-/** The Qualified Preset gate (#8, presets/qualification.ts), checked after the draft refusals. */
-const PRESET_NOT_QUALIFIED =
-  "`preset_not_qualified` (make_product_hero): Product Hero is not a Qualified Preset in the draft's Dialect (carries preset, dialect and available; see GET /v1/presets)";
+/** The Qualified Preset gate (#8, presets/qualification.ts), checked after the draft refusals.
+ *  The same code string the drafts routes send (upper snake, the domain's own). */
+const PRESET_NOT_QUALIFIED = `\`${PRESET_NOT_QUALIFIED_CODE}\` (make_product_hero): Product Hero is not a Qualified Preset in the draft's Dialect (carries preset, dialect and available; see GET /v1/presets)`;
 
 const SLUG = { name: 'slug', in: 'path', required: true, schema: { type: 'string' } };
 

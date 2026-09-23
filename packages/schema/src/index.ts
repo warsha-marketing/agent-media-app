@@ -28,3 +28,5 @@ export * from './delivery-tags.js';
 // Music Bed — per-Preset licensed track set (data) + the on/off/which-track
 // decision the quote and the render share. See src/music-bed/.
 export * from './music-bed/index.js';
+// Dialects — the one list (every Dialect, and the ones a Script can be written in).
+export * from './dialects.js';

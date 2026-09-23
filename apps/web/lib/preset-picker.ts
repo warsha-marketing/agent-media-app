@@ -38,7 +38,12 @@ export interface PresetPicker {
   operator: boolean;
 }
 
-/** The Presets that have a web flow today. Any other Preset is listed but not pickable yet. */
+/**
+ * The Presets that have a web flow today. Any other Preset is listed but not
+ * pickable yet. Kept here, not read from the API: it says which pages this app
+ * has, which the server cannot know. scripts/tests/preset-picker.test.ts holds
+ * it to the Preset registry (@agentmedia/schema PRESETS).
+ */
 export const WEB_FLOWS: ReadonlySet<string> = new Set(['product_hero']);
 
 const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0;

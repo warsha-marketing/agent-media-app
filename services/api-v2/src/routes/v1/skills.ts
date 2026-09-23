@@ -743,7 +743,8 @@ async function resolveDraftOrRespond(
   } catch (err) {
     if (err instanceof RenderRefusal) sendRenderRefusal(res, slug, err);
     else if (err instanceof PresetError) {
-      res.status(err.status).json({ error: 'preset_not_qualified', skill: slug, detail: err.message, ...err.details });
+      // The domain code as is (PRESET_NOT_QUALIFIED), the same string the drafts routes send.
+      res.status(err.status).json({ error: err.code, skill: slug, detail: err.message, ...err.details });
     } else res.status(500).json({ error: 'draft_lookup_failed', skill: slug, detail: errorMessage(err) });
     return null;
   }

@@ -43,18 +43,18 @@
  */
 
 import { z } from 'zod';
-import { DELIVERY_TAGS, formatDeliveryTags, modelHonoursDeliveryTags, stripDeliveryTags } from '@agentmedia/schema';
+import { DELIVERY_TAGS, SCRIPT_DIALECTS, formatDeliveryTags, modelHonoursDeliveryTags, stripDeliveryTags, type ScriptDialect } from '@agentmedia/schema';
 import { generatedScriptIssues, scriptTextIssues, type ScriptIssue } from './script-check.js';
 import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
 import { PresetError, assertPresetAvailable, type PresetAccess } from '../presets/qualification.js';
 
 // ── Vocabulary (CONTEXT.md) ──────────────────────────────────────────────────
 
-/** Dialects a Script can be written in (each has a Dialect guide). Which of them
- *  a user may draft is a Qualified Preset question (presets/, #8). */
-export const DIALECTS = ['levantine', 'gulf'] as const;
-export type Dialect = (typeof DIALECTS)[number];
-export const DialectSchema = z.enum(DIALECTS);
+/** Dialects a Script can be written in (@agentmedia/schema SCRIPT_DIALECTS; each
+ *  has a Dialect guide). Which of them a user may draft is a Qualified Preset
+ *  question (presets/, #8). */
+export type Dialect = ScriptDialect;
+export const DialectSchema = z.enum(SCRIPT_DIALECTS);
 
 export const PRESET = 'product_hero' as const;
 

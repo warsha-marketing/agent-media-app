@@ -25,7 +25,7 @@
  */
 
 import { z } from 'zod';
-import { PRESETS as PRESET_DEFINITIONS, type PresetId } from '@agentmedia/schema';
+import { DIALECTS, DIALECT_NAMES, PRESETS as PRESET_DEFINITIONS, SCRIPT_DIALECTS, type Dialect, type PresetId } from '@agentmedia/schema';
 import { SKILLS } from '../skills/registry.js';
 
 // ── Vocabulary ───────────────────────────────────────────────────────────────
@@ -37,40 +37,25 @@ const PICKER_SUMMARIES: Record<PresetId, string> = {
 };
 
 /**
- * The Presets the picker knows, in registry order: every Preset definition
- * (@agentmedia/schema PRESETS, #16) with the skill that renders it. Adding
- * Hands-on and Reaction (#15) to the registry lists them here; users are offered
- * one only once an operator qualifies a Dialect for it.
+ * One picker row per Preset, in registry order: every Preset definition
+ * (@agentmedia/schema PRESETS, #16 — what a Preset IS) with its picker line and
+ * the skill that renders it. Adding Hands-on and Reaction (#15) to the registry
+ * lists them here; users are offered one only once an operator qualifies a
+ * Dialect for it.
  */
-export const PRESETS = (Object.keys(PRESET_DEFINITIONS) as PresetId[]).map((id) => ({
+export const PRESET_PICKER_ROWS = (Object.keys(PRESET_DEFINITIONS) as PresetId[]).map((id) => ({
   slug: id,
   name: PRESET_DEFINITIONS[id].name,
   summary: PICKER_SUMMARIES[id],
   /** The skill that renders it (POST /v1/skills/{skill}/quote and /run). */
   skill: Object.values(SKILLS).find((s) => s.preset?.id === id)?.slug ?? null,
 }));
-export type PresetSlug = PresetId;
-export const PRESET_SLUGS = PRESETS.map((p) => p.slug);
+export const PRESET_SLUGS = PRESET_PICKER_ROWS.map((p) => p.slug);
 
-/** Every Dialect (CONTEXT.md), in picker order. The ones not qualified show as "coming soon". */
-export const ALL_DIALECTS = ['levantine', 'gulf', 'egyptian', 'maghrebi', 'msa'] as const;
-export type AnyDialect = (typeof ALL_DIALECTS)[number];
-
-export const DIALECT_NAMES: Record<AnyDialect, string> = {
-  levantine: 'Levantine',
-  gulf: 'Gulf',
-  egyptian: 'Egyptian',
-  maghrebi: 'Maghrebi',
-  msa: 'MSA',
-};
-
-/**
- * Dialects a Script can be written in today (the drafts' DIALECTS, which have a
- * Dialect guide). Only these can be drafted, so only these can be sampled and
- * qualified. Held equal to drafts DIALECTS by qualified-presets.test.ts.
- */
-export const SCRIPT_DIALECTS = ['levantine', 'gulf'] as const;
-export type ScriptDialect = (typeof SCRIPT_DIALECTS)[number];
+// Dialects: every Dialect (DIALECTS, picker order; the ones not qualified show as
+// "coming soon") and the Script Dialects (SCRIPT_DIALECTS: only these can be
+// drafted, so only these can be sampled and qualified) come from ONE list in
+// @agentmedia/schema (src/dialects.ts).
 
 export const QUALIFICATION_STATES = ['qualified', 'withdrawn'] as const;
 export type QualificationState = (typeof QUALIFICATION_STATES)[number];
@@ -133,6 +118,16 @@ export interface PresetDeps extends PresetAccess {
   now(): Date;
 }
 
+/**
+ * The refusal code for a Preset–Dialect pair that is not a Qualified Preset —
+ * ONE string on every route that sends it: the drafts routes (in their
+ * `{ error: { code, message, … } }` envelope) and the skill quote/run routes
+ * (in theirs, `{ error: code, skill, detail, … }`). It is the domain error's own
+ * code, in the UPPER_SNAKE spelling the drafts/presets/voices routes use for
+ * every code, so no route renames it.
+ */
+export const PRESET_NOT_QUALIFIED = 'PRESET_NOT_QUALIFIED';
+
 export class PresetError extends Error {
   constructor(
     readonly status: number,
@@ -144,9 +139,9 @@ export class PresetError extends Error {
   }
 }
 
-const presetOf = (slug: string) => PRESETS.find((p) => p.slug === slug) ?? null;
+const presetOf = (slug: string) => PRESET_PICKER_ROWS.find((p) => p.slug === slug) ?? null;
 const presetName = (slug: string) => presetOf(slug)?.name ?? slug;
-const dialectName = (d: string) => DIALECT_NAMES[d as AnyDialect] ?? d;
+const dialectName = (d: string) => DIALECT_NAMES[d as Dialect] ?? d;
 
 // ── The gate ─────────────────────────────────────────────────────────────────
 
@@ -171,10 +166,10 @@ export async function assertPresetAvailable(
     console.error(`[presets] operator check failed: ${(err as Error)?.message ?? 'unknown error'}`);
   }
   if (operator) return { operatorSample: true };
-  const available = ALL_DIALECTS.filter((d) => qualified.includes(d));
+  const available = DIALECTS.filter((d) => qualified.includes(d));
   throw new PresetError(
     422,
-    'PRESET_NOT_QUALIFIED',
+    PRESET_NOT_QUALIFIED,
     `${presetName(preset)} is not offered in ${dialectName(dialect)} yet (coming soon). ` +
       (available.length ? `Available: ${available.map(dialectName).join(', ')}.` : 'No Dialect is available for it yet.'),
     { preset, dialect, available },
@@ -193,12 +188,12 @@ export async function assertPresetAvailable(
 export async function listPresetsFor(deps: Pick<PresetDeps, 'repo' | 'isOperator'>, userId: string) {
   const [rows, operator] = await Promise.all([deps.repo.list(), deps.isOperator(userId).catch(() => false)]);
   const qualified = new Set(rows.filter((r) => r.state === 'qualified').map((r) => `${r.preset}:${r.dialect}`));
-  const presets = PRESETS.map((p) => ({
+  const presets = PRESET_PICKER_ROWS.map((p) => ({
     slug: p.slug,
     name: p.name,
     summary: p.summary,
     skill: p.skill,
-    dialects: ALL_DIALECTS.map((d) => {
+    dialects: DIALECTS.map((d) => {
       const available = qualified.has(`${p.slug}:${d}`);
       return {
         dialect: d,
@@ -221,7 +216,7 @@ function knownPreset(slug: string): void {
 export async function operatorQualifications(deps: Pick<PresetDeps, 'repo'>) {
   const rows = await deps.repo.list();
   const byPair = new Map(rows.map((r) => [`${r.preset}:${r.dialect}`, r]));
-  return PRESETS.flatMap((p) =>
+  return PRESET_PICKER_ROWS.flatMap((p) =>
     SCRIPT_DIALECTS.map((d) => {
       const row = byPair.get(`${p.slug}:${d}`);
       return row

@@ -29,12 +29,12 @@
 import type express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { DIALECTS } from '@agentmedia/schema';
 import {
   AddVoiceInputSchema,
   CandidatesQuerySchema,
   ListVoicesQuerySchema,
   OperatorListQuerySchema,
-  VOICE_DIALECTS,
   VOICE_GENDERS,
   VOICE_STATES,
   VoiceError,
@@ -278,7 +278,7 @@ export function voiceOpenApi(): { paths: Record<string, unknown>; schemas: Recor
         properties: {
           id: { type: 'string', format: 'uuid', description: 'Pass as voice_id when drafting.' },
           display_name: { type: 'string' },
-          dialect: { type: 'string', enum: [...VOICE_DIALECTS] },
+          dialect: { type: 'string', enum: [...DIALECTS] },
           gender: { type: 'string', enum: [...VOICE_GENDERS] },
           style: { type: 'string', description: 'Delivery style, e.g. warm or energetic.' },
           sample_url: { type: 'string', format: 'uri', description: 'A playable sample of the Voice.' },
@@ -300,7 +300,7 @@ export function voiceOpenApi(): { paths: Record<string, unknown>; schemas: Recor
           provider: { type: 'string' },
           provider_voice_id: { type: 'string' },
           display_name: { type: 'string' },
-          dialect: { type: 'string', enum: [...VOICE_DIALECTS] },
+          dialect: { type: 'string', enum: [...DIALECTS] },
           gender: { type: 'string', enum: [...VOICE_GENDERS] },
           style: { type: 'string' },
           sample_url: { type: 'string', format: 'uri' },
@@ -336,7 +336,7 @@ export function voiceOpenApi(): { paths: Record<string, unknown>; schemas: Recor
                 description: { type: 'string' },
                 gender: { type: ['string', 'null'] },
                 accent: { type: 'string' },
-                suggested_dialect: { type: ['string', 'null'], enum: [...VOICE_DIALECTS, null] },
+                suggested_dialect: { type: ['string', 'null'], enum: [...DIALECTS, null] },
                 style: { type: ['string', 'null'] },
                 sample_url: { type: ['string', 'null'], format: 'uri' },
                 catalog: {
