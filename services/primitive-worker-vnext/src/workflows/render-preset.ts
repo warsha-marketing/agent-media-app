@@ -19,6 +19,10 @@
  *
  *   1. fetchDraftAudio — reads the draft's private audio by key and measures it.
  *                        Nothing visual is requested until the audio is in hand.
+ *   1b. presetStartingFrame — (#18) only for shot kinds that declare a starting
+ *                        frame (e.g. Hands-on's product-in-hands image): one
+ *                        image per such planned shot, all before any clip. The
+ *                        shot is then animated from its frame, not the photo.
  *   2. productHeroClip — one silent clip per planned shot (generate_audio: false),
  *                        from the product photo, prompted for its shot kind (plus the Modesty Default on every
  *                        shot that shows a person or hands, #17). Shots
@@ -59,11 +63,13 @@ import {
   type Modesty,
   type PlannedShot,
   type PresetInput,
+  type HandGender,
+  type HandsOnSetting,
 } from '@agentmedia/schema';
 import type { PrimitiveActivities } from '../activities/index.js';
 import { makeChildRunId } from './child-run-id.js';
 import { failureInfo } from './failure-info.js';
-import { presetShotPrompt, type PresetRenderDefinition } from '../presets/index.js';
+import { presetFramePrompt, presetShotPrompt, type PresetRenderDefinition } from '../presets/index.js';
 
 /**
  * What a registered Preset workflow (e.g. makeProductHeroWorkflow) is started
@@ -105,6 +111,10 @@ export interface PresetRenderInput {
    * the render re-checks it before anything is requested.
    */
   modesty?: Modesty | null;
+  /** Hands-on (#18): whose hands are on screen; api-v2 defaults it from the Product Details. */
+  hand_gender?: HandGender;
+  /** Hands-on (#18): where the hands use the product; api-v2 defaults it from the Product Details. */
+  setting?: HandsOnSetting;
 }
 
 export interface PresetRenderResult {
@@ -120,6 +130,8 @@ export interface PresetRenderResult {
 const PRESET_INPUT_FIELDS: Record<PresetInput, keyof PresetRenderInput> = {
   product_image: 'product_image_url',
   character: 'character_image_url',
+  hand_gender: 'hand_gender',
+  setting: 'setting',
 };
 
 /** A finished cut may differ from the audio by at most about one frame. */
@@ -135,7 +147,7 @@ const NON_RETRYABLE = [
   'EVOLINK_400', 'EVOLINK_401', 'EVOLINK_403', 'EVOLINK_404', 'EVOLINK_413', 'EVOLINK_415', 'EVOLINK_422', 'EVOLINK_451',
 ];
 
-const { productHeroClip } = proxyActivities<PrimitiveActivities>({
+const { productHeroClip, presetStartingFrame } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '20 minutes',
   heartbeatTimeout: '5 minutes',
   retry: { initialInterval: '10s', maximumInterval: '2m', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: NON_RETRYABLE },
@@ -187,6 +199,7 @@ export async function renderPreset(
     }
 
     const modesty = modestyFor(preset, input.modesty ?? null);
+    const vars = promptVarsFor(preset, input);
 
     // ── 1. The draft's audio, first ─────────────────────────────────────────
     const audio = await fetchDraftAudio({
@@ -205,21 +218,52 @@ export async function renderPreset(
     } catch (err) {
       throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
     }
-    const clipUrls: string[] = [];
+    // Every prompt of the render, built before anything visual is requested.
+    let framePrompts: Array<string | null>;
+    let clipPrompts: string[];
+    try {
+      framePrompts = shots.map((s) => (preset.shotKinds[s.kind].frame ? presetFramePrompt(preset, s.kind, modesty, vars) : null));
+      clipPrompts = shots.map((s) => presetShotPrompt(preset, s.kind, modesty, vars));
+    } catch (err) {
+      throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
+    }
     let totalUsd = 0;
+    // ── 1b. Starting frames (#18), every one before any clip ────────────────
+    const frameUrls: Array<string | null> = shots.map(() => null);
+    for (let i = 0; i < shots.length; i += 1) {
+      const frame = preset.shotKinds[shots[i].kind].frame;
+      const framePrompt = framePrompts[i];
+      if (!frame || !framePrompt) continue;
+      await composedSkillState({ skill_run_id: skillRunId, current_step: `frame_${i + 1}` });
+      const made = await presetStartingFrame({
+        primitive_run_id: mint(`frame_${i}`),
+        user_id: input.user_id,
+        skill_run_id: skillRunId,
+        product_image_url: input.product_image_url,
+        frame,
+        preset: preset.id,
+        shot_kind: shots[i].kind,
+        shot_index: i,
+        prompt: framePrompt,
+      });
+      frameUrls[i] = made.image_url;
+      totalUsd += made.credits_actual_usd;
+    }
+    const clipUrls: string[] = [];
     for (let i = 0; i < shots.length; i += 1) {
       await composedSkillState({ skill_run_id: skillRunId, current_step: `clip_${i + 1}` });
       const clip = await productHeroClip({
         primitive_run_id: mint(`clip_${i}`),
         user_id: input.user_id,
         skill_run_id: skillRunId,
-        product_image_url: input.product_image_url,
+        // The shot's reference image: its starting frame if it has one, else the photo.
+        product_image_url: frameUrls[i] ?? input.product_image_url,
         duration: shots[i].seconds,
         shot_index: i,
         shot_count: shots.length,
         preset: preset.id,
         shot_kind: shots[i].kind,
-        prompt: presetShotPrompt(preset, shots[i].kind, modesty),
+        prompt: clipPrompts[i],
         generate_audio: false,
         // The person's reference only where the shot shows that person (#19).
         ...(preset.shotKinds[shots[i].kind].shows === 'person' && input.character_image_url
@@ -319,6 +363,19 @@ export async function renderPreset(
       // keep the render's own error
     }
     throw err;
+  }
+}
+
+/**
+ * The words the Preset's prompts are filled with (#18), from its own inputs.
+ * An input it cannot word refuses the render before anything is requested.
+ */
+function promptVarsFor(preset: PresetRenderDefinition, input: PresetRenderInput): Readonly<Record<string, string>> {
+  if (!preset.promptVars) return {};
+  try {
+    return preset.promptVars(input);
+  } catch (err) {
+    throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
   }
 }
 
