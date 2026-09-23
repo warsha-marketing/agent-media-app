@@ -25,7 +25,7 @@
  */
 
 import type express from 'express';
-import type { Request, RequestHandler, Response } from 'express';
+import type { RequestHandler, Response } from 'express';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
   CreateDraftInputSchema,
@@ -40,6 +40,7 @@ import {
   type DraftRow,
 } from '../../drafts/product-hero-draft.js';
 import { isUuid } from '../../lib/uuid.js';
+import { sendInvalidInput, userOf } from './route-helpers.js';
 import { PRESET_NOT_QUALIFIED } from '../../presets/qualification.js';
 import { SCRIPT_DIALECTS, formatDeliveryTags } from '@agentmedia/schema';
 
@@ -61,21 +62,6 @@ function sendDraftError(res: Response, err: unknown, tag: string): void {
   res.status(502).json({ error: { code: 'DRAFT_FAILED', message: 'Drafting failed upstream. Try again in a moment.' } });
 }
 
-function userOf(req: Request): string {
-  return (req as { userId?: string }).userId as string;
-}
-
-function sendInvalidInput(res: Response, issues: { path: (string | number)[]; message: string }[]): void {
-  const first = issues[0];
-  res.status(400).json({
-    error: {
-      code: 'INVALID_INPUT',
-      message: first ? `${first.path.join('.') || 'body'}: ${first.message}` : 'Invalid input',
-      issues,
-    },
-  });
-}
-
 export function registerDraftRoutes(app: express.Express, middleware: DraftRouteMiddleware, deps: DraftDeps): void {
   const { generateLimiter, readLimiter, authMiddleware, draftLimiter } = middleware;
 
@@ -86,7 +72,7 @@ export function registerDraftRoutes(app: express.Express, middleware: DraftRoute
 
   app.post('/v1/drafts/product-hero', generateLimiter, authMiddleware, draftLimiter, async (req, res) => {
     const parsed = CreateDraftInputSchema.safeParse(req.body ?? {});
-    if (!parsed.success) return sendInvalidInput(res, parsed.error.issues);
+    if (!parsed.success) return sendInvalidInput(res, parsed.error.issues, 'body');
     try {
       await sendDraft(res, 201, await createDraftFromBrief(deps, userOf(req), parsed.data));
     } catch (err) {
@@ -96,7 +82,7 @@ export function registerDraftRoutes(app: express.Express, middleware: DraftRoute
 
   app.post('/v1/drafts/product-hero/revoice', generateLimiter, authMiddleware, draftLimiter, async (req, res) => {
     const parsed = RevoiceDraftInputSchema.safeParse(req.body ?? {});
-    if (!parsed.success) return sendInvalidInput(res, parsed.error.issues);
+    if (!parsed.success) return sendInvalidInput(res, parsed.error.issues, 'body');
     try {
       await sendDraft(res, 201, await revoiceDraft(deps, userOf(req), parsed.data));
     } catch (err) {

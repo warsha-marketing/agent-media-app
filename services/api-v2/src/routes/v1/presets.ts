@@ -26,8 +26,9 @@
  */
 
 import type express from 'express';
-import type { Request, RequestHandler, Response } from 'express';
+import type { RequestHandler, Response } from 'express';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { operatorOnly as operatorOnlyFor, sendInvalidInput, userOf } from './route-helpers.js';
 import { DIALECTS, SCRIPT_DIALECTS } from '@agentmedia/schema';
 import {
   PRESET_SLUGS,
@@ -48,10 +49,6 @@ interface PresetRouteMiddleware {
   authMiddleware: RequestHandler;
 }
 
-function userOf(req: Request): string {
-  return (req as { userId?: string }).userId as string;
-}
-
 function sendPresetError(res: Response, err: unknown, tag: string): void {
   if (err instanceof PresetError) {
     res.status(err.status).json({ error: { code: err.code, message: err.message, ...err.details } });
@@ -61,34 +58,11 @@ function sendPresetError(res: Response, err: unknown, tag: string): void {
   res.status(502).json({ error: { code: 'PRESETS_UNAVAILABLE', message: 'The Preset list is unavailable. Try again in a moment.' } });
 }
 
-function sendInvalidInput(res: Response, issues: { path: (string | number)[]; message: string }[]): void {
-  const first = issues[0];
-  res.status(400).json({
-    error: {
-      code: 'INVALID_INPUT',
-      message: first ? `${first.path.join('.') || 'input'}: ${first.message}` : 'Invalid input',
-      issues,
-    },
-  });
-}
-
 export function registerPresetRoutes(app: express.Express, middleware: PresetRouteMiddleware, deps: PresetDeps): void {
   const { generateLimiter, readLimiter, authMiddleware } = middleware;
 
   /** After auth: only operators pass. Fails closed if the check itself fails. */
-  const operatorOnly: RequestHandler = async (req, res, next) => {
-    let ok = false;
-    try {
-      ok = await deps.isOperator(userOf(req));
-    } catch (err) {
-      console.error(`[v1 presets/operator] ${(err as Error)?.message ?? 'operator check failed'}`);
-    }
-    if (!ok) {
-      res.status(403).json({ error: { code: 'OPERATOR_ONLY', message: 'Only operators can qualify or withdraw Presets.' } });
-      return;
-    }
-    next();
-  };
+  const operatorOnly = operatorOnlyFor(deps.isOperator, 'presets', 'Only operators can qualify or withdraw Presets.');
 
   app.get('/v1/presets', readLimiter, authMiddleware, async (req, res) => {
     try {

@@ -27,7 +27,7 @@
  */
 
 import type express from 'express';
-import type { Request, RequestHandler, Response } from 'express';
+import type { RequestHandler, Response } from 'express';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { DIALECTS } from '@agentmedia/schema';
 import {
@@ -46,15 +46,12 @@ import {
   type VoiceDeps,
 } from '../../voices/catalog.js';
 import { isUuid } from '../../lib/uuid.js';
+import { operatorOnly as operatorOnlyFor, sendInvalidInput, userOf } from './route-helpers.js';
 
 interface VoiceRouteMiddleware {
   generateLimiter: RequestHandler;
   readLimiter: RequestHandler;
   authMiddleware: RequestHandler;
-}
-
-function userOf(req: Request): string {
-  return (req as { userId?: string }).userId as string;
 }
 
 function sendVoiceError(res: Response, err: unknown, tag: string): void {
@@ -66,34 +63,11 @@ function sendVoiceError(res: Response, err: unknown, tag: string): void {
   res.status(502).json({ error: { code: 'VOICE_CATALOG_FAILED', message: 'The Voice catalog is unavailable. Try again in a moment.' } });
 }
 
-function sendInvalidInput(res: Response, issues: { path: (string | number)[]; message: string }[]): void {
-  const first = issues[0];
-  res.status(400).json({
-    error: {
-      code: 'INVALID_INPUT',
-      message: first ? `${first.path.join('.') || 'input'}: ${first.message}` : 'Invalid input',
-      issues,
-    },
-  });
-}
-
 export function registerVoiceRoutes(app: express.Express, middleware: VoiceRouteMiddleware, deps: VoiceDeps): void {
   const { generateLimiter, readLimiter, authMiddleware } = middleware;
 
   /** After auth: only operators pass. Fails closed if the check itself fails. */
-  const operatorOnly: RequestHandler = async (req, res, next) => {
-    let ok = false;
-    try {
-      ok = await deps.isOperator(userOf(req));
-    } catch (err) {
-      console.error(`[v1 voices/operator] ${(err as Error)?.message ?? 'operator check failed'}`);
-    }
-    if (!ok) {
-      res.status(403).json({ error: { code: 'OPERATOR_ONLY', message: 'Only operators can manage the Voice catalog.' } });
-      return;
-    }
-    next();
-  };
+  const operatorOnly = operatorOnlyFor(deps.isOperator, 'voices', 'Only operators can manage the Voice catalog.');
 
   app.get('/v1/voices', readLimiter, authMiddleware, async (req, res) => {
     const parsed = ListVoicesQuerySchema.safeParse(req.query ?? {});
