@@ -1,6 +1,7 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 import { supabase } from './server.js';
+import type { RequestHandler } from 'express';
 import { makeVideoConcurrencyGate } from './concurrency-gate.js';
 
 /**
@@ -47,4 +48,4 @@ async function inFlightCount(userId: string): Promise<number> {
  * MAX_CONCURRENT in flight: 429 TOO_MANY_ACTIVE_VIDEOS. Fails open; see
  * concurrency-gate.ts.
  */
-export const videoConcurrencyGate = makeVideoConcurrencyGate({ max: MAX_CONCURRENT, countInFlight: inFlightCount });
+export const videoConcurrencyGate: RequestHandler = makeVideoConcurrencyGate({ max: MAX_CONCURRENT, countInFlight: inFlightCount });
