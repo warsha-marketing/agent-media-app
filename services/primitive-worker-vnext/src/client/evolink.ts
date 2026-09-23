@@ -6,6 +6,7 @@
  */
 
 import { withEvolinkSlot } from './evolink-pool.js';
+import { ApplicationFailure } from '@temporalio/activity';
 
 const BASE_URL = 'https://api.evolink.ai/v1';
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
@@ -115,6 +116,14 @@ export async function pollEvolinkTask(
         (task.error_message as string | undefined) ??
         (task.failure_reason as string | undefined) ??
         JSON.stringify(task).slice(0, 400);
+      // A completed moderation decision is terminal. Retrying the activity
+      // submits (and may charge for) the same rejected video again.
+      if ((task.error as { code?: string } | undefined)?.code === 'content_policy_violation') {
+        throw ApplicationFailure.nonRetryable(
+          `evolink task ${taskId} ${status}: ${message}`,
+          'EVOLINK_CONTENT_POLICY_VIOLATION',
+        );
+      }
       throw new Error(`evolink task ${taskId} ${status}: ${message}`);
     }
     await sleep(pollMs);

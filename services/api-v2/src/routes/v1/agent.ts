@@ -16,6 +16,7 @@ import type { Request, Response } from 'express';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { SKILLS } from '../../skills/registry.js';
 import { supabase } from '../../server.js';
+import { repairToolHistory } from '../../lib/agent-history.js';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL = process.env.ANTHROPIC_AGENT_MODEL || 'claude-sonnet-4-6';
@@ -215,7 +216,7 @@ export async function agentRoute(req: Request, res: Response): Promise<void> {
 
   // Window to the most recent turns so a long session never balloons the
   // payload (cost/latency) — trimmed to a valid Anthropic start.
-  const windowed = windowMessages(messages, 60);
+  const windowed = windowMessages(repairToolHistory(messages), 60);
 
   // Client capability gate: only offer the interactive ask_user choice tool to
   // clients that declare support (the new web client sends this header). Keeps

@@ -157,6 +157,7 @@ async function appendMessagesToChat(
   userId: string,
   chatId: string,
   incoming: IncomingMessage[],
+  attempt = 0,
 ): Promise<{ error?: 'not_found' | 'db'; inserted: number; message_count: number }> {
   // 1) Ownership.
   const { data: chat, error: chatErr } = await supabase
@@ -212,16 +213,19 @@ async function appendMessagesToChat(
     seq: ++seq,
     role: m.role === 'assistant' ? 'assistant' : 'user',
     content: m.content ?? null,
-    skill_run_id: isUuid(m.skill_run_id) ? m.skill_run_id : null,
-    primitive_run_id: isUuid(m.primitive_run_id) ? m.primitive_run_id : null,
+    // Older web clients put primitive IDs into skill_run_id. Normalize before
+    // insertion so the terminal result cannot fail the skill_runs foreign key.
+    skill_run_id: m.run_kind !== 'primitive' && isUuid(m.skill_run_id) ? m.skill_run_id : null,
+    primitive_run_id: isUuid(m.primitive_run_id) ? m.primitive_run_id : m.run_kind === 'primitive' && isUuid(m.skill_run_id) ? m.skill_run_id : null,
     run_kind: m.run_kind === 'skill' || m.run_kind === 'primitive' ? m.run_kind : null,
     client_msg_id: typeof m.client_msg_id === 'string' && m.client_msg_id.length > 0 ? m.client_msg_id : null,
   }));
 
   const { error: insErr } = await supabase.from('agent_messages').insert(rows);
   if (insErr) {
-    // A concurrent writer raced us on (chat_id, seq) or (chat_id, client_msg_id).
-    // Treat as benign in v1 (serial assumption) and report no-op rather than 500.
+    // Re-read seq and dedup after a concurrent append. Reusing the same client
+    // IDs makes this retry safe even if another request already saved the rows.
+    if (insErr.code === '23505' && attempt < 2) return appendMessagesToChat(userId, chatId, incoming, attempt + 1);
     console.error(`[agent chats append] insert: ${insErr.message}`);
     return { error: 'db', inserted: 0, message_count: chat.message_count };
   }

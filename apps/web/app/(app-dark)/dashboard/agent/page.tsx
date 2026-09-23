@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { persistedRunReference, reconcileToolRuns, resultStatus, type ToolStatus } from '@/lib/agent-tool-state';
 import { Loader2, Send, Square, Sparkles, Wrench, Check, AlertCircle, ArrowDown, Plus, Trash2, X, RotateCcw, PanelRight, ListChecks, Users, Images, CornerDownLeft, Pencil, MessageSquarePlus, History, Pin, PinOff, Archive, Search, MoreHorizontal, Folder, FolderPlus, ChevronRight, ChevronDown } from 'lucide-react';
 import { invokeFn } from '@/lib/supabase/fn-proxy';
 
@@ -36,7 +37,7 @@ interface Project { id: string; name: string; emoji?: string | null; instruction
 interface SavedCharacter { id: string; name: string; character_sheet_url?: string | null; thumbnail_url?: string | null }
 interface StepArtifact { url?: string; kind?: string; mime?: string }
 interface StepInfo { primitive_run_id: string; primitive: string; status: string; artifacts?: StepArtifact[]; error?: { message?: string } | null }
-interface ToolRun { skill: string; status: 'running' | 'succeeded' | 'failed'; mediaUrl?: string; note?: string; runId?: string; composed?: boolean; characters?: SavedCharacter[]; currentStep?: string; steps?: StepInfo[] }
+interface ToolRun { skill: string; status: ToolStatus; mediaUrl?: string; note?: string; runId?: string; composed?: boolean; characters?: SavedCharacter[]; currentStep?: string; steps?: StepInfo[] }
 interface AskOption { label: string; description?: string; recommended?: boolean }
 interface PendingAsk { toolUseId: string; question: string; options: AskOption[]; allowOther: boolean }
 
@@ -134,7 +135,7 @@ function titleFrom(text: string): string {
 
 // Map a client Msg → the server's append payload (drops cmid into client_msg_id).
 function toServerMessage(m: Msg) {
-  return { role: m.role, content: m.content, client_msg_id: m.cmid, skill_run_id: m.skillRunId ?? null, run_kind: m.runKind ?? null };
+  return { role: m.role, content: m.content, client_msg_id: m.cmid, ...persistedRunReference(m.skillRunId, m.runKind) };
 }
 
 // Reopen: rebuild the toolRuns map from persisted rows so inline media + ask_user
@@ -153,7 +154,7 @@ function rebuildToolRuns(msgs: Msg[]): Record<string, ToolRun> {
       if (name === 'ask_user') {
         tr[b.tool_use_id] = { skill: 'ask_user', status: 'succeeded', note: parsed.skipped ? 'skipped' : (parsed.selected ?? parsed.text) };
       } else {
-        const status = parsed.status === 'failed' ? 'failed' : 'succeeded';
+        const status = resultStatus(parsed.status);
         tr[b.tool_use_id] = { skill: name, status, mediaUrl: parsed.video_url ?? undefined, runId: m.skillRunId ?? undefined, composed: m.runKind === 'skill' };
       }
     }
@@ -174,6 +175,7 @@ export default function AgentPage() {
   const [toolRuns, setToolRuns] = useState<Record<string, ToolRun>>({});
   const [chatId, setChatId] = useState<string | null>(null);
   const chatIdRef = useRef<string | null>(null);
+  const persistQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -316,12 +318,17 @@ export default function AgentPage() {
     try {
       const r = await fetch(`/api/v1/agent/chats/${id}`, { credentials: 'include' });
       if (!r.ok) return false;
-      const j = (await r.json()) as { chat?: { project_id?: string | null }; messages?: Array<{ role: 'user' | 'assistant'; content: unknown; client_msg_id?: string | null; skill_run_id?: string | null; run_kind?: 'skill' | 'primitive' | null }> };
+      const j = (await r.json()) as { chat?: { project_id?: string | null }; messages?: Array<{ role: 'user' | 'assistant'; content: unknown; client_msg_id?: string | null; skill_run_id?: string | null; primitive_run_id?: string | null; run_kind?: 'skill' | 'primitive' | null }> };
       const msgs: Msg[] = (j.messages ?? []).map((m) => ({
         role: m.role, content: m.content as string | Block[],
-        cmid: m.client_msg_id ?? undefined, skillRunId: m.skill_run_id ?? undefined, runKind: m.run_kind ?? undefined,
+        cmid: m.client_msg_id ?? undefined, skillRunId: (m.run_kind === 'primitive' ? m.primitive_run_id : m.skill_run_id) ?? undefined, runKind: m.run_kind ?? undefined,
       }));
-      const tr = rebuildToolRuns(msgs);
+      let cachedRuns: Record<string, ToolRun> = {};
+      try {
+        const cached = JSON.parse(localStorage.getItem(LS_KEY) ?? 'null');
+        if (cached?.chatId === id) cachedRuns = cached.toolRuns ?? {};
+      } catch { /* no local run checkpoint */ }
+      const tr = reconcileToolRuns(cachedRuns, rebuildToolRuns(msgs));
       setMessages(msgs); setToolRuns(tr); setChat(id); setActiveProject(j.chat?.project_id ?? null);
       if (resume) void resumeIfNeeded(msgs, tr);
       return true;
@@ -350,10 +357,14 @@ export default function AgentPage() {
     const cid = chatIdRef.current;
     const rows = newMsgs.filter((m) => m.cmid);
     if (!cid || rows.length === 0) return;
-    void fetch(`/api/v1/agent/chats/${cid}/messages`, {
-      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: rows.map(toServerMessage) }),
-    }).catch(() => { /* offline / local-dev without service role — cache still holds it */ });
+    // Save calls before their results so concurrent appends cannot lose a row.
+    const body = JSON.stringify({ messages: rows.map(toServerMessage) });
+    persistQueueRef.current = persistQueueRef.current.then(async () => {
+      const response = await fetch(`/api/v1/agent/chats/${cid}/messages`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body,
+      });
+      if (!response.ok) throw new Error('Unable to save the latest chat message.');
+    }).catch(err => { if (chatIdRef.current === cid) setError((err as Error).message); });
   }
 
   /** One-time adoption of a legacy localStorage session into a fresh server chat. */
@@ -775,7 +786,8 @@ export default function AgentPage() {
   const empty = messages.length === 0;
 
   // ── Derived workspace-panel data ──────────────────────────────────────
-  const runList = Object.values(toolRuns);
+  const displayedRuns = reconcileToolRuns(toolRuns, rebuildToolRuns(messages));
+  const runList = Object.values(displayedRuns);
   const activeRun = runList.find((r) => r.status === 'running' && (r.steps?.length ?? 0) > 0)
     ?? [...runList].reverse().find((r) => (r.steps?.length ?? 0) > 0);
   const charactersRun = [...runList].reverse().find((r) => Array.isArray(r.characters));
@@ -1131,7 +1143,7 @@ export default function AgentPage() {
                       // Keep the choice visible in the transcript: the question as
                       // an assistant bubble, and (once answered) the user's pick as
                       // a reply bubble — so you can always see what you chose.
-                      const run = toolRuns[b.id];
+                      const run = displayedRuns[b.id];
                       const q = String((b.input as { question?: string })?.question ?? 'Choose an option');
                       const ans = run?.status === 'succeeded' ? run.note : undefined;
                       return (
@@ -1146,10 +1158,13 @@ export default function AgentPage() {
                     if (b.type === 'tool_use') {
                       // Compact status chip in the chat; the heavy stuff (live
                       // progress, character picker, artifacts) lives in the panel.
-                      const run = toolRuns[b.id];
+                      const run = displayedRuns[b.id];
                       const label = skillLabel(b.name);
                       const statusText = run?.status === 'succeeded' ? 'done'
                         : run?.status === 'failed' ? `failed${run.note ? ` — ${run.note}` : ''}`
+                        : run?.status === 'canceled' ? 'canceled'
+                        : pendingSpend?.toolUseId === b.id ? 'awaiting confirmation'
+                        : !run ? 'status unavailable'
                         : b.name === 'list_my_characters' ? 'loading…'
                         : run?.currentStep && run.currentStep !== 'done' ? `${run.currentStep.replace(/_/g, ' ')}…`
                         : 'generating… · usually 1–2 min';
@@ -1158,7 +1173,7 @@ export default function AgentPage() {
                           <div className="inline-flex items-center gap-2 self-start rounded-xl px-3 py-2 text-[13px]" style={{ background: '#14151F', border: '1px solid rgba(255,255,255,0.08)' }}>
                             {run?.status === 'succeeded' ? <Check className="h-4 w-4 shrink-0" style={{ color: '#34D399' }} />
                               : run?.status === 'failed' ? <AlertCircle className="h-4 w-4 shrink-0" style={{ color: '#F87171' }} />
-                              : <Loader2 className="h-4 w-4 shrink-0 animate-spin" style={{ color: '#A78BFA' }} />}
+                              : run?.status === 'running' && pendingSpend?.toolUseId !== b.id ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" style={{ color: '#A78BFA' }} /> : <Square className="h-4 w-4 shrink-0" style={{ color: 'rgba(255,255,255,0.4)' }} />}
                             <Wrench className="h-3.5 w-3.5 shrink-0" style={{ color: 'rgba(255,255,255,0.35)' }} />
                             <span style={{ color: '#E9E9F0' }}>{label}</span>
                             <span className="truncate" style={{ color: 'rgba(255,255,255,0.4)' }}>· {statusText}</span>
@@ -1188,7 +1203,7 @@ export default function AgentPage() {
                 </div>
               );
             })}
-            {busy && <div className="flex items-center gap-2 text-[13px]" style={{ color: 'rgba(255,255,255,0.45)' }}><Loader2 className="h-3.5 w-3.5 animate-spin" /> thinking…</div>}
+            {busy && !pendingAsk && !pendingSpend && !runList.some(run => run.status === 'running') && <div className="flex items-center gap-2 text-[13px]" style={{ color: 'rgba(255,255,255,0.45)' }}><Loader2 className="h-3.5 w-3.5 animate-spin" /> thinking…</div>}
             {error && <div className="rounded-xl px-4 py-2.5 text-sm" style={{ border: '1px solid rgba(255,79,79,0.3)', background: 'rgba(255,79,79,0.08)', color: '#FCA5A5' }}>{error}</div>}
           </div>
         </div>

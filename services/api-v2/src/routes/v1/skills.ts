@@ -176,6 +176,12 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     res.status(400).json({ error: 'invalid_input', skill: slug, detail: parsed.error.flatten() });
     return;
   }
+  // Match the run preflight and worker ledger in self-hosted billing mode.
+  // The UI skips its credit gate for a zero-cost quote; provider fees still apply.
+  if (!isBillingEnabled()) {
+    res.status(200).json({ slug, credits: 0, available: null, committed: 0, sufficient: true });
+    return;
+  }
   const input = parsed.data as Record<string, unknown>;
   const credits = quoteSkillCredits(slug, input);
 

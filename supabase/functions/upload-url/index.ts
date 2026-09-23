@@ -265,9 +265,17 @@ async function handleUploadUrl(req: Request): Promise<Response> {
     );
   }
 
+  // The internal Docker gateway is not reachable from the user's browser.
+  // Preserve the signed path and token while using the configured public base.
+  const internalBase = Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "");
+  const publicBase = Deno.env.get("SUPABASE_PUBLIC_URL")?.replace(/\/$/, "");
+  const uploadUrl = publicBase && signedData.signedUrl.startsWith(`${internalBase}/`)
+    ? publicBase + signedData.signedUrl.slice(internalBase.length)
+    : signedData.signedUrl;
+
   // 5. Return the presigned URL and storage path
   return corsRes({
-    upload_url: signedData.signedUrl,
+    upload_url: uploadUrl,
     storage_path: storagePath,
     token: signedData.token,
     expires_in: UPLOAD_EXPIRY_SECONDS,
