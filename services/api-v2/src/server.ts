@@ -676,19 +676,8 @@ function buildOpenApiSpec() {
       responses: { '200': { description: 'Saved characters with character_sheet_url + thumbnails' } },
     },
   };
-  paths['/v1/skills/runs/{skill_run_id}'] = {
-    get: {
-      operationId: 'getSkillRun',
-      summary: 'Get composed-skill run status + per-step artifacts',
-      tags: ['vnext-skills'],
-      security: [{ bearerAuth: [] }],
-      parameters: [
-        { name: 'skill_run_id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
-      ],
-      responses: { '200': { description: 'Composed skill run' }, '404': { description: 'Not found' } },
-    },
-  };
-  // Skill run + quote: error codes come from the tables the routes answer with.
+  // Skill run, quote and run status (with its charged/refunded credits): error
+  // codes come from the tables the routes answer with.
   const skillSpec = skillRouteOpenApi();
   Object.assign(paths, skillSpec.paths);
   // Product Hero drafts (#4). Described next to the routes, from the same zod

@@ -1,13 +1,15 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * OpenAPI entries for POST /v1/skills/{slug}/run and /quote, merged into
+ * OpenAPI entries for POST /v1/skills/{slug}/run and /quote and GET
+ * /v1/skills/runs/{skill_run_id}, merged into
  * /openapi.json by server.ts. The error codes come from the tables the routes
  * answer with (RENDER_REFUSALS for make_product_hero), so the spec cannot list
  * a code the server does not send, or miss one it does.
  */
 
 import { RENDER_REFUSALS, type RenderRefusalCode } from '../../skills/product-hero-render.js';
+import { RUN_CREDITS_OPENAPI } from '../../skills/run-credits.js';
 
 const skillError = (description: string) => ({
   description,
@@ -71,8 +73,45 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
       },
     },
   };
+  const runStatus = {
+    get: {
+      operationId: 'getSkillRun',
+      summary: 'Get composed-skill run status, per-step artifacts, and what the run charged and refunded',
+      tags: ['vnext-skills'],
+      security: [{ bearerAuth: [] }],
+      parameters: [{ name: 'skill_run_id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+      responses: {
+        '200': {
+          description: 'Composed skill run',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  skill_run_id: { type: 'string', format: 'uuid' },
+                  skill: { type: 'string' },
+                  skill_version: { type: 'string' },
+                  status: { type: 'string', enum: ['submitted', 'running', 'succeeded', 'failed', 'canceled'] },
+                  current_step: { type: ['string', 'null'] },
+                  started_at: { type: ['string', 'null'], format: 'date-time' },
+                  finished_at: { type: ['string', 'null'], format: 'date-time' },
+                  created_at: { type: 'string', format: 'date-time' },
+                  error: { type: ['object', 'null'], properties: { code: { type: 'string' }, message: { type: ['string', 'null'] } } },
+                  final_output: { type: ['object', 'null'] },
+                  credits: RUN_CREDITS_OPENAPI,
+                  steps: { type: 'array', items: { type: 'object' } },
+                },
+              },
+            },
+          },
+        },
+        '400': skillError('`invalid_skill_run_id`'),
+        '404': skillError('`not_found`: no such run on this account'),
+      },
+    },
+  };
   return {
-    paths: { '/v1/skills/{slug}/run': run, '/v1/skills/{slug}/quote': quote },
+    paths: { '/v1/skills/{slug}/run': run, '/v1/skills/{slug}/quote': quote, '/v1/skills/runs/{skill_run_id}': runStatus },
     schemas: {
       SkillError: {
         type: 'object',

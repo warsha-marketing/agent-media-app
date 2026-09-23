@@ -102,7 +102,7 @@ vi.mock('../orchestrator/temporal/client.js', () => ({
   }),
 }));
 
-const { quoteSkillRoute, runSkillRoute, cancelSkillRunRoute } = await import('../routes/v1/skills.js');
+const { quoteSkillRoute, runSkillRoute, cancelSkillRunRoute, getSkillRunRoute } = await import('../routes/v1/skills.js');
 const { SKILLS, MakeProductHeroSkillInputSchema } = await import('../skills/registry.js');
 const { quoteSkillCredits } = await import('../skills/credit-quotes.js');
 
@@ -434,6 +434,63 @@ describe('make_product_hero dispatch', () => {
   });
 });
 
+// ── Run status states the refund ───────────────────────────────────────────
+
+describe('make_product_hero run status reports what was charged and refunded', () => {
+  /** A finished run with two charged clips; `refunds` of them refunded. */
+  function seedChargedRun(status: string, refunds: number): string {
+    const runId = seedRenderRun(seedDraft(), status);
+    const clips = [
+      { id: `cccccccc-0000-4000-8000-${String(++rowSeq).padStart(12, '0')}`, credits: 280 },
+      { id: `cccccccc-0000-4000-8000-${String(++rowSeq).padStart(12, '0')}`, credits: 140 },
+    ];
+    for (const [i, c] of clips.entries()) {
+      (TABLES.primitive_runs ??= []).push({ id: c.id, skill_run_id: runId, primitive_id: 'product_hero_clip', status: 'failed', credits_deducted: c.credits });
+      // deduct_credits splits a charge across buckets: one debit row per bucket.
+      (TABLES.credit_transactions ??= []).push(
+        { reference_id: c.id, type: 'generation_debit', amount: -(c.credits - 40), bucket: 'monthly' },
+        { reference_id: c.id, type: 'generation_debit', amount: -40, bucket: 'purchased' },
+      );
+      if (i < refunds) {
+        TABLES.credit_transactions.push(
+          { reference_id: c.id, type: 'generation_refund', amount: c.credits - 40, bucket: 'monthly' },
+          { reference_id: c.id, type: 'generation_refund', amount: 40, bucket: 'purchased' },
+        );
+      }
+    }
+    // Someone else's ledger rows never count.
+    TABLES.credit_transactions.push({ reference_id: 'another-job', type: 'generation_debit', amount: -999, bucket: 'monthly' });
+    return runId;
+  }
+  const status = (runId: string) => call(getSkillRunRoute, OWNER, {}, { params: { skill_run_id: runId } });
+
+  it('a failed render whose charges were all refunded says so, with the amount', async () => {
+    const r = await status(seedChargedRun('failed', 2));
+    expect(r.status).toBe(200);
+    expect(r.body.credits).toEqual({ charged: 420, refunded: 420, refund_status: 'refunded' });
+  });
+
+  it('a failed render whose refund has not landed yet is pending, not claimed as refunded', async () => {
+    const r = await status(seedChargedRun('failed', 1));
+    expect(r.body.credits).toEqual({ charged: 420, refunded: 280, refund_status: 'pending' });
+  });
+
+  it('a render that failed before any charge says nothing was charged', async () => {
+    const runId = seedRenderRun(seedDraft(), 'failed');
+    const r = await status(runId);
+    expect(r.body.credits).toEqual({ charged: 0, refunded: 0, refund_status: 'not_due' });
+  });
+
+  it('a delivered or still-running render owes no refund', async () => {
+    expect((await status(seedChargedRun('succeeded', 0))).body.credits).toEqual({ charged: 420, refunded: 0, refund_status: 'not_due' });
+    expect((await status(seedChargedRun('running', 0))).body.credits).toEqual({ charged: 420, refunded: 0, refund_status: 'not_due' });
+  });
+
+  it('a canceled render is refunded like a failed one', async () => {
+    expect((await status(seedChargedRun('canceled', 2))).body.credits).toMatchObject({ refund_status: 'refunded', refunded: 420 });
+  });
+});
+
 // ── OpenAPI ─────────────────────────────────────────────────────────────────
 
 describe('make_product_hero in the OpenAPI spec', () => {
@@ -451,6 +508,10 @@ describe('make_product_hero in the OpenAPI spec', () => {
     }
     expect(paths['/v1/skills/{slug}/run'].post.parameters.map((p) => p.name)).toContain('Idempotency-Key');
     expect(paths['/v1/skills/{slug}/quote'].post.responses['422'].description).toContain('`unpriceable_input`');
+    const runStatus = (skillRouteOpenApi().paths['/v1/skills/runs/{skill_run_id}'] as {
+      get: { responses: { '200': { content: { 'application/json': { schema: { properties: Record<string, { properties?: Record<string, { enum?: string[] }> }> } } } } } };
+    }).get.responses['200'].content['application/json'].schema;
+    expect(runStatus.properties.credits.properties?.refund_status.enum).toEqual(['not_due', 'pending', 'refunded']);
     expect(Object.keys(RENDER_REFUSALS).sort()).toEqual(
       ['draft_already_rendered', 'draft_not_found', 'draft_out_of_band', 'draft_render_in_flight', 'voice_not_approved'],
     );

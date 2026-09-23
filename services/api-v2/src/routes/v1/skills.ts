@@ -19,6 +19,7 @@ import {
   supabaseProductHeroDraftStore,
   type RenderableDraft,
 } from '../../skills/product-hero-render.js';
+import { summarizeRunCredits, type RunCredits } from '../../skills/run-credits.js';
 
 /**
  * Credits already COMMITTED to the user's in-flight (submitted/running) jobs.
@@ -1272,6 +1273,7 @@ export async function getSkillRunRoute(req: Request, res: Response): Promise<voi
     res.status(500).json({ error: 'steps_lookup_failed', detail: stepsErr.message });
     return;
   }
+  const credits = await runCredits(String(run.status), (steps ?? []).map((s) => String(s.id)));
   res.status(200).json({
     skill_run_id: run.id,
     skill: run.skill_slug,
@@ -1284,6 +1286,7 @@ export async function getSkillRunRoute(req: Request, res: Response): Promise<voi
     error: run.error_code ? { code: run.error_code, message: run.error_message } : null,
     // Strip our internal provider USD cost — users only ever see credit cost.
     final_output: stripUsdFields(run.final_output),
+    credits,
     steps: (steps ?? []).map((s) => ({
       primitive_run_id: s.id,
       primitive: s.primitive_id,
@@ -1294,6 +1297,25 @@ export async function getSkillRunRoute(req: Request, res: Response): Promise<voi
       artifacts: s.primitive_artifacts ?? [],
     })),
   });
+}
+
+/**
+ * What the run charged and refunded, from the ledger rows of its primitive runs
+ * (see skills/run-credits.ts). null when the ledger cannot be read: the status
+ * must not claim a refund it could not see.
+ */
+async function runCredits(status: string, primitiveRunIds: string[]): Promise<RunCredits | null> {
+  if (primitiveRunIds.length === 0) return summarizeRunCredits(status, []);
+  const { data, error } = await supabase
+    .from('credit_transactions')
+    .select('type, amount')
+    .in('reference_id', primitiveRunIds)
+    .in('type', ['generation_debit', 'generation_refund']);
+  if (error) {
+    console.warn(`[skills/runs] credit ledger lookup failed: ${error.message}`);
+    return null;
+  }
+  return summarizeRunCredits(status, (data ?? []) as Array<{ type: string; amount: number }>);
 }
 
 /**
