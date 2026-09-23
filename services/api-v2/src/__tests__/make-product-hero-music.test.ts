@@ -69,7 +69,12 @@ function query(table: string) {
   return qb;
 }
 
-vi.mock('../server.js', () => ({ supabase: { from: (t: string) => query(t) } }));
+vi.mock('../server.js', () => ({
+  supabase: {
+    from: (t: string) => query(t),
+    auth: { admin: { getUserById: async () => ({ data: { user: null }, error: null }) } },
+  },
+}));
 vi.mock('../lib/r2-upload.js', async (orig) => ({
   publicStorageMessage: (await orig<typeof import('../lib/r2-upload.js')>()).publicStorageMessage,
   uploadUserImageFromUrl: async () => ({ url: 'https://r2.test/u/product.png' }),
@@ -136,6 +141,8 @@ const workflowInput = () => started.at(-1)!.opts.args[0] as Record<string, unkno
 
 beforeEach(() => {
   for (const k of Object.keys(TABLES)) delete TABLES[k];
+  // Product Hero × Levantine is a Qualified Preset (#8), as the migration seeds it.
+  TABLES.qualified_presets = [{ preset: 'product_hero', dialect: 'levantine', state: 'qualified' }];
   started.length = 0;
   TEST_TRACKS.set = null;
   process.env.BILLING_MODE = 'disabled';
