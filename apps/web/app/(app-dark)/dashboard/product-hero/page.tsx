@@ -3,9 +3,16 @@
 'use client';
 
 /**
- * /dashboard/product-hero — a Product Hero Short, end to end (#4, #6, #7).
+ * /dashboard/product-hero — a Product Hero Short, end to end (#4, #6, #7, #8).
  *
- *   Photo → Brief → Script review + voice preview → cost confirmation → render → Short
+ *   Preset → Dialect → Photo → Brief → Script review + voice preview → cost confirmation → render → Short
+ *
+ * The flow starts with the Preset picker (GET /v1/presets): each Preset with
+ * every Dialect marked available (a Qualified Preset) or coming soon. Only
+ * available Dialects can be picked; operators may also pick an unqualified one
+ * the server marks as a reviewer sample. The list is re-read after a
+ * PRESET_NOT_QUALIFIED refusal, so a withdrawn pair drops out
+ * (lib/preset-picker.ts).
  *
  * Draft phase (free): Brief + Product Details + Dialect + Approved Voice → the
  * server writes a Script that sells the Product Details (plain dialect spelling,
@@ -60,10 +67,19 @@ import {
   type SkillRunBody,
 } from '@/lib/product-hero-flow';
 import { postJson } from '@/lib/post-json';
+import {
+  defaultDialect,
+  defaultPreset,
+  dialectChoices,
+  parsePresets,
+  WEB_FLOWS,
+  type PresetPicker,
+} from '@/lib/preset-picker';
 import { PHOTO_ACCEPT, uploadProductPhoto } from '@/lib/product-hero-upload';
 import { RenderPanel, Stepper } from '@/components/product-hero-render';
 
-type Dialect = 'levantine' | 'gulf';
+/** A Dialect id as GET /v1/presets names it (levantine, gulf, …). */
+type Dialect = string;
 
 interface Draft {
   id: string;
@@ -139,11 +155,6 @@ interface ApiError {
   duration_ms?: number;
 }
 
-const DIALECTS: Array<{ id: Dialect; label: string; live: boolean }> = [
-  { id: 'levantine', label: 'Levantine', live: true },
-  { id: 'gulf', label: 'Gulf (coming soon)', live: false },
-];
-
 const card = { border: '1px solid rgba(255,255,255,0.08)', backgroundColor: '#14151F' } as const;
 const field = { backgroundColor: '#0F1015', color: '#E9E9F0', border: '1px solid rgba(255,255,255,0.1)' } as const;
 const label = 'text-[11px] uppercase tracking-wider';
@@ -166,7 +177,10 @@ const GENDERS: Array<{ id: '' | Gender; label: string }> = [
 export default function ProductHeroPage() {
   const [brief, setBrief] = useState('');
   const [productDetails, setProductDetails] = useState('');
-  const [dialect, setDialect] = useState<Dialect>('levantine');
+  const [picker, setPicker] = useState<PresetPicker | null>(null);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [presetSlug, setPresetSlug] = useState<string | null>(null);
+  const [dialect, setDialect] = useState<Dialect | null>(null);
   const [voices, setVoices] = useState<Voice[] | null>(null);
   const [styles, setStyles] = useState<string[]>([]);
   const [gender, setGender] = useState<'' | Gender>('');
@@ -185,9 +199,47 @@ export default function ProductHeroPage() {
   const photoInput = useRef<HTMLInputElement>(null);
   const scriptInput = useRef<HTMLTextAreaElement>(null);
 
+  const preset = picker?.presets.find((p) => p.slug === presetSlug) ?? null;
+  const choices = dialectChoices(preset, picker?.operator ?? false);
+  const sampleDialect = choices.find((c) => c.dialect === dialect)?.sample ?? false;
+
+  /** The Preset picker: Presets and their Dialects, read fresh (a pair may be qualified or withdrawn any time). */
+  const loadPresets = useCallback(async () => {
+    setPickerError(null);
+    try {
+      const r = await fetch('/api/v1/presets', { credentials: 'include', cache: 'no-store' });
+      const j = (await r.json().catch(() => ({}))) as unknown;
+      const parsed = r.ok ? parsePresets(j) : null;
+      if (!parsed) throw new Error((j as { error?: ApiError })?.error?.message ?? `HTTP ${r.status}`);
+      setPicker(parsed);
+      setPresetSlug((cur) => defaultPreset(parsed, cur)?.slug ?? null);
+    } catch (e) {
+      setPicker({ presets: [], operator: false });
+      setPickerError((e as Error).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPresets();
+  }, [loadPresets]);
+
+  // Keep the Dialect on one that can still be picked for this Preset. (A loaded
+  // draft is re-voiced in its own Dialect; the server refuses that if the pair
+  // has been withdrawn since.)
+  const choiceKey = choices.map((c) => `${c.dialect}:${c.selectable}`).join(',');
+  useEffect(() => {
+    if (!picker) return;
+    setDialect((cur) => defaultDialect(choices, cur));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- choiceKey stands for choices
+  }, [picker, choiceKey]);
+
   /** Approved Voices of the Dialect under the current filters. Never cached. */
   const loadVoices = useCallback(async () => {
     setVoicesError(null);
+    if (!dialect) {
+      setVoices([]);
+      return;
+    }
     const q = new URLSearchParams({ dialect });
     if (gender) q.set('gender', gender);
     if (style) q.set('style', style);
@@ -272,12 +324,14 @@ export default function ProductHeroPage() {
     setError(e);
     // The Voice was revoked since the picker loaded: refresh it.
     if (e.code === 'VOICE_NOT_APPROVED') void loadVoices();
+    // The Preset was withdrawn for this Dialect since the picker loaded: refresh it.
+    if (e.code === 'PRESET_NOT_QUALIFIED') void loadPresets();
     // A duration or Script-check refusal still hands back the Script: put it in the editor.
     if (e.script) setScript(e.script);
   }
 
   async function writeScript() {
-    if (busy || !brief.trim() || !voiceId) return;
+    if (busy || !brief.trim() || !voiceId || !dialect) return;
     setBusy('write');
     setError(null);
     try {
@@ -297,14 +351,15 @@ export default function ProductHeroPage() {
   }
 
   async function revoice() {
-    if (busy || !script.trim() || (!draft && !voiceId)) return;
+    const spokenIn = draft ? draft.dialect : dialect;
+    if (busy || !script.trim() || (!draft && !voiceId) || !spokenIn) return;
     setBusy('voice');
     setError(null);
     try {
       const r = await post('/api/v1/drafts/product-hero/revoice', {
         script: script.trim(),
         // A re-voice keeps its parent's Dialect; the server refuses any other.
-        dialect: draft ? draft.dialect : dialect,
+        dialect: spokenIn,
         // The picked Voice; without one, a re-voice reuses the parent draft's Voice.
         ...(voiceId ? { voice_id: voiceId } : {}),
         // With a parent, its Brief and Product Details carry over server-side.
@@ -492,7 +547,7 @@ export default function ProductHeroPage() {
   return (
     <div className="mx-auto w-full max-w-3xl px-8 py-10">
       <div className="flex flex-col gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.2em]" style={{ color: 'rgba(255,255,255,0.4)' }}>Product Hero</p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em]" style={{ color: 'rgba(255,255,255,0.4)' }}>{preset?.name ?? 'Product Hero'}</p>
         <h1 className="font-normal" style={{ color: '#E9E9F0', fontSize: 'clamp(28px,2.6vw,36px)', letterSpacing: '-0.03em', lineHeight: 1.05 }}>
           From product photo to Short
         </h1>
@@ -503,6 +558,69 @@ export default function ProductHeroPage() {
         </p>
       </div>
       <Stepper current={step} />
+
+      {/* Preset picker, then the Dialects that Preset is qualified for */}
+      <section className="mt-6 flex flex-col gap-3 rounded-2xl p-5" style={card}>
+        <span className={label} style={muted}>Preset</span>
+        {picker === null ? (
+          <Loader2 className="h-4 w-4 animate-spin" style={muted} />
+        ) : picker.presets.length === 0 ? (
+          <p className="text-sm" style={{ color: pickerError ? '#FCA5A5' : 'rgba(255,255,255,0.6)' }}>
+            {pickerError ? `Could not load Presets: ${pickerError}` : 'No Preset is available yet. Check back soon.'}
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Preset">
+            {picker.presets.map((p) => {
+              const hasFlow = WEB_FLOWS.has(p.slug);
+              const selected = p.slug === presetSlug;
+              const offered = p.dialects.some((d) => d.status === 'available');
+              return (
+                <button
+                  key={p.slug}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  disabled={!hasFlow || renderLocked}
+                  onClick={() => setPresetSlug(p.slug)}
+                  className="flex flex-col gap-1 rounded-xl px-3 py-3 text-left disabled:cursor-not-allowed"
+                  style={{ ...card, border: selected ? '1px solid #A78BFA' : card.border, opacity: hasFlow ? 1 : 0.55 }}
+                >
+                  <span className="text-sm font-semibold" style={{ color: '#E9E9F0' }}>
+                    {p.name}
+                    {!hasFlow ? <span className="ml-2 text-xs font-normal" style={muted}>coming soon</span> : null}
+                    {hasFlow && !offered ? <span className="ml-2 text-xs font-normal" style={{ color: '#FBBF24' }}>not qualified yet</span> : null}
+                  </span>
+                  {p.summary ? <span className="text-xs" style={muted}>{p.summary}</span> : null}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {preset ? (
+          <div className="flex flex-col gap-1">
+            <label className={label} style={muted} htmlFor="dialect">Dialect</label>
+            <select
+              id="dialect"
+              value={dialect ?? ''}
+              disabled={renderLocked}
+              onChange={(e) => setDialect(e.target.value)}
+              className="h-10 w-full max-w-xs rounded-xl px-3 text-sm outline-none disabled:opacity-60"
+              style={field}
+            >
+              {dialect === null ? <option value="">No Dialect available yet</option> : null}
+              {choices.map((c) => (
+                <option key={c.dialect} value={c.dialect} disabled={!c.selectable}>{c.label}</option>
+              ))}
+            </select>
+            {sampleDialect ? (
+              <p className="text-xs" style={{ color: '#FBBF24' }}>
+                Reviewer sample: {preset.name} is not qualified for this Dialect. Only operators can draft and render it, to
+                make samples for native reviewers.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
 
       {/* Product photo */}
       <section className="mt-6 flex flex-col gap-3 rounded-2xl p-5" style={card}>
@@ -595,23 +713,6 @@ export default function ProductHeroPage() {
         <p className="-mt-1 text-xs" style={muted}>
           The facts the Script sells, in any language. Without them the Script can only work from the Brief.
         </p>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1">
-            <label className={label} style={muted} htmlFor="dialect">Dialect</label>
-            <select
-              id="dialect"
-              value={dialect}
-              onChange={(e) => setDialect(e.target.value as Dialect)}
-              className="h-10 rounded-xl px-3 text-sm outline-none"
-              style={field}
-            >
-              {DIALECTS.map((d) => (
-                <option key={d.id} value={d.id} disabled={!d.live}>{d.label}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
         {/* Voice picker: Approved Voices of the Dialect only */}
         <div className="mt-2 flex flex-col gap-2">
           <div className="flex flex-wrap items-end gap-3">
@@ -681,7 +782,7 @@ export default function ProductHeroPage() {
           <button
             type="button"
             onClick={writeScript}
-            disabled={!!busy || renderLocked || !brief.trim() || !voiceId}
+            disabled={!!busy || renderLocked || !brief.trim() || !voiceId || !dialect}
             className="inline-flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-semibold disabled:opacity-60"
             style={{ backgroundColor: '#A78BFA', color: '#0F1015' }}
           >

@@ -159,6 +159,7 @@ export default function AdminPage() {
       <p className="text-[11px] font-semibold uppercase tracking-[0.2em]" style={{ color: 'rgba(255,255,255,0.4)' }}>Internal</p>
       <h1 className="mt-1 font-normal" style={{ color: '#E9E9F0', fontSize: 'clamp(28px,2.6vw,36px)', letterSpacing: '-0.03em' }}>Admin</h1>
       <a href="/dashboard/admin/voices" className="mt-2 inline-block text-sm underline" style={{ color: '#C9B8FF' }}>Voice catalog: approve and revoke Voices</a>
+      <a href="/dashboard/admin/presets" className="ml-4 mt-2 inline-block text-sm underline" style={{ color: '#C9B8FF' }}>Qualified Presets: qualify and withdraw Preset–Dialect pairs</a>
 
       {/* Stats */}
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
