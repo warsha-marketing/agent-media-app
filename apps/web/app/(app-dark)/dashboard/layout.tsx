@@ -26,7 +26,7 @@
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Home, Palette, Images, LogOut, Loader2, LifeBuoy, BookOpen, Sparkles, ListChecks, KeyRound, Share2, ShieldCheck, Bot } from 'lucide-react';
+import { Home, Palette, Images, LogOut, Loader2, LifeBuoy, BookOpen, Sparkles, ListChecks, KeyRound, Share2, ShieldCheck, Bot, Mic } from 'lucide-react';
 import { AgentMediaLogo } from '@/components/agent-media-logo';
 import { createClient } from '@/lib/supabase/client';
 import { goToMarketingSite } from '@/lib/marketing';
@@ -52,6 +52,7 @@ function RailTip({ label }: { label: string }) {
 const NAV = [
   { href: '/dashboard',           label: 'Home',         icon: Home },
   { href: '/dashboard/agent',     label: 'Agent',        icon: Bot },
+  { href: '/dashboard/product-hero', label: 'Product Hero', icon: Mic },
   { href: '/dashboard/jobs',      label: 'Jobs',         icon: ListChecks },
   { href: '/dashboard/gallery',   label: 'Gallery',      icon: Images },
   { href: '/dashboard/social',    label: 'Social',       icon: Share2 },
