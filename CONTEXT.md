@@ -67,7 +67,7 @@ A bracketed direction inside a Script that shapes how the next words are spoken 
 _Avoid_: audio tag, emotion tag
 
 **Captions**:
-Right-to-left Arabic text burned into a Short, timed from the voiced Script, line by line, shown without Targeted Diacritics (the Script's letters unchanged) and without its Delivery Tags. Opt-in.
+Right-to-left Arabic text burned into a Short, line by line. Added after the render, never during it: every render keeps a clean Short, and the Caption editor starts from suggested lines timed from the voiced Script, shown without Targeted Diacritics (the Script's letters unchanged) and without its Delivery Tags. The user edits the lines (words, split and merge, timing) and their position, size and colour over a live preview, then exports: the server burns them into a new file of the Short (free, as many versions as they like). The same lines download as an .srt.
 _Avoid_: subtitles
 
 **Qualified Preset**:

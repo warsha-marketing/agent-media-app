@@ -10,8 +10,10 @@
 
 import Link from 'next/link';
 import { useState, type CSSProperties, type ReactNode } from 'react';
-import { AlertTriangle, Check, Clapperboard, Download, ImageOff, Loader2, RotateCcw } from 'lucide-react';
-import { FLOW_STEPS, RENDER_STAGES, captionsLine, musicBedLine, type ApiOutcome, type FlowStep, type Quote, type RefundView, type RenderPhase } from '@/lib/product-hero-flow';
+import { AlertTriangle, Captions, Check, Clapperboard, Download, ImageOff, Loader2, RotateCcw } from 'lucide-react';
+import { downloadUrl } from '@/lib/download-file';
+import { CaptionEditor } from '@/components/caption-editor';
+import { FLOW_STEPS, RENDER_STAGES, musicBedLine, type ApiOutcome, type FlowStep, type Quote, type RefundView, type RenderPhase } from '@/lib/product-hero-flow';
 
 const card = { border: '1px solid rgba(255,255,255,0.08)', backgroundColor: '#14151F' } as const;
 const muted = { color: 'rgba(255,255,255,0.45)' } as const;
@@ -66,9 +68,6 @@ interface RenderPanelProps {
   /** Music Bed (#9): on by default; off = voice only, add a sound in TikTok. */
   music?: boolean;
   onMusicChange?: (on: boolean) => void;
-  /** Captions (#10): off by default; on = right-to-left Arabic, timed to the voice. */
-  captions?: boolean;
-  onCaptionsChange?: (on: boolean) => void;
 }
 
 export function RenderPanel(p: RenderPanelProps) {
@@ -83,7 +82,7 @@ export function RenderPanel(p: RenderPanelProps) {
         </p>
       ) : null}
       {r.phase === 'quoted' || r.phase === 'starting' ? (
-        <Confirmation quote={r.quote} starting={r.phase === 'starting'} blocked={p.edited} onConfirm={p.onConfirm} music={p.music} onMusicChange={p.onMusicChange} captions={p.captions} onCaptionsChange={p.onCaptionsChange} />
+        <Confirmation quote={r.quote} starting={r.phase === 'starting'} blocked={p.edited} onConfirm={p.onConfirm} music={p.music} onMusicChange={p.onMusicChange} />
       ) : null}
       {r.phase === 'refused' ? <Refusal outcome={r.outcome} quoted={!!r.quote} {...p} /> : null}
       {r.phase === 'rendering' ? <Progress view={r.view} /> : null}
@@ -107,7 +106,7 @@ function Waiting({ hasDraft, hasPhoto, edited }: RenderPanelProps) {
   );
 }
 
-function Confirmation({ quote, starting, blocked, onConfirm, music, onMusicChange, captions, onCaptionsChange }: { quote: Quote; starting: boolean; blocked: boolean; onConfirm: () => void; music?: boolean; onMusicChange?: (on: boolean) => void; captions?: boolean; onCaptionsChange?: (on: boolean) => void }) {
+function Confirmation({ quote, starting, blocked, onConfirm, music, onMusicChange }: { quote: Quote; starting: boolean; blocked: boolean; onConfirm: () => void; music?: boolean; onMusicChange?: (on: boolean) => void }) {
   return (
     <>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -119,7 +118,6 @@ function Confirmation({ quote, starting, blocked, onConfirm, music, onMusicChang
         until you confirm, and if the render fails the credits are refunded.
       </p>
       {onMusicChange ? <MusicBedToggle music={music !== false} quote={quote} disabled={starting} onChange={onMusicChange} /> : null}
-      {onCaptionsChange ? <CaptionsToggle captions={captions === true} quote={quote} disabled={starting} onChange={onCaptionsChange} /> : null}
       {!quote.sufficient ? (
         <p className="rounded-xl px-3 py-2 text-sm" style={danger}>
           You don&apos;t have enough credits for this render.{' '}
@@ -154,19 +152,6 @@ function MusicBedToggle({ music, quote, disabled, onChange }: { music: boolean; 
         Music Bed under the voice
       </label>
       <p className="text-xs" style={muted}>{musicBedLine(music, quote)}</p>
-    </div>
-  );
-}
-
-/** Captions on/off (#10), with its one-line explanation. Off by default; free. */
-function CaptionsToggle({ captions, quote, disabled, onChange }: { captions: boolean; quote: Quote; disabled: boolean; onChange: (on: boolean) => void }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="inline-flex items-center gap-2 text-sm" style={text}>
-        <input type="checkbox" checked={captions} disabled={disabled} onChange={(e) => onChange(e.target.checked)} className="h-4 w-4 accent-[#A78BFA]" />
-        Arabic Captions
-      </label>
-      <p className="text-xs" style={muted}>{captionsLine(captions, quote)}</p>
     </div>
   );
 }
@@ -242,50 +227,43 @@ function Progress({ view }: { view: Extract<RenderPhase, { phase: 'rendering' }>
   );
 }
 
-async function downloadShort(url: string, name: string) {
-  // A cross-origin <a download> is ignored by browsers, so fetch the file and
-  // save it; if the storage origin does not allow that, open it instead.
-  try {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(String(r.status));
-    const href = URL.createObjectURL(await r.blob());
-    const a = document.createElement('a');
-    a.href = href;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(href), 10_000);
-  } catch {
-    window.open(url, '_blank', 'noopener');
-  }
-}
-
 function Result({ runId, videoUrl, durationMs }: { runId: string; videoUrl: string; durationMs: number | null }) {
   const [saving, setSaving] = useState(false);
+  // Captions are added after the render (#22): the Short stays clean, and the
+  // Caption editor previews, edits and exports them on the server.
+  const [captioning, setCaptioning] = useState(false);
   return (
     <>
       <p className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm" style={good}>
         <Check className="h-4 w-4" /> Your Short is ready{durationMs ? ` · ${(durationMs / 1000).toFixed(1)} s` : ''}.
       </p>
-      <div className="mx-auto w-full max-w-[320px] overflow-hidden rounded-2xl" style={{ aspectRatio: '9 / 16', backgroundColor: '#0F1015', border: '1px solid rgba(255,255,255,0.06)' }}>
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video src={videoUrl} controls playsInline className="h-full w-full object-contain" />
-      </div>
+      {captioning ? (
+        <CaptionEditor shortId={runId} onClose={() => setCaptioning(false)} />
+      ) : (
+        <div className="mx-auto w-full max-w-[320px] overflow-hidden rounded-2xl" style={{ aspectRatio: '9 / 16', backgroundColor: '#0F1015', border: '1px solid rgba(255,255,255,0.06)' }}>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <video src={videoUrl} controls playsInline className="h-full w-full object-contain" />
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           disabled={saving}
           onClick={async () => {
             setSaving(true);
-            await downloadShort(videoUrl, `product-hero-${runId.slice(0, 8)}.mp4`);
+            await downloadUrl(videoUrl, `product-hero-${runId.slice(0, 8)}.mp4`);
             setSaving(false);
           }}
           className="inline-flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-semibold disabled:opacity-60"
-          style={primary}
+          style={captioning ? secondary : primary}
         >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Download
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Download{captioning ? ' without Captions' : ''}
         </button>
+        {!captioning ? (
+          <button type="button" onClick={() => setCaptioning(true)} className="inline-flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-semibold" style={secondary}>
+            <Captions className="h-4 w-4" /> Add Captions
+          </button>
+        ) : null}
         <span className="text-xs" style={muted}>A draft renders once. To make another Short, edit the Script and re-voice it.</span>
       </div>
     </>

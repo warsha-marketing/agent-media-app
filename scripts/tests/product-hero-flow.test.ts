@@ -26,7 +26,7 @@ const QUOTE = { credits: 30, available: 100, sufficient: true };
 
 const run = (state: RenderState, ...events: RenderEvent[]) => events.reduce(renderReducer, state);
 const quoted = () => run(initialRenderState, { type: 'quote_requested' }, { type: 'quote_loaded', quote: QUOTE });
-const choice = (photoUrl = PHOTO, music = true, captions = false) => ({ draftId: DRAFT, photoUrl, music, captions });
+const choice = (photoUrl = PHOTO, music = true) => ({ draftId: DRAFT, photoUrl, music });
 const confirm = (freshKey: string, photoUrl = PHOTO, music = true): RenderEvent => ({ type: 'confirm', choice: choice(photoUrl, music), freshKey });
 
 describe('API error → UI state', () => {

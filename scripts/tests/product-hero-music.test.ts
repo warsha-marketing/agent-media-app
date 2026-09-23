@@ -6,7 +6,7 @@ import { NO_MUSIC_LINE, musicBedLine, parseQuote, quoteBody, renderBody, viewOfR
 
 const DRAFT = '11111111-1111-4111-8111-111111111111';
 const PHOTO = 'https://media.example/vnext/uploads/u/photo.png';
-const choice = (music: boolean) => ({ draftId: DRAFT, photoUrl: PHOTO, music, captions: false });
+const choice = (music: boolean) => ({ draftId: DRAFT, photoUrl: PHOTO, music });
 
 describe('Music Bed on the Product Hero page', () => {
   it('reads the quote’s Music Bed', () => {
