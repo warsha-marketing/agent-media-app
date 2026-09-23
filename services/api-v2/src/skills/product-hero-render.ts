@@ -6,8 +6,11 @@
  * The render phase ships exactly the audio the user approved, so it only
  * accepts a draft that:
  *   - belongs to the caller (someone else's draft is indistinguishable from none),
- *   - is not being rendered and was never rendered successfully, and
- *   - speaks for 5–15 s (the Preset's duration contract).
+ *   - is not being rendered and was never rendered successfully,
+ *   - speaks for 5–15 s (the Preset's duration contract), and
+ *   - was spoken by a Voice that is an Approved Voice of its Dialect NOW: only
+ *     Approved Voices may appear in a Short (CONTEXT.md), so a Voice revoked
+ *     since drafting, or a legacy draft with no catalog Voice, is refused.
  * The quote and run routes both resolve the draft here, so a quote can never
  * price a draft the run would refuse.
  *
@@ -30,6 +33,9 @@ export type RenderRunStatus = 'submitted' | 'running' | 'succeeded' | 'failed' |
 export interface RenderableDraft {
   id: string;
   user_id: string;
+  dialect: string;
+  /** The catalog Voice that spoke it; null on drafts from before the catalog. */
+  voice_catalog_id: string | null;
   /** Private storage key; passed to the worker, never to a client. */
   audio_key: string;
   duration_ms: number;
@@ -39,9 +45,17 @@ export interface RenderableDraft {
   render_run_status: RenderRunStatus | null;
 }
 
+/** The catalog fields the Voice gate reads. */
+export interface DraftVoice {
+  dialect: string;
+  state: string;
+}
+
 export interface ProductHeroDraftStore {
   /** The draft only if `userId` owns it (with its claim's run status); null otherwise. */
   getOwned(id: string, userId: string): Promise<RenderableDraft | null>;
+  /** A catalog Voice by id; null if there is none. */
+  getVoice(id: string): Promise<DraftVoice | null>;
   /**
    * Point the draft's claim at `runId` if it still holds `current` (null = free,
    * or the failed/canceled run getOwned saw). False when someone else won.
@@ -79,6 +93,16 @@ export const draftRenderInFlight = () =>
     'This draft is being rendered right now. Poll that run; if it fails, the draft can be rendered again.',
   );
 
+export const voiceNotApproved = (legacy: boolean) =>
+  new RenderRefusal(
+    422,
+    'voice_not_approved',
+    (legacy
+      ? 'This draft was voiced before the Voice catalog, so its Voice was never approved.'
+      : 'The Voice that spoke this draft is not an Approved Voice of its Dialect (it may have been revoked).') +
+      ' Re-voice the Script with an Approved Voice (GET /v1/voices), then render the new draft.',
+  );
+
 /** Refuse a draft whose claim still blocks a new render. */
 function assertClaimFree(draft: RenderableDraft): void {
   if (!draft.render_run_id) return;
@@ -112,6 +136,9 @@ export async function resolveRenderableDraft(
         `${PRODUCT_HERO.minSpeechMs / 1000}–${PRODUCT_HERO.maxSpeechMs / 1000} s. Edit the Script and re-voice it.`,
     );
   }
+  if (!draft.voice_catalog_id) throw voiceNotApproved(true);
+  const voice = await store.getVoice(draft.voice_catalog_id);
+  if (!voice || voice.state !== 'approved' || voice.dialect !== draft.dialect) throw voiceNotApproved(false);
   return draft;
 }
 
@@ -123,7 +150,7 @@ export function supabaseProductHeroDraftStore(supabase: SupabaseClient): Product
       // Service-role client bypasses RLS, so ownership is enforced here.
       const { data, error } = await supabase
         .from(TABLE)
-        .select('id, user_id, audio_key, duration_ms, render_run_id')
+        .select('id, user_id, dialect, voice_catalog_id, audio_key, duration_ms, render_run_id')
         .eq('id', id)
         .eq('user_id', userId)
         .maybeSingle();
@@ -140,7 +167,17 @@ export function supabaseProductHeroDraftStore(supabase: SupabaseClient): Product
         if (runErr) throw new Error(`skill_runs read: ${runErr.message}`);
         status = (run as { status?: RenderRunStatus } | null)?.status ?? null;
       }
-      return { ...row, render_run_id: row.render_run_id ?? null, render_run_status: status };
+      return {
+        ...row,
+        voice_catalog_id: row.voice_catalog_id ?? null,
+        render_run_id: row.render_run_id ?? null,
+        render_run_status: status,
+      };
+    },
+    async getVoice(id) {
+      const { data, error } = await supabase.from('voices').select('dialect, state').eq('id', id).maybeSingle();
+      if (error) throw new Error(`voices read: ${error.message}`);
+      return (data as DraftVoice | null) ?? null;
     },
     async claimForRender(id, userId, runId, current) {
       const base = supabase.from(TABLE).update({ render_run_id: runId }).eq('id', id).eq('user_id', userId);

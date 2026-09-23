@@ -112,7 +112,18 @@ const OWNER = 'aaaaaaaa-0000-4000-8000-000000000001';
 const STRANGER = 'bbbbbbbb-0000-4000-8000-000000000002';
 let draftSeq = 0;
 
+const APPROVED_VOICE = 'ffffffff-0000-4000-8000-000000000001';
+
+function seedVoice(over: Partial<Row> = {}): string {
+  const id = `ffffffff-0000-4000-8000-${String(++rowSeq).padStart(12, '0')}`;
+  (TABLES.voices ??= []).push({ id, dialect: 'levantine', state: 'approved', ...over });
+  return id;
+}
+
 function seedDraft(over: Partial<Row> = {}): string {
+  if (!TABLES.voices?.some((v) => v.id === APPROVED_VOICE)) {
+    (TABLES.voices ??= []).push({ id: APPROVED_VOICE, dialect: 'levantine', state: 'approved' });
+  }
   const id = `dddddddd-0000-4000-8000-${String(++draftSeq).padStart(12, '0')}`;
   (TABLES.short_drafts ??= []).push({
     id,
@@ -121,6 +132,7 @@ function seedDraft(over: Partial<Row> = {}): string {
     dialect: 'levantine',
     audio_key: `vnext/drafts/${OWNER}/${id}.mp3`,
     duration_ms: 9_000,
+    voice_catalog_id: APPROVED_VOICE,
     render_started_at: null,
     render_run_id: null,
     ...over,
@@ -389,6 +401,25 @@ describe('make_product_hero dispatch', () => {
     expect(draft(id).render_run_id).toBeNull();
     expect(started).toHaveLength(0);
     expect(uploads).toHaveLength(0); // refused before touching the photo
+  });
+
+  it.each([
+    ['revoked', () => seedVoice({ state: 'revoked' })],
+    ['still pending review', () => seedVoice({ state: 'pending' })],
+    ['approved only for another Dialect', () => seedVoice({ dialect: 'gulf' })],
+    ['no longer in the catalog', () => 'ffffffff-0000-4000-8000-0000000000ff'],
+    ['missing (a draft from before the catalog)', () => null],
+  ])('refuses a draft whose Voice is %s, on quote and run', async (_why, voice) => {
+    const id = seedDraft({ voice_catalog_id: voice() });
+    for (const route of [quoteSkillRoute, runSkillRoute]) {
+      const r = await call(route, OWNER, { draft_id: id, product_image_url: PHOTO });
+      expect(r.status).toBe(422);
+      expect(r.body.error).toBe('voice_not_approved');
+      expect(String(r.body.detail)).toMatch(/Re-voice/);
+    }
+    expect(draft(id).render_run_id).toBeNull();
+    expect(started).toHaveLength(0);
+    expect(uploads).toHaveLength(0);
   });
 
   it.each([4_999, 15_001])('refuses a %i ms draft (outside 5–15 s) on quote and run', async (ms) => {
