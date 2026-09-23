@@ -6,7 +6,8 @@
 
 import { describe, it, expect } from 'vitest';
 import type { CaptionCue } from '@agentmedia/schema';
-import { ARABIC_CAPTION_STYLE, arabicCaptionsAss, assTime, captionBurnArgs } from '../lib/arabic-captions-ass.js';
+import { ARABIC_CAPTION_STYLE, arabicCaptionsAss, captionBurnArgs } from '../lib/arabic-captions-ass.js';
+import { assTime } from '../lib/ass-format.js';
 
 /** RIGHT-TO-LEFT MARK: a strong RTL character that makes the line's paragraph right-to-left, even when it starts with a Latin word. */
 const RLM = '\u200F';
@@ -87,4 +88,43 @@ describe('captionBurnArgs', () => {
     expect(args).not.toContain('-r');
     expect(args[args.indexOf('-fps_mode') + 1]).toBe('passthrough');
   });
+
+  it('escapes a path with `:` and `,` for both filtergraph levels, so it cannot add options or filters', () => {
+    const odd = captionBurnArgs({ inPath: '/w/in.mp4', assPath: "/tmp/a:b,c[d];e'f\\g/captions.ass", outPath: '/w/out.mp4' });
+    const vf = odd[odd.indexOf('-vf') + 1];
+    expect(vf).toBe("ass=filename=/tmp/a\\\\:b\\,c\\[d\\]\\;e\\\\\\'f\\\\\\\\g/captions.ass:shaping=complex");
+    // Exactly one filter with exactly two options, the path intact.
+    expect(parseFilterOptions(vf)).toEqual({ filter: 'ass', options: { filename: "/tmp/a:b,c[d];e'f\\g/captions.ass", shaping: 'complex' } });
+  });
 });
+
+/**
+ * ffmpeg's two parsing levels for `-vf` (libavutil av_get_token), enough to
+ * check the escaping: level 1 splits filters on `,` `;` (and labels on `[ ]`),
+ * level 2 splits the options on `:`. Both read `\x` as a literal x and `'…'` as
+ * a quoted run. Throws if the graph has more than one filter.
+ */
+function parseFilterOptions(graph: string): { filter: string; options: Record<string, string> } {
+  const token = (s: string, i: number, stops: string): [string, number] => {
+    let out = '';
+    for (; i < s.length && !stops.includes(s[i]); i++) {
+      if (s[i] === '\\') out += s[++i] ?? '';
+      else if (s[i] === "'") for (i++; i < s.length && s[i] !== "'"; i++) out += s[i];
+      else out += s[i];
+    }
+    return [out, i];
+  };
+  const [name, afterName] = token(graph, 0, '=,;[');
+  if (graph[afterName] !== '=') throw new Error('no options');
+  const [args, end] = token(graph, afterName + 1, '[],;');
+  if (end !== graph.length) throw new Error(`more than one filter: ${graph.slice(end)}`);
+  const options: Record<string, string> = {};
+  let i = 0;
+  while (i < args.length) {
+    const [key, k] = token(args, i, '=:');
+    const [value, v] = token(args, k + 1, ':');
+    options[key] = value;
+    i = v + 1;
+  }
+  return { filter: name, options };
+}

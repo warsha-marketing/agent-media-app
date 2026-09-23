@@ -4,7 +4,11 @@
  * Minimal vNext ASS subtitle generator. Port of the relevant subset of
  * media-worker-v2/src/ass-generator.js — only the three styles the
  * vNext subtitles primitive exposes today (hormozi, tiktok, minimal).
+ * The time format and the text escaping are shared with Arabic Captions
+ * (./ass-format.ts, which states the escaping policy).
  */
+
+import { assEscapeText, assTime } from './ass-format.js';
 
 export type SubtitleStyle = 'hormozi' | 'tiktok' | 'minimal';
 export type SubtitleAspect = '9:16' | '16:9' | '1:1';
@@ -93,14 +97,6 @@ const RES: Record<SubtitleAspect, { x: number; y: number }> = {
   '1:1': { x: 1080, y: 1080 },
 };
 
-function formatAssTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  const cs = Math.round((seconds % 1) * 100);
-  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
-}
-
 function groupWords(words: SubtitleWord[], maxPerLine: number): { words: SubtitleWord[]; start: number; end: number }[] {
   const groups: { words: SubtitleWord[]; start: number; end: number }[] = [];
   for (let i = 0; i < words.length; i += maxPerLine) {
@@ -144,29 +140,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   const events: string[] = [];
   for (const g of groups) {
-    const startT = formatAssTime(g.start);
-    const endT = formatAssTime(g.end);
+    const startT = assTime(g.start);
+    const endT = assTime(g.end);
     if (cfg.karaokeEnabled) {
       const k = g.words
         .map((w) => {
           const duration = Math.max(Math.round((w.end - w.start) * 100), 10);
           const word = cfg.uppercase ? w.word.toUpperCase() : w.word;
-          return `{\\kf${duration}}${escapeAss(word)}`;
+          return `{\\kf${duration}}${assEscapeText(word)}`;
         })
         .join(' ');
       events.push(`Dialogue: 0,${startT},${endT},${styleName},,0,0,0,,${k}`);
     } else {
       const text = g.words
         .map((w) => (cfg.uppercase ? w.word.toUpperCase() : w.word))
-        .map(escapeAss)
+        .map(assEscapeText)
         .join(' ');
       events.push(`Dialogue: 0,${startT},${endT},${styleName},,0,0,0,,${text}`);
     }
   }
 
   return header + events.join('\n') + '\n';
-}
-
-function escapeAss(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}');
 }

@@ -19,6 +19,10 @@
  *     right-to-left even when it opens with a Latin brand name, and trailing
  *     punctuation (، . !) lands at the line's left end, where Arabic ends.
  *
+ * Text: the cue text goes in through assPlainText (look-alikes, not escapes;
+ * the policy is stated once in ./ass-format.ts), so a Script can never carry an
+ * override tag onto the Short.
+ *
  * Font: Noto Sans Arabic Bold (SIL Open Font License 1.1), installed in the
  * worker image from Debian's fonts-noto-core package (see the Dockerfile).
  *
@@ -30,6 +34,7 @@
  */
 
 import type { CaptionCue } from '@agentmedia/schema';
+import { assPlainText, assTime, ffmpegFilterValue } from './ass-format.js';
 
 export const ARABIC_CAPTION_STYLE = {
   fontName: 'Noto Sans Arabic',
@@ -51,30 +56,6 @@ const CANVAS = { x: 1080, y: 1920 };
 
 /** U+200F RIGHT-TO-LEFT MARK. */
 const RLM = '\u200F';
-
-/** Seconds → ASS time `h:mm:ss.cc` (rounded to the centisecond, carried correctly). */
-export function assTime(seconds: number): string {
-  const cs = Math.round(Math.round(Math.max(0, seconds) * 1000) / 10);
-  const h = Math.floor(cs / 360_000);
-  const m = Math.floor((cs % 360_000) / 6000);
-  const s = Math.floor((cs % 6000) / 100);
-  const c = cs % 100;
-  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(c).padStart(2, '0')}`;
-}
-
-/**
- * Caption text as ASS event text that cannot carry an override: braces open
- * override blocks and backslashes start escapes (\N, \h), so they are swapped
- * for look-alikes; line breaks are flattened (a cue is one line; libass wraps).
- */
-function assText(text: string): string {
-  return text
-    .replace(/[\r\n]+/g, ' ')
-    .replace(/\\/g, '\uFF3C')
-    .replace(/\{/g, '(')
-    .replace(/\}/g, ')')
-    .trim();
-}
 
 /** The ASS script for `cues` on the 9:16 canvas. */
 export function arabicCaptionsAss(cues: readonly CaptionCue[]): string {
@@ -99,13 +80,8 @@ export function arabicCaptionsAss(cues: readonly CaptionCue[]): string {
   ];
   const events = cues
     .filter((c) => assTime(c.end) !== assTime(c.start) && c.end > c.start)
-    .map((c) => `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Arabic,,0,0,0,,${RLM}${assText(c.text)}`);
+    .map((c) => `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Arabic,,0,0,0,,${RLM}${assPlainText(c.text)}`);
   return [...header, ...events, ''].join('\n');
-}
-
-/** ffmpeg filter-option escaping for a path inside `ass=filename=…`. */
-function filterPath(path: string): string {
-  return path.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'").replace(/,/g, '\\,');
 }
 
 /**
@@ -114,16 +90,15 @@ function filterPath(path: string): string {
  * (timestamps passed through, no rate change); the audio — the draft voice, or
  * the voice with its Music Bed — is copied untouched.
  */
-export function captionBurnArgs(p: { inPath: string; assPath: string; outPath: string; fontsDir?: string }): string[] {
-  const opts = [`filename=${filterPath(p.assPath)}`, 'shaping=complex'];
-  if (p.fontsDir) opts.push(`fontsdir=${filterPath(p.fontsDir)}`);
+export function captionBurnArgs(p: { inPath: string; assPath: string; outPath: string }): string[] {
   return [
     '-y',
     '-i', p.inPath,
     '-map', '0:v:0',
     '-map', '0:a?',
     // The `ass` filter (not `subtitles`): only it takes the shaping option.
-    '-vf', `ass=${opts.join(':')}`,
+    // The path is escaped for both levels of filtergraph parsing (ffmpegFilterValue).
+    '-vf', `ass=filename=${ffmpegFilterValue(p.assPath)}:shaping=complex`,
     '-fps_mode', 'passthrough',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p',
     '-c:a', 'copy',
