@@ -198,14 +198,16 @@ flowchart LR
   API["api-v2 skill routes"] --> ROUTER["decideMakeUgcRoute"] --> WORKERS["render workers"]
 ```
 
-The agent-facing surface is deliberately curated. Of the internal skills, the
-hosted connector lists exactly seven: `make_ugc`, `make_podcast`,
+The agent-facing surface is deliberately curated. The hosted connector lists
+exactly eight tools: the six `agentFacing` skills — `make_ugc`, `make_podcast`,
 `make_subtitles`, `make_product_hero` (renders an approved Product Hero draft
 into a Short; see ADR 0001), `make_reaction` (renders an approved draft as a
 Reaction Short: a saved character reacting silently, intercut with the
-product), `create_character`, `list_characters`. The set of
-`agentFacing` skills is pinned by `agent-facing-surface.test.ts`. Fewer,
-well-described tools beat a large catalog for agent context.
+product), `make_hands_on` (renders an approved draft as a Hands-on Short:
+first-person hands with the product, ending on a product shot) — plus
+`create_character` and `list_characters`. The set of `agentFacing` skills is
+pinned by `agent-facing-surface.test.ts`. Fewer, well-described tools beat a
+large catalog for agent context.
 
 ## Self-hosting: swapping the managed pieces
 
