@@ -17,6 +17,11 @@ import { makePodcastSceneActivity } from './podcast-scene.js';
 import { makePodcastReframeActivity } from './podcast-reframe.js';
 import { makeRefundCreditsActivity } from './refund-credits.js';
 import { makeMarkPrimitiveRunFailedActivity } from './mark-run-failed.js';
+import {
+  makeFetchDraftAudioActivity,
+  makeProductHeroClipActivity,
+  makeMuxProductHeroActivity,
+} from './product-hero.js';
 
 export function createActivities(cfg: WorkerConfig) {
   return {
@@ -36,6 +41,9 @@ export function createActivities(cfg: WorkerConfig) {
     composeBrollOverlay: makeComposeBrollOverlayActivity(cfg),
     podcastScene: makePodcastSceneActivity(cfg),
     podcastReframe: makePodcastReframeActivity(cfg),
+    fetchDraftAudio: makeFetchDraftAudioActivity(cfg),
+    productHeroClip: makeProductHeroClipActivity(cfg),
+    muxProductHero: makeMuxProductHeroActivity(cfg),
   };
 }
 

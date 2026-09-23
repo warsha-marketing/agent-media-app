@@ -1,12 +1,15 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 
 export interface R2Config {
   accountId: string;
   accessKeyId: string;
   secretAccessKey: string;
   bucket: string;
+  /** Private bucket (see WorkerConfig.r2.privateBucket). Required only by
+   *  r2GetPrivateObject. */
+  privateBucket?: string;
   publicUrl: string;
 }
 
@@ -57,4 +60,23 @@ export async function r2UploadVnext(
     key,
     publicUrl: `${cfg.publicUrl}/${key}`,
   };
+}
+
+/**
+ * Read a PRIVATE object by key (server-side only; never exposed as a URL).
+ * Used for draft voice audio, which api-v2 stores without public access.
+ * Returns null when the key does not exist.
+ */
+export async function r2GetPrivateObject(cfg: R2Config, key: string): Promise<Buffer | null> {
+  try {
+    const out = await getClient(cfg).send(
+      new GetObjectCommand({ Bucket: cfg.privateBucket ?? cfg.bucket, Key: key }),
+    );
+    if (!out.Body) return null;
+    return Buffer.from(await out.Body.transformToByteArray());
+  } catch (err) {
+    const name = (err as { name?: string; Code?: string })?.name ?? (err as { Code?: string })?.Code;
+    if (name === 'NoSuchKey' || name === 'NotFound') return null;
+    throw err;
+  }
 }

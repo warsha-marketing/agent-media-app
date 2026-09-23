@@ -12,6 +12,13 @@ import { uploadUserImageBase64, uploadUserImageFromUrl, uploadUserVideoFromUrl }
 import { ModerationError } from '../../lib/image-moderation.js';
 import { quoteSkillCredits, quoteInFlightPrimitiveRun } from '../../skills/credit-quotes.js';
 import { decideMakeUgcRoute, type MakeUgcProps } from '../../skills/make-ugc-router.js';
+import {
+  RenderRefusal,
+  draftAlreadyRendered,
+  resolveRenderableDraft,
+  supabaseProductHeroDraftStore,
+  type RenderableDraft,
+} from '../../skills/product-hero-render.js';
 
 /**
  * Credits already COMMITTED to the user's in-flight (submitted/running) jobs.
@@ -176,13 +183,21 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     res.status(400).json({ error: 'invalid_input', skill: slug, detail: parsed.error.flatten() });
     return;
   }
+  let input = parsed.data as Record<string, unknown>;
+  // make_product_hero is priced from its draft: refuse a draft the run would
+  // refuse (not the caller's, already rendered, outside 5–15 s), then quote the
+  // planned render from the draft's measured duration.
+  if (slug === 'make_product_hero') {
+    const draft = await resolveDraftOrRespond(res, userId, input);
+    if (!draft) return;
+    input = { ...input, duration_ms: draft.duration_ms };
+  }
   // Match the run preflight and worker ledger in self-hosted billing mode.
   // The UI skips its credit gate for a zero-cost quote; provider fees still apply.
   if (!isBillingEnabled()) {
     res.status(200).json({ slug, credits: 0, available: null, committed: 0, sufficient: true });
     return;
   }
-  const input = parsed.data as Record<string, unknown>;
   const credits = quoteSkillCredits(slug, input);
 
   let available: number | null = null;
@@ -402,6 +417,13 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
     return;
   }
 
+  // make_product_hero renders an approved draft: resolve + claim the draft,
+  // re-host the photo, preflight, and start its own workflow.
+  if (slug === 'make_product_hero') {
+    await dispatchProductHero(res, userId, activityInputBody);
+    return;
+  }
+
   if (slug === 'make_character_sheet') {
     const b64 = (activityInputBody as { portrait_image_base64?: string }).portrait_image_base64;
     if (b64) {
@@ -503,20 +525,7 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
   // doesn't get a half-failed workflow on an insufficient balance.
   const preflight = await preflightCreditCheck(userId, slug, activityInputBody);
   if (!preflight.ok) {
-    const free = Math.max(0, preflight.available - preflight.committed);
-    res.status(402).json({
-      error: 'insufficient_credits',
-      skill: slug,
-      needed: preflight.needed,
-      available: preflight.available,
-      committed: preflight.committed,
-      // Human-ready line the chat/web can show verbatim, with a buy pointer.
-      detail:
-        `This needs ${preflight.needed} credits but you have ${free} available` +
-        (preflight.committed > 0 ? ` (${preflight.committed} reserved by jobs still running)` : '') +
-        `. Top up on the Billing page to continue.`,
-      buy_url: '/dashboard/billing',
-    });
+    sendInsufficientCredits(res, slug, preflight);
     return;
   }
 
@@ -656,6 +665,192 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
     workflow_id: workflowId,
     skill: slug,
     primitive: skill.primitive,
+    status: 'submitted',
+  });
+}
+
+function sendInsufficientCredits(
+  res: Response,
+  slug: string,
+  preflight: { needed: number; available: number; committed: number },
+): void {
+  const free = Math.max(0, preflight.available - preflight.committed);
+  res.status(402).json({
+    error: 'insufficient_credits',
+    skill: slug,
+    needed: preflight.needed,
+    available: preflight.available,
+    committed: preflight.committed,
+    // Human-ready line the chat/web can show verbatim, with a buy pointer.
+    detail:
+      `This needs ${preflight.needed} credits but you have ${free} available` +
+      (preflight.committed > 0 ? ` (${preflight.committed} reserved by jobs still running)` : '') +
+      `. Top up on the Billing page to continue.`,
+    buy_url: '/dashboard/billing',
+  });
+}
+
+function sendRenderRefusal(res: Response, refusal: RenderRefusal): void {
+  res.status(refusal.status).json({ error: refusal.code, skill: 'make_product_hero', detail: refusal.message });
+}
+
+/** The draft a make_product_hero call names, if the caller may render it; else
+ *  the refusal is sent and null returned. Shared by quote and run. */
+async function resolveDraftOrRespond(
+  res: Response,
+  userId: string,
+  body: Record<string, unknown>,
+): Promise<RenderableDraft | null> {
+  try {
+    return await resolveRenderableDraft(supabaseProductHeroDraftStore(supabase), userId, String(body.draft_id ?? ''));
+  } catch (err) {
+    if (err instanceof RenderRefusal) sendRenderRefusal(res, err);
+    else res.status(500).json({ error: 'draft_lookup_failed', skill: 'make_product_hero', detail: errorMessage(err) });
+    return null;
+  }
+}
+
+/**
+ * make_product_hero: render an approved draft into a Product Hero Short.
+ *
+ * Order matters: every refusal (draft, photo moderation, budget, credits) comes
+ * BEFORE the draft is claimed, because a claim is final — rendered_at is
+ * set-once, and a claimed draft never renders again. The claim is conditional
+ * on rendered_at still being NULL, so two concurrent calls cannot both start.
+ */
+async function dispatchProductHero(
+  res: Response,
+  userId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const slug = 'make_product_hero';
+  const draft = await resolveDraftOrRespond(res, userId, body);
+  if (!draft) return;
+
+  let productImageUrl: string;
+  try {
+    const up = body.product_image_base64
+      ? await uploadUserImageBase64(userId, String(body.product_image_base64))
+      : await uploadUserImageFromUrl(userId, String(body.product_image_url));
+    productImageUrl = up.url;
+  } catch (err) {
+    if (respondIfModerationBlocked(res, err, slug)) return;
+    res.status(400).json({ error: 'image_upload_failed', skill: slug, detail: errorMessage(err) });
+    return;
+  }
+
+  // What the skill run stores — and what the in-flight reservation prices. The
+  // audio key stays out of it: only the workflow input carries it.
+  const runInput: Record<string, unknown> = {
+    draft_id: draft.id,
+    product_image_url: productImageUrl,
+    aspect_ratio: '9:16',
+    duration_ms: draft.duration_ms,
+  };
+
+  // The Preset's own cost budget (its plan never exceeds it; this guards a
+  // future plan or price change from silently overspending).
+  const budget = SKILLS[slug].costBudget;
+  const credits = quoteSkillCredits(slug, runInput);
+  if (budget && credits > budget.maxCredits) {
+    res.status(422).json({
+      error: 'over_preset_budget',
+      skill: slug,
+      detail: `This render would cost ${credits} credits, over the Product Hero budget of ${budget.maxCredits}.`,
+    });
+    return;
+  }
+
+  const preflight = await preflightCreditCheck(userId, slug, runInput);
+  if (!preflight.ok) {
+    sendInsufficientCredits(res, slug, preflight);
+    return;
+  }
+
+  let cfg: ReturnType<typeof getTemporalConfig>;
+  try {
+    cfg = getTemporalConfig();
+  } catch (err) {
+    res.status(503).json({ error: 'temporal_unconfigured', detail: errorMessage(err) });
+    return;
+  }
+
+  // Claim the draft: from here on it is rendered (set-once).
+  let claimed: boolean;
+  try {
+    claimed = await supabaseProductHeroDraftStore(supabase).claimForRender(draft.id, userId);
+  } catch (err) {
+    res.status(500).json({ error: 'draft_claim_failed', skill: slug, detail: errorMessage(err) });
+    return;
+  }
+  if (!claimed) {
+    sendRenderRefusal(res, draftAlreadyRendered());
+    return;
+  }
+
+  const { data: skillRunRow, error: insertErr } = await supabase
+    .from('skill_runs')
+    .insert({
+      user_id: userId,
+      skill_slug: slug,
+      skill_version: SKILLS[slug].version,
+      status: 'submitted',
+      input: runInput,
+      current_step: 'pending',
+    })
+    .select('id')
+    .single();
+  if (insertErr || !skillRunRow) {
+    res.status(500).json({ error: 'skill_run_insert_failed', detail: insertErr?.message ?? 'no row' });
+    return;
+  }
+  const skillRunId = skillRunRow.id as string;
+  const workflowId = `${slug}-${skillRunId}`;
+
+  const workflowInput = {
+    skill_run_id: skillRunId,
+    user_id: userId,
+    draft_id: draft.id,
+    audio_key: draft.audio_key,
+    duration_ms: draft.duration_ms,
+    product_image_url: productImageUrl,
+    aspect_ratio: '9:16' as const,
+  };
+
+  try {
+    const client = await getTemporalClient();
+    await withTimeout(
+      client.workflow.start(SKILLS[slug].workflowType, {
+        workflowId,
+        taskQueue: getPrimitiveTaskQueue(),
+        workflowExecutionTimeout: 45 * 60_000,
+        workflowRunTimeout: 45 * 60_000,
+        args: [workflowInput],
+      }),
+      cfg.startTimeoutMs,
+      `temporal.workflow.start.${slug}`,
+    );
+  } catch (err) {
+    // Nothing was charged (the worker charges per clip). Fail the run so it does
+    // not sit in 'submitted' holding an in-flight credit reservation.
+    await supabase
+      .from('skill_runs')
+      .update({
+        status: 'failed',
+        error_code: 'temporal_dispatch_failed',
+        error_message: errorMessage(err).slice(0, 500),
+        finished_at: new Date().toISOString(),
+      })
+      .eq('id', skillRunId);
+    res.status(502).json({ error: 'temporal_dispatch_failed', detail: errorMessage(err) });
+    return;
+  }
+
+  res.status(202).json({
+    skill_run_id: skillRunId,
+    workflow_id: workflowId,
+    skill: slug,
+    draft_id: draft.id,
     status: 'submitted',
   });
 }

@@ -10,6 +10,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ApplicationFailure } from '@temporalio/activity';
+import { PRODUCT_HERO } from '@agentmedia/schema';
 
 /**
  * Is billing explicitly disabled for this deployment?
@@ -35,7 +36,8 @@ export type PrimitiveCreditableId =
   | 'product_in_hands'
   | 'subtitles_v2'
   | 'wireframe_gpt2'
-  | 'lip_sync';
+  | 'lip_sync'
+  | 'product_hero_clip';
 
 // Portraits are not charged (free identity prep). Character sheets are charged
 // ONLY when generated standalone (make_character_sheet); inside a video flow the
@@ -55,6 +57,14 @@ export function quotePrimitiveCredits(
   primitive: PrimitiveCreditableId,
   duration?: 5 | 10 | 15,
 ): number {
+  if (primitive === 'product_hero_clip') {
+    // Priced by the Preset's own budget — the SAME table api-v2 quotes from
+    // (@agentmedia/schema), so the quote is exactly the sum of these charges.
+    if (duration !== 5 && duration !== 10) {
+      throw ApplicationFailure.nonRetryable(`product_hero_clip has no ${duration}s price`, 'INVALID_INPUT');
+    }
+    return PRODUCT_HERO.budget.clipCredits[duration];
+  }
   switch (primitive) {
     case 'portrait_gpt2':
       return PORTRAIT_CREDITS;
