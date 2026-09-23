@@ -339,7 +339,7 @@ function LoginForm() {
         {/* Primary CTA - Huly pill */}
         <div className="flex justify-center">
           <button type="submit" disabled={loading} className="contents">
-            <Home2CTAButton href="#" variant="light" size="lg" showArrow={false}>
+            <Home2CTAButton variant="light" size="lg" showArrow={false}>
               {loading ? 'Sending code...' : 'Continue with email'}
             </Home2CTAButton>
           </button>

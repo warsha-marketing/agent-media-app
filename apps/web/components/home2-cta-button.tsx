@@ -16,15 +16,23 @@
  */
 
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import type { HTMLAttributes, ReactNode } from 'react';
 
 interface Home2CTAButtonProps {
-  href: string;
+  /** Omit when the pill sits inside a <button>: a Link there swallows the
+   *  button's click (Next prevents default to navigate), so the form never
+   *  submits. Without href the pill renders as a plain span. */
+  href?: string;
   children: ReactNode;
   variant?: 'light' | 'dark';
   size?: 'md' | 'lg';
   showArrow?: boolean;
   className?: string;
+}
+
+/** The pill itself: a Link when it navigates, a span when a parent handles the click. */
+function Pill({ href, ...props }: { href?: string } & HTMLAttributes<HTMLElement>) {
+  return href === undefined ? <span {...props} /> : <Link href={href} {...props} />;
 }
 
 export function Home2CTAButton({
@@ -51,7 +59,7 @@ export function Home2CTAButton({
           } relative h-full w-full rounded-full`}
         />
       </div>
-      <Link
+      <Pill
         href={href}
         className={`relative z-10 flex ${
           isLg ? 'h-14 px-12 sm:pl-[72px] sm:pr-[64px]' : 'h-10 px-8 sm:pl-[59px] sm:pr-[52px]'
@@ -102,7 +110,7 @@ export function Home2CTAButton({
             />
           </svg>
         ) : null}
-      </Link>
+      </Pill>
     </div>
   );
 }

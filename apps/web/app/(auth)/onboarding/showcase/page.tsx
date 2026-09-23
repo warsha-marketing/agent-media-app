@@ -110,7 +110,7 @@ export default function OnboardingShowcasePage() {
           aria-disabled={submitting}
           style={{ opacity: submitting ? 0.7 : 1 }}
         >
-          <Home2CTAButton href="#" variant="dark" size="lg" showArrow={false}>
+          <Home2CTAButton variant="dark" size="lg" showArrow={false}>
             {submitting ? (
               <span className="inline-flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
