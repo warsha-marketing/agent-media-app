@@ -22,6 +22,11 @@
  *                        clip ran a few ms short, holds) the visuals to the audio's
  *                        exact length, and muxes the draft audio in whole. Audio is
  *                        never trimmed or stretched.
+ *   3b. mixMusicBed    — (#9) only when api-v2 chose a Music Bed track from the
+ *                        Preset's set: lays it ducked under the draft voice; the
+ *                        voice sets the length. No track (Music Bed off, or none
+ *                        licensed) → no step, and the Short's audio is exactly
+ *                        the draft voice.
  *
  * Each step writes its own primitive_runs row under the skill run; the Short is
  * the skill run's final output. A terminal failure anywhere refunds every
@@ -30,8 +35,8 @@
  * content-policy verdict on the product photo is never retried.
  *
  * Before step 1 the render refuses to start without every input its Preset
- * requires. Extension points (later tickets): the Music Bed and Captions join at
- * step 3 (the mix), declared per Preset on its definition.
+ * requires. Extension points (later tickets): Captions join at step 3 (the mix),
+ * declared per Preset on its definition.
  */
 
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
@@ -53,6 +58,12 @@ export interface MakeProductHeroWorkflowInput {
   /** R2-hosted, moderated product photo. */
   product_image_url: string;
   aspect_ratio: '9:16';
+  /**
+   * Music Bed (#9): the track api-v2 chose from the Preset's set
+   * (resolveMusicBed), or null/absent for voice only. Absent on runs started
+   * before the Music Bed.
+   */
+  music_bed?: { track_id: string; storage_key: string } | null;
 }
 
 /** The shared pipeline's input: a render input plus the Preset to render it as. */
@@ -92,7 +103,7 @@ const { productHeroClip } = proxyActivities<PrimitiveActivities>({
   heartbeatTimeout: '5 minutes',
   retry: { initialInterval: '10s', maximumInterval: '2m', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: NON_RETRYABLE },
 });
-const { fetchDraftAudio, muxProductHero } = proxyActivities<PrimitiveActivities>({
+const { fetchDraftAudio, muxProductHero, mixMusicBed } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '10 minutes',
   heartbeatTimeout: '2 minutes',
   retry: { initialInterval: '5s', maximumInterval: '60s', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: NON_RETRYABLE },
@@ -180,7 +191,7 @@ export async function renderPresetWorkflow(
 
     // ── 3. Cut the visuals to the audio and mux the draft audio in ─────────
     await composedSkillState({ skill_run_id: skillRunId, current_step: 'mux' });
-    const short = await muxProductHero({
+    let short = await muxProductHero({
       primitive_run_id: mint('mux'),
       user_id: input.user_id,
       skill_run_id: skillRunId,
@@ -190,6 +201,22 @@ export async function renderPresetWorkflow(
       aspect_ratio: preset.aspectRatio,
       preset: preset.id,
     });
+    // ── 3b. Music Bed (#9): ducked under the voice; never lengthens the Short ─
+    const musicBed = input.music_bed ?? null;
+    if (musicBed) {
+      await composedSkillState({ skill_run_id: skillRunId, current_step: 'music_bed' });
+      short = await mixMusicBed({
+        primitive_run_id: mint('music_bed'),
+        user_id: input.user_id,
+        skill_run_id: skillRunId,
+        short_url: short.video_url,
+        audio_key: audio.audio_key,
+        audio_duration_ms: audio.duration_ms,
+        preset: preset.id,
+        track_id: musicBed.track_id,
+        track_storage_key: musicBed.storage_key,
+      });
+    }
     if (Math.abs(short.duration_ms - audio.duration_ms) > MAX_CUT_DRIFT_MS) {
       throw ApplicationFailure.nonRetryable(
         `cut is ${short.duration_ms} ms but the audio is ${audio.duration_ms} ms`,
@@ -207,6 +234,7 @@ export async function renderPresetWorkflow(
       draft_id: input.draft_id,
       aspect_ratio: preset.aspectRatio,
       credits_actual_usd: totalUsd,
+      music_bed: musicBed?.track_id ?? null, // #9
     };
     await composedSkillState({
       skill_run_id: skillRunId,

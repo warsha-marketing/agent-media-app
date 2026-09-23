@@ -23,6 +23,8 @@ import {
   makeMuxProductHeroActivity,
   makeReleaseDraftRenderActivity,
 } from './product-hero.js';
+// Music Bed (#9) — self-contained; mixed after the Product Hero cut.
+import { makeMixMusicBedActivity } from './music-bed.js';
 
 export function createActivities(cfg: WorkerConfig) {
   return {
@@ -46,6 +48,7 @@ export function createActivities(cfg: WorkerConfig) {
     productHeroClip: makeProductHeroClipActivity(cfg),
     muxProductHero: makeMuxProductHeroActivity(cfg),
     releaseDraftRender: makeReleaseDraftRenderActivity(cfg),
+    mixMusicBed: makeMixMusicBedActivity(cfg),
   };
 }
 

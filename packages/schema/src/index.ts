@@ -25,3 +25,6 @@ export * from './preset-definition.js';
 export * from './preset-registry.js';
 // Delivery Tags — the allowed list and the strip helpers (Captions, viewer display).
 export * from './delivery-tags.js';
+// Music Bed — per-Preset licensed track set (data) + the on/off/which-track
+// decision the quote and the render share. See src/music-bed/.
+export * from './music-bed/index.js';
