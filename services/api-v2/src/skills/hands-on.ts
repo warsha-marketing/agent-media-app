@@ -16,7 +16,7 @@
 
 import { z } from 'zod';
 import { HAND_GENDERS, HANDS_ON, HANDS_ON_SETTINGS, type HandGender, type HandsOnSetting, type ModestyChoice } from '@agentmedia/schema';
-import { presetRenderInputSchema, resolvePresetModesty, type PresetInputResolver } from './preset-inputs.js';
+import { MODESTY_REFUSALS, presetRenderInputSchema, resolvePresetModesty, type PresetInputResolver } from './preset-inputs.js';
 import type { RenderableDraft } from './product-hero-render.js';
 import type { SkillEntry } from './registry.js';
 
@@ -141,4 +141,5 @@ export const MAKE_HANDS_ON_SKILL: SkillEntry = {
   agentFacing: true,
   preset: HANDS_ON,
   presetInputs: resolveHandsOnInputs,
+  presetRefusals: MODESTY_REFUSALS,
 };

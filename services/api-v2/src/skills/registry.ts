@@ -15,7 +15,7 @@
 
 import { z } from 'zod';
 import { presetRenderInputSchema, type PresetInputResolver } from './preset-inputs.js';
-import { MakeReactionSkillInputSchema, resolveReactionInputs } from './reaction.js';
+import { MakeReactionSkillInputSchema, REACTION_REFUSALS, resolveReactionInputs } from './reaction.js';
 import { MAKE_HANDS_ON_SKILL } from './hands-on.js'; // #18
 import {
   PortraitGpt2ToolInputSchema,
@@ -336,6 +336,12 @@ export interface SkillEntry {
    * #19). The quote and the run call it after the draft is resolved.
    */
   presetInputs?: PresetInputResolver;
+  /**
+   * The refusals a Preset render skill answers beyond the shared ones
+   * (RENDER_REFUSALS), by code — its own inputs' (e.g. Reaction's
+   * character_not_found, the Modesty codes). The OpenAPI entry lists them from here.
+   */
+  presetRefusals?: Readonly<Record<string, { status: number; when: string }>>;
 }
 
 export const SKILLS: Record<string, SkillEntry> = {
@@ -467,6 +473,7 @@ export const SKILLS: Record<string, SkillEntry> = {
     agentFacing: true,
     preset: REACTION,
     presetInputs: resolveReactionInputs,
+    presetRefusals: REACTION_REFUSALS,
   },
   make_hands_on: MAKE_HANDS_ON_SKILL,
   make_ugc: {
