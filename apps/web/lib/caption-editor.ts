@@ -42,7 +42,7 @@ export interface CaptionStyle {
 
 export const DEFAULT_STYLE: Readonly<CaptionStyle> = { position: 'lower_third', size: 'm', colour: 'white' };
 
-export const CAPTION_LIMITS = { maxLines: 60, maxChars: 48, minSeconds: 0.2 } as const;
+export const CAPTION_LINE_LIMITS = { maxLines: 60, maxChars: 48, minSeconds: 0.2 } as const;
 
 /** Labels for the style pickers. */
 export const POSITION_LABELS: Record<CaptionPosition, string> = { lower_third: 'Lower third', centre: 'Centre', top: 'Top' };
@@ -97,7 +97,7 @@ export function splitLine(lines: readonly EditorLine[], i: number, at?: number):
   const right = text.slice(cut + 1);
   const letters = left.length + right.length;
   const mid = round3(line.start + (line.end - line.start) * (left.length / letters));
-  if (mid - line.start < CAPTION_LIMITS.minSeconds || line.end - mid < CAPTION_LIMITS.minSeconds) return lines as EditorLine[];
+  if (mid - line.start < CAPTION_LINE_LIMITS.minSeconds || line.end - mid < CAPTION_LINE_LIMITS.minSeconds) return lines as EditorLine[];
   const out = lines.slice();
   out.splice(i, 1, { id: `${line.id}a`, text: left, start: line.start, end: mid }, { id: `${line.id}b`, text: right, start: mid, end: line.end });
   return out;
@@ -115,7 +115,7 @@ export function mergeWithNext(lines: readonly EditorLine[], i: number): EditorLi
 
 /**
  * Move one edge of line `i` by `delta` seconds, held between its neighbours
- * (no overlap), inside the Short, and at least CAPTION_LIMITS.minSeconds long.
+ * (no overlap), inside the Short, and at least CAPTION_LINE_LIMITS.minSeconds long.
  */
 export function nudge(lines: readonly EditorLine[], i: number, edge: 'start' | 'end', delta: number, durationSeconds: number): EditorLine[] {
   const line = lines[i];
@@ -125,10 +125,10 @@ export function nudge(lines: readonly EditorLine[], i: number, edge: 'start' | '
   const out = lines.slice();
   if (edge === 'start') {
     const lo = Math.max(0, prevEnd);
-    const hi = line.end - CAPTION_LIMITS.minSeconds;
+    const hi = line.end - CAPTION_LINE_LIMITS.minSeconds;
     out[i] = { ...line, start: round3(Math.min(hi, Math.max(lo, line.start + delta))) };
   } else {
-    const lo = line.start + CAPTION_LIMITS.minSeconds;
+    const lo = line.start + CAPTION_LINE_LIMITS.minSeconds;
     const hi = Math.min(durationSeconds, nextStart);
     out[i] = { ...line, end: round3(Math.max(lo, Math.min(hi, line.end + delta))) };
   }
@@ -174,13 +174,13 @@ export function validateLines(lines: readonly CaptionLine[], durationSeconds: nu
     add('no_lines', null, 'Add at least one caption line.');
     return issues;
   }
-  if (lines.length > CAPTION_LIMITS.maxLines) add('too_many_lines', null, `At most ${CAPTION_LIMITS.maxLines} caption lines; merge some lines.`);
+  if (lines.length > CAPTION_LINE_LIMITS.maxLines) add('too_many_lines', null, `At most ${CAPTION_LINE_LIMITS.maxLines} caption lines; merge some lines.`);
   let prev: { start: number; end: number } | null = null;
   lines.forEach((l, i) => {
     const n = i + 1;
     const text = normaliseText(typeof l.text === 'string' ? l.text : '');
     if (text === '') add('empty_text', i, `Line ${n} has no text; type its words or merge it away.`);
-    else if ([...text].length > CAPTION_LIMITS.maxChars) add('text_too_long', i, `Line ${n} is longer than ${CAPTION_LIMITS.maxChars} characters; split it.`);
+    else if ([...text].length > CAPTION_LINE_LIMITS.maxChars) add('text_too_long', i, `Line ${n} is longer than ${CAPTION_LINE_LIMITS.maxChars} characters; split it.`);
     const { start, end } = l;
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       add('invalid_timing', i, `Line ${n} must end after it starts.`);
@@ -188,7 +188,7 @@ export function validateLines(lines: readonly CaptionLine[], durationSeconds: nu
       return;
     }
     if (start < 0 || end > durationSeconds + 0.001) add('outside_short', i, `Line ${n} must stay within the Short (0–${fmt(durationSeconds)}).`);
-    else if (end - start < CAPTION_LIMITS.minSeconds - 1e-9) add('line_too_short', i, `Line ${n} must stay on screen at least ${fmt(CAPTION_LIMITS.minSeconds)}.`);
+    else if (end - start < CAPTION_LINE_LIMITS.minSeconds - 1e-9) add('line_too_short', i, `Line ${n} must stay on screen at least ${fmt(CAPTION_LINE_LIMITS.minSeconds)}.`);
     if (prev) {
       if (start < prev.start) add('out_of_order', i, `Line ${n} starts before line ${i}; keep lines in order.`);
       else if (start < prev.end - 1e-9) add('overlap', i, `Line ${n} starts before line ${i} ends; move one of them.`);

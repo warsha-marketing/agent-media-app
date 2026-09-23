@@ -24,7 +24,7 @@ const CASES: Array<{ lines: Array<{ text: string; start: number; end: number }>;
 
 describe('Caption editor: web mirror of the caption-lines contract', () => {
   it('has the same limits, style whitelist and default style', () => {
-    assert.deepEqual({ ...web.CAPTION_LIMITS }, { ...schema.CAPTION_LINE_LIMITS });
+    assert.deepEqual({ ...web.CAPTION_LINE_LIMITS }, { ...schema.CAPTION_LINE_LIMITS });
     assert.deepEqual([...web.CAPTION_POSITIONS], [...schema.CAPTION_POSITIONS]);
     assert.deepEqual([...web.CAPTION_SIZES], [...schema.CAPTION_SIZES]);
     assert.deepEqual({ ...web.CAPTION_COLOURS }, { ...schema.CAPTION_COLOURS });

@@ -6,7 +6,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CAPTION_LIMITS,
+  CAPTION_LINE_LIMITS,
   DEFAULT_STYLE,
   exportBody,
   exportKeyFor,
@@ -56,7 +56,7 @@ describe('splitLine', () => {
   it('leaves a one-word line, or one too short to halve, as it is', () => {
     const one = withIds([{ text: 'جلد', start: 0, end: 2 }]);
     assert.equal(splitLine(one, 0), one);
-    const short = withIds([{ text: 'أ ب', start: 0, end: CAPTION_LIMITS.minSeconds * 1.5 }]);
+    const short = withIds([{ text: 'أ ب', start: 0, end: CAPTION_LINE_LIMITS.minSeconds * 1.5 }]);
     assert.equal(splitLine(short, 0), short);
   });
 });
@@ -90,7 +90,7 @@ describe('nudge', () => {
     assert.equal(nudge(lines(), 1, 'end', 0.5, 6)[1].end, 3.2); // next starts at 3.2
     assert.equal(nudge(lines(), 0, 'start', -1, 6)[0].start, 0);
     assert.equal(nudge(lines(), 2, 'end', 5, 6)[2].end, 6);
-    assert.equal(nudge(lines(), 2, 'start', 5, 6)[2].start, +(5 - CAPTION_LIMITS.minSeconds).toFixed(3));
+    assert.equal(nudge(lines(), 2, 'start', 5, 6)[2].start, +(5 - CAPTION_LINE_LIMITS.minSeconds).toFixed(3));
   });
 });
 
@@ -116,7 +116,7 @@ describe('validateLines (the same rules the server checks)', () => {
     assert.deepEqual(codes([{ text: 'أ', start: 2, end: 3 }, { text: 'ب', start: 0, end: 1 }]), ['out_of_order@1']);
     assert.deepEqual(codes([{ text: 'أ', start: 5, end: 7 }]), ['outside_short@0']);
     assert.deepEqual(codes([{ text: ' ', start: 0, end: 1 }]), ['empty_text@0']);
-    assert.deepEqual(codes([{ text: 'ب'.repeat(CAPTION_LIMITS.maxChars + 1), start: 0, end: 1 }]), ['text_too_long@0']);
+    assert.deepEqual(codes([{ text: 'ب'.repeat(CAPTION_LINE_LIMITS.maxChars + 1), start: 0, end: 1 }]), ['text_too_long@0']);
   });
 });
 
