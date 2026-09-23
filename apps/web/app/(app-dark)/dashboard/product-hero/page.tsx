@@ -57,6 +57,7 @@ import {
   parseQuote,
   PRODUCT_DETAILS_MAX,
   readFlowParams,
+  renderBody, // #9 Music Bed
   renderReducer,
   runToResume,
   startedRunId,
@@ -434,6 +435,14 @@ export default function ProductHeroPage() {
 
   // ── Render: quote → Confirm → progress → Short ─────────────────────────
 
+  // Music Bed (#9): on by default; read through a ref when the render starts.
+  const [music, setMusic] = useState(true);
+  const musicRef = useRef(true);
+  const setMusicOn = (on: boolean) => {
+    musicRef.current = on;
+    setMusic(on);
+  };
+
   /** The draft is already rendering (or rendered): show that run instead of an error. */
   const followDraftRun = useCallback(async (draftId: string, outcome: ApiOutcome) => {
     const d = await readDraft(draftId);
@@ -489,7 +498,7 @@ export default function ProductHeroPage() {
     const { draftId: id, photoUrl: url, key } = starting;
     void (async () => {
       // aspect_ratio is left to the server's default: Product Hero is always 9:16.
-      const r = await postJson(`/api/v1/skills/${SKILL}/run`, { draft_id: id, product_image_url: url }, { 'Idempotency-Key': key });
+      const r = await postJson(`/api/v1/skills/${SKILL}/run`, renderBody(id, url, musicRef.current), { 'Idempotency-Key': key });
       const runId = r.status === 202 ? startedRunId(r.body) : null;
       if (runId) {
         dispatch({ type: 'run_started', runId });
@@ -880,6 +889,8 @@ export default function ProductHeroPage() {
         onRequote={retryRender}
         onRetry={retryRender}
         onNewPhoto={choosePhotoAgain}
+        music={music}
+        onMusicChange={setMusicOn}
       />
 
       {history.length > 1 ? (
