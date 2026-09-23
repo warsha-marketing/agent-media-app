@@ -11,7 +11,7 @@
 import Link from 'next/link';
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { AlertTriangle, Check, Clapperboard, Download, ImageOff, Loader2, RotateCcw } from 'lucide-react';
-import { FLOW_STEPS, RENDER_STAGES, type ApiOutcome, type FlowStep, type RenderPhase } from '@/lib/product-hero-flow';
+import { FLOW_STEPS, RENDER_STAGES, type ApiOutcome, type FlowStep, type RefundView, type RenderPhase } from '@/lib/product-hero-flow';
 
 const card = { border: '1px solid rgba(255,255,255,0.08)', backgroundColor: '#14151F' } as const;
 const muted = { color: 'rgba(255,255,255,0.45)' } as const;
@@ -85,7 +85,7 @@ export function RenderPanel(p: RenderPanelProps) {
       {r.phase === 'rendering' ? <Progress view={r.view} /> : null}
       {r.phase === 'succeeded' ? <Result runId={r.runId} videoUrl={r.videoUrl} durationMs={r.durationMs} /> : null}
       {r.phase === 'failed' ? (
-        <Failure canceled={r.canceled} moderation={r.moderation} message={r.message} onRetry={p.onRetry} onNewPhoto={p.onNewPhoto} />
+        <Failure canceled={r.canceled} moderation={r.moderation} message={r.message} refund={r.refund} onRetry={p.onRetry} onNewPhoto={p.onNewPhoto} />
       ) : null}
     </section>
   );
@@ -261,7 +261,44 @@ function Result({ runId, videoUrl, durationMs }: { runId: string; videoUrl: stri
   );
 }
 
-function Failure({ canceled, moderation, message, onRetry, onNewPhoto }: { canceled: boolean; moderation: boolean; message: string | null; onRetry: () => void; onNewPhoto: () => void }) {
+/** The refund line, stated from the server's ledger — never assumed. */
+function RefundNotice({ refund }: { refund: RefundView }) {
+  switch (refund.status) {
+    case 'refunded':
+      return (
+        <p className="text-sm" style={text}>
+          <strong style={{ color: '#6EE7B7' }}>{credits(refund.refunded)} refunded.</strong> Everything charged for this
+          render went back to your balance. Your draft is kept, so you can render it again.
+        </p>
+      );
+    case 'pending':
+      return (
+        <p className="inline-flex items-center gap-2 text-sm" style={text}>
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>
+            <strong style={{ color: '#FCD34D' }}>Refund pending.</strong> {credits(refund.refunded)} of the{' '}
+            {credits(refund.charged)} charged for this render are back so far; this updates when the rest lands.
+          </span>
+        </p>
+      );
+    case 'not_charged':
+      return (
+        <p className="text-sm" style={text}>
+          <strong style={{ color: '#6EE7B7' }}>Nothing was charged</strong> for this render. Your draft is kept, so you can
+          render it again.
+        </p>
+      );
+    case 'unknown':
+      return (
+        <p className="text-sm" style={text}>
+          We couldn&apos;t read this render&apos;s refund status just now. Check your balance on the{' '}
+          <Link href="/dashboard/billing" className="underline">Billing page</Link>. Your draft is kept, so you can render it again.
+        </p>
+      );
+  }
+}
+
+function Failure({ canceled, moderation, message, refund, onRetry, onNewPhoto }: { canceled: boolean; moderation: boolean; message: string | null; refund: RefundView; onRetry: () => void; onNewPhoto: () => void }) {
   const headline = moderation
     ? 'The video model refused this product photo. Try a different photo.'
     : canceled
@@ -273,10 +310,7 @@ function Failure({ canceled, moderation, message, onRetry, onNewPhoto }: { cance
         <span className="inline-flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> {headline}</span>
         {!moderation && !canceled && message ? <span className="text-xs opacity-80">{cleanMessage(message)}</span> : null}
       </div>
-      <p className="text-sm" style={text}>
-        <strong style={{ color: '#6EE7B7' }}>Credits refunded.</strong> Every credit charged for this render went back to
-        your balance. Your draft is kept, so you can render it again.
-      </p>
+      <RefundNotice refund={refund} />
       <div className="flex flex-wrap gap-2">
         {moderation ? (
           <button type="button" onClick={onNewPhoto} className="inline-flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-semibold" style={primary}>

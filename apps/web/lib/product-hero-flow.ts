@@ -6,7 +6,7 @@
  *
  *   photo + approved draft ─► quote ─► Confirm ─► rendering ─► Short
  *                                 ▲                   │
- *                                 └──── retry ◄─ failed (refunded)
+ *                                 └──── retry ◄─ failed (refund as the server reports it)
  *
  * What lives here:
  *   - reading the API's (mixed-shape) error bodies into one outcome per UI state;
@@ -31,6 +31,8 @@ export interface SkillRunBody {
   created_at?: string | null;
   final_output?: Record<string, unknown> | null;
   error?: { code?: string | null; message?: string | null } | null;
+  /** What the run charged and refunded, from the credit ledger; null = unreadable. */
+  credits?: { charged?: number; refunded?: number; refund_status?: string } | null;
 }
 
 /** POST /v1/skills/make_product_hero/quote → 200. */
@@ -149,10 +151,29 @@ export function classifyApiError(status: number, body: unknown): ApiOutcome {
 
 export type RenderStage = 'queued' | 'voice' | 'visuals' | 'cut';
 
+/**
+ * The refund of a failed or canceled run, exactly as the server reports it —
+ * never assumed. `unknown` = the server could not read (or did not send) it.
+ */
+export type RefundView =
+  | { status: 'refunded' | 'pending'; charged: number; refunded: number }
+  | { status: 'not_charged' }
+  | { status: 'unknown' };
+
+export function refundOf(run: SkillRunBody): RefundView {
+  const c = run.credits;
+  if (!c || typeof c.charged !== 'number' || typeof c.refunded !== 'number') return { status: 'unknown' };
+  if (c.charged <= 0) return { status: 'not_charged' };
+  if (c.refund_status === 'refunded' || c.refund_status === 'pending') {
+    return { status: c.refund_status, charged: c.charged, refunded: c.refunded };
+  }
+  return { status: 'unknown' };
+}
+
 export type RunView =
   | { kind: 'rendering'; stage: RenderStage; shot: number | null; label: string }
   | { kind: 'succeeded'; videoUrl: string; durationMs: number | null }
-  | { kind: 'failed'; canceled: boolean; moderation: boolean; code: string | null; message: string | null };
+  | { kind: 'failed'; canceled: boolean; moderation: boolean; code: string | null; message: string | null; refund: RefundView };
 
 /** The ordered checklist the progress panel draws. */
 export const RENDER_STAGES: ReadonlyArray<{ stage: RenderStage; label: string }> = [
@@ -166,6 +187,11 @@ const TERMINAL = new Set(['succeeded', 'failed', 'canceled', 'cancelled']);
 
 export function isTerminalRun(status: string | undefined | null): boolean {
   return !!status && TERMINAL.has(status);
+}
+
+/** Nothing left to follow: the run is over and, if it failed, its refund has landed. */
+export function isRunSettled(run: SkillRunBody): boolean {
+  return isTerminalRun(run.status) && run.credits?.refund_status !== 'pending';
 }
 
 /** Map the workflow's current_step (pending | audio | clip_N | mux | done) to a stage. */
@@ -187,12 +213,12 @@ export function viewOfRun(run: SkillRunBody): RunView {
       return { kind: 'succeeded', videoUrl: url, durationMs: typeof out.duration_ms === 'number' ? out.duration_ms : null };
     }
     // Succeeded without a Short is not a result the user can use.
-    return { kind: 'failed', canceled: false, moderation: false, code: 'NO_OUTPUT', message: 'The render finished without a video.' };
+    return { kind: 'failed', canceled: false, moderation: false, code: 'NO_OUTPUT', message: 'The render finished without a video.', refund: refundOf(run) };
   }
   if (status === 'failed' || status === 'canceled' || status === 'cancelled') {
     const code = run.error?.code ?? null;
     const message = run.error?.message ?? null;
-    return { kind: 'failed', canceled: status !== 'failed', moderation: isModerationBlock(code, message), code, message };
+    return { kind: 'failed', canceled: status !== 'failed', moderation: isModerationBlock(code, message), code, message, refund: refundOf(run) };
   }
   const { stage, shot } = stageOf(run.current_step);
   const label = stage === 'visuals' && shot ? `Generating product shot ${shot}` : RENDER_STAGES.find((s) => s.stage === stage)!.label;
@@ -220,7 +246,7 @@ export type RenderPhase =
   | { phase: 'refused'; outcome: ApiOutcome; quote: Quote | null }
   | { phase: 'rendering'; runId: string; view: Extract<RunView, { kind: 'rendering' }> | null; quote: Quote | null }
   | { phase: 'succeeded'; runId: string; videoUrl: string; durationMs: number | null; quote: Quote | null }
-  | { phase: 'failed'; runId: string; canceled: boolean; moderation: boolean; message: string | null; quote: Quote | null };
+  | { phase: 'failed'; runId: string; canceled: boolean; moderation: boolean; message: string | null; refund: RefundView; quote: Quote | null };
 
 export interface RenderState {
   render: RenderPhase;
@@ -285,6 +311,11 @@ export function renderReducer(state: RenderState, event: RenderEvent): RenderSta
       if (r.phase === 'rendering' && r.runId === event.runId) return state;
       return { ...state, render: { phase: 'rendering', runId: event.runId, view: null, quote: quoteOf(r) } };
     case 'run_polled': {
+      // A failed run is still followed while its refund is pending: only the refund moves.
+      if (r.phase === 'failed' && r.runId === event.runId) {
+        const view = viewOfRun(event.run);
+        return view.kind === 'failed' ? { ...state, render: { ...r, refund: view.refund } } : state;
+      }
       // Only the run on screen may move the page.
       if (r.phase !== 'rendering' || r.runId !== event.runId) return state;
       const view = viewOfRun(event.run);
@@ -294,7 +325,7 @@ export function renderReducer(state: RenderState, event: RenderEvent): RenderSta
       }
       // The run that key started is over and refunded: the next Confirm is a new run.
       return {
-        render: { phase: 'failed', runId: r.runId, canceled: view.canceled, moderation: view.moderation, message: view.message, quote: r.quote },
+        render: { phase: 'failed', runId: r.runId, canceled: view.canceled, moderation: view.moderation, message: view.message, refund: view.refund, quote: r.quote },
         confirmation: null,
       };
     }

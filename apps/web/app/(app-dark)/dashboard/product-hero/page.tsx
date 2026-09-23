@@ -37,7 +37,7 @@ import {
   confirmationFor,
   currentStep,
   initialRenderState,
-  isTerminalRun,
+  isRunSettled,
   parseQuote,
   readFlowParams,
   renderReducer,
@@ -426,9 +426,11 @@ export default function ProductHeroPage() {
     syncUrl(draft?.id ?? null, null);
   }
 
-  // Follow the run until it ends. Transient errors keep polling; the render
-  // itself carries on server-side whatever this page does.
-  const pollRunId = render.phase === 'rendering' ? render.runId : null;
+  // Follow the run until it ends, and a failed run until its refund has landed.
+  // Transient errors keep polling; the render itself carries on server-side
+  // whatever this page does.
+  const pollRunId =
+    render.phase === 'rendering' || (render.phase === 'failed' && render.refund.status === 'pending') ? render.runId : null;
   useEffect(() => {
     if (!pollRunId) return;
     let live = true;
@@ -447,7 +449,7 @@ export default function ProductHeroPage() {
           const run = (await r.json()) as SkillRunBody;
           if (!live) return;
           dispatch({ type: 'run_polled', runId: pollRunId, run });
-          done = isTerminalRun(run.status);
+          done = isRunSettled(run);
         }
       } catch {
         // network blip: try again
@@ -536,7 +538,7 @@ export default function ProductHeroPage() {
         {photoError ? (
           <p role="alert" className="rounded-xl px-3 py-2 text-sm" style={{ border: '1px solid rgba(255,79,79,0.3)', backgroundColor: 'rgba(255,79,79,0.08)', color: '#FCA5A5' }}>
             {photoError.kind === 'moderation_blocked'
-              ? 'This photo was blocked by our content check. Try a different photo.'
+              ? 'This photo was blocked by our content check. Try a different photo. Nothing was charged.'
               : cleanMessage('message' in photoError ? photoError.message : 'The upload failed. Try again.')}
           </p>
         ) : null}

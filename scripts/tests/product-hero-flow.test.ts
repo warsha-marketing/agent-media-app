@@ -5,7 +5,9 @@ import {
   confirmationFor,
   currentStep,
   initialRenderState,
+  isRunSettled,
   parseQuote,
+  refundOf,
   readFlowParams,
   renderReducer,
   runToResume,
@@ -95,6 +97,47 @@ describe('quote and run bodies', () => {
     assert.equal(f.kind === 'failed' && !f.moderation && !f.canceled, true);
     const c = viewOfRun({ status: 'canceled' });
     assert.equal(c.kind === 'failed' && c.canceled, true);
+  });
+});
+
+describe('refund, as the server states it', () => {
+  const failedRun = (credits: unknown) => ({ status: 'failed', error: { code: 'EVOLINK_500', message: 'x' }, credits }) as Parameters<typeof viewOfRun>[0];
+  it('a fully refunded failure shows the amount the ledger returned', () => {
+    assert.deepEqual(refundOf(failedRun({ charged: 420, refunded: 420, refund_status: 'refunded' })), { status: 'refunded', charged: 420, refunded: 420 });
+  });
+  it('a refund still on its way is pending, not "refunded"', () => {
+    assert.deepEqual(refundOf(failedRun({ charged: 420, refunded: 280, refund_status: 'pending' })), { status: 'pending', charged: 420, refunded: 280 });
+  });
+  it('a failure before any charge says nothing was charged', () => {
+    assert.equal(refundOf(failedRun({ charged: 0, refunded: 0, refund_status: 'not_due' })).status, 'not_charged');
+  });
+  it('an unreadable ledger (or an older API) claims nothing', () => {
+    assert.equal(refundOf(failedRun(null)).status, 'unknown');
+    assert.equal(refundOf(failedRun(undefined)).status, 'unknown');
+  });
+  it('the failure view carries the refund', () => {
+    const v = viewOfRun(failedRun({ charged: 140, refunded: 140, refund_status: 'refunded' }));
+    assert.deepEqual(v.kind === 'failed' && v.refund, { status: 'refunded', charged: 140, refunded: 140 });
+  });
+  it('a failed run is settled only once its refund has landed', () => {
+    assert.equal(isRunSettled(failedRun({ charged: 420, refunded: 0, refund_status: 'pending' })), false);
+    assert.equal(isRunSettled(failedRun({ charged: 420, refunded: 420, refund_status: 'refunded' })), true);
+    assert.equal(isRunSettled({ status: 'running' }), false);
+    assert.equal(isRunSettled({ status: 'succeeded', final_output: { video_url: 'https://m/s.mp4' } }), true);
+  });
+  it('polling a failed run updates a pending refund when it lands', () => {
+    const failed = run(
+      quoted(), confirm('k1'), { type: 'run_started', runId: RUN_A },
+      { type: 'run_polled', runId: RUN_A, run: failedRun({ charged: 420, refunded: 0, refund_status: 'pending' }) },
+    );
+    assert.equal(failed.render.phase === 'failed' && failed.render.refund.status, 'pending');
+    const later = run(failed, { type: 'run_polled', runId: RUN_A, run: failedRun({ charged: 420, refunded: 420, refund_status: 'refunded' }) });
+    assert.deepEqual(later.render.phase === 'failed' && later.render.refund, { status: 'refunded', charged: 420, refunded: 420 });
+    assert.equal(run(later, { type: 'run_polled', runId: RUN_B, run: failedRun(null) }), later);
+  });
+  it('after a reload the refund comes from the server, not from the page', () => {
+    const s = run(initialRenderState, { type: 'resume', runId: RUN_A }, { type: 'run_polled', runId: RUN_A, run: failedRun({ charged: 280, refunded: 280, refund_status: 'refunded' }) });
+    assert.deepEqual(s.render.phase === 'failed' && s.render.refund, { status: 'refunded', charged: 280, refunded: 280 });
   });
 });
 
