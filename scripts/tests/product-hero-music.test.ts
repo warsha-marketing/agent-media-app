@@ -6,6 +6,7 @@ import { NO_MUSIC_LINE, musicBedLine, parseQuote, quoteBody, renderBody, viewOfR
 
 const DRAFT = '11111111-1111-4111-8111-111111111111';
 const PHOTO = 'https://media.example/vnext/uploads/u/photo.png';
+const choice = (music: boolean) => ({ draftId: DRAFT, photoUrl: PHOTO, music, captions: false });
 
 describe('Music Bed on the Product Hero page', () => {
   it('reads the quote’s Music Bed', () => {
@@ -45,13 +46,13 @@ describe('Music Bed on the Product Hero page', () => {
   });
 
   it('the quote body carries the toggle, like the run body', () => {
-    assert.deepEqual(quoteBody(DRAFT, PHOTO, false), { draft_id: DRAFT, product_image_url: PHOTO, music: false });
-    assert.deepEqual(quoteBody(DRAFT, PHOTO, true), renderBody(DRAFT, PHOTO, true));
+    assert.deepEqual(quoteBody(choice(false)), { draft_id: DRAFT, product_image_url: PHOTO, music: false });
+    assert.deepEqual(quoteBody(choice(true)), renderBody(choice(true)));
   });
 
   it('the run body carries the toggle', () => {
-    assert.deepEqual(renderBody(DRAFT, PHOTO, false), { draft_id: DRAFT, product_image_url: PHOTO, music: false });
-    assert.deepEqual(renderBody(DRAFT, PHOTO, true), { draft_id: DRAFT, product_image_url: PHOTO, music: true });
+    assert.deepEqual(renderBody(choice(false)), { draft_id: DRAFT, product_image_url: PHOTO, music: false });
+    assert.deepEqual(renderBody(choice(true)), { draft_id: DRAFT, product_image_url: PHOTO, music: true });
   });
 
   it('the Music Bed step shows as part of the cut, not back at the queue', () => {

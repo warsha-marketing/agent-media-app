@@ -26,7 +26,8 @@ const QUOTE = { credits: 30, available: 100, sufficient: true };
 
 const run = (state: RenderState, ...events: RenderEvent[]) => events.reduce(renderReducer, state);
 const quoted = () => run(initialRenderState, { type: 'quote_requested' }, { type: 'quote_loaded', quote: QUOTE });
-const confirm = (freshKey: string, photoUrl = PHOTO, music = true): RenderEvent => ({ type: 'confirm', draftId: DRAFT, photoUrl, music, freshKey });
+const choice = (photoUrl = PHOTO, music = true, captions = false) => ({ draftId: DRAFT, photoUrl, music, captions });
+const confirm = (freshKey: string, photoUrl = PHOTO, music = true): RenderEvent => ({ type: 'confirm', choice: choice(photoUrl, music), freshKey });
 
 describe('API error → UI state', () => {
   it('draft_render_in_flight resumes the running render instead of erroring', () => {
@@ -164,15 +165,15 @@ describe('render phase and Idempotency-Key lifecycle', () => {
     assert.equal(s.render.phase, 'refused');
   });
   it('a different photo is a new confirmation with a new key', () => {
-    const prev = { draftId: DRAFT, photoUrl: PHOTO, music: true, key: 'k1' };
-    assert.equal(confirmationFor(prev, { draftId: DRAFT, photoUrl: `${PHOTO}?2`, music: true }, 'k2').key, 'k2');
-    assert.equal(confirmationFor(prev, { draftId: DRAFT, photoUrl: PHOTO, music: true }, 'k2').key, 'k1');
+    const prev = { choice: choice(), key: 'k1' };
+    assert.equal(confirmationFor(prev, choice(`${PHOTO}?2`), 'k2').key, 'k2');
+    assert.equal(confirmationFor(prev, choice(), 'k2').key, 'k1');
   });
   it('a different Music Bed setting is a new confirmation with a new key', () => {
-    const prev = { draftId: DRAFT, photoUrl: PHOTO, music: true, key: 'k1' };
-    const next = confirmationFor(prev, { draftId: DRAFT, photoUrl: PHOTO, music: false }, 'k2');
+    const prev = { choice: choice(), key: 'k1' };
+    const next = confirmationFor(prev, choice(PHOTO, false), 'k2');
     assert.equal(next.key, 'k2');
-    assert.equal(next.music, false);
+    assert.equal(next.choice.music, false);
   });
   it('toggling music after a network failure retires the key: Confirm again sends a new one', () => {
     // Confirm with music on; the request fails in transit (the server may have started it).
@@ -181,7 +182,7 @@ describe('render phase and Idempotency-Key lifecycle', () => {
     const s = run(failed, { type: 'invalidate_quote' }, { type: 'quote_requested' }, { type: 'quote_loaded', quote: QUOTE }, confirm('k2', PHOTO, false));
     assert.equal(s.render.phase, 'starting');
     assert.equal(s.confirmation?.key, 'k2');
-    assert.equal(s.confirmation?.music, false);
+    assert.equal(s.confirmation?.choice.music, false);
     // Unchanged music after the same failure still replays the same key.
     assert.equal(run(failed, confirm('k3', PHOTO, true)).confirmation?.key, 'k1');
   });

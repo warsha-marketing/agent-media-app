@@ -12,10 +12,10 @@
  *   - reading the API's (mixed-shape) error bodies into one outcome per UI state;
  *   - reading a skill run into what the progress / result / failure panels show;
  *   - the render-phase reducer, including the Idempotency-Key lifecycle: one key
- *     per confirmation of a (draft, photo, Music Bed, Captions) request, reused by a
- *     double-click or a
- *     retried request, retired once the run it started has failed, so a retry of
- *     the SAME draft is a new run rather than a replay of the failed one;
+ *     per confirmation of a RenderChoice (draft, photo, Music Bed, Captions),
+ *     reused by a double-click or a retried request, retired once the run it
+ *     started has failed, so a retry of the SAME draft is a new run rather than
+ *     a replay of the failed one;
  *   - the URL state (?draft=…&run=…) and which run to resume after a reload.
  *
  * No imports: scripts/tests loads this file directly.
@@ -110,9 +110,13 @@ export function musicBedLine(music: boolean, quote: Quote): string {
 
 // ── Captions (#10) ──────────────────────────────────────────────────────────
 
-/** Fallback lines under the Captions toggle, until a quote for this setting says otherwise. */
-export const CAPTIONS_OFF_LINE = 'No Captions. Turn them on to burn the Script in right-to-left Arabic, timed to the voice.';
-const CAPTIONS_ON_LINE = 'Right-to-left Arabic Captions of the Script, timed to the voice. Free.';
+/**
+ * The line under the Captions toggle is the server's `captions.detail` from a
+ * quote asked with this setting. The fallback (a quote that says nothing about
+ * Captions, or was for the other setting) only states the setting: what
+ * Captions are is the server's to say.
+ */
+export const CAPTIONS_FALLBACK_LINE = { on: 'Captions on.', off: 'Captions off.' } as const;
 
 function parseCaptions(v: unknown): CaptionsQuote | null {
   if (!v || typeof v !== 'object') return null;
@@ -121,11 +125,26 @@ function parseCaptions(v: unknown): CaptionsQuote | null {
   return { on: c.on, detail: typeof c.detail === 'string' ? c.detail : '' };
 }
 
-/** The line under the Captions toggle: the server's `detail` from a quote asked with this setting, else a fallback. */
 export function captionsLine(captions: boolean, quote: Quote): string {
   const c = quote.captions;
   if (c && c.on === captions && c.detail) return c.detail;
-  return captions ? CAPTIONS_ON_LINE : CAPTIONS_OFF_LINE;
+  return captions ? CAPTIONS_FALLBACK_LINE.on : CAPTIONS_FALLBACK_LINE.off;
+}
+
+// ── The request ─────────────────────────────────────────────────────────────
+
+/**
+ * What the user chose to render: one object from the page's state to the quote,
+ * the Confirm and the run request, so the quote prices exactly what the run
+ * sends and the Idempotency-Key names exactly that request.
+ */
+export interface RenderChoice {
+  draftId: string;
+  photoUrl: string;
+  /** Music Bed on/off (#9). */
+  music: boolean;
+  /** Captions on/off (#10). */
+  captions: boolean;
 }
 
 /**
@@ -134,13 +153,18 @@ export function captionsLine(captions: boolean, quote: Quote): string {
  * Idempotency-Key fingerprint is taken over the parsed body, so an absent flag
  * and `captions: false` are the same request.
  */
-export function renderBody(draftId: string, photoUrl: string, music: boolean, captions = false) {
-  return { draft_id: draftId, product_image_url: photoUrl, music, ...(captions ? { captions: true } : {}) };
+export function renderBody(choice: RenderChoice) {
+  return {
+    draft_id: choice.draftId,
+    product_image_url: choice.photoUrl,
+    music: choice.music,
+    ...(choice.captions ? { captions: true } : {}),
+  };
 }
 
 /** The make_product_hero quote body: the same request the run would send. */
-export function quoteBody(draftId: string, photoUrl: string, music: boolean, captions = false) {
-  return renderBody(draftId, photoUrl, music, captions);
+export function quoteBody(choice: RenderChoice) {
+  return renderBody(choice);
 }
 
 /** The run id of a 202 from POST /v1/skills/make_product_hero/run (fresh or replayed). */
@@ -276,14 +300,27 @@ export function isRunSettled(run: SkillRunBody): boolean {
   return isTerminalRun(run.status) && run.credits?.refund_status !== 'pending';
 }
 
-/** Map the workflow's current_step (pending | audio | clip_N | mux | done) to a stage. */
+/** Where each workflow step (current_step) shows on the checklist; clip_N is 'visuals', anything else 'queued'. */
+const STEP_STAGE: Readonly<Record<string, RenderStage>> = {
+  pending: 'queued',
+  audio: 'voice',
+  mux: 'cut',
+  music_bed: 'cut',
+  captions: 'cut',
+  done: 'cut',
+};
+
+/** A step's own label, where it is more specific than its stage's. */
+const STEP_LABEL: Readonly<Record<string, string>> = {
+  captions: 'Adding the Arabic Captions',
+};
+
+/** Map the workflow's current_step (pending | audio | clip_N | mux | music_bed | captions | done) to a stage. */
 export function stageOf(currentStep: string | null | undefined): { stage: RenderStage; shot: number | null } {
   const step = currentStep ?? '';
   const clip = /^clip_(\d+)$/.exec(step);
   if (clip) return { stage: 'visuals', shot: Number(clip[1]) };
-  if (step === 'audio') return { stage: 'voice', shot: null };
-  if (step === 'mux' || step === 'music_bed' || step === 'captions' || step === 'done') return { stage: 'cut', shot: null };
-  return { stage: 'queued', shot: null };
+  return { stage: Object.hasOwn(STEP_STAGE, step) ? STEP_STAGE[step] : 'queued', shot: null };
 }
 
 export function viewOfRun(run: SkillRunBody): RunView {
@@ -303,33 +340,21 @@ export function viewOfRun(run: SkillRunBody): RunView {
     return { kind: 'failed', canceled: status !== 'failed', moderation: isModerationBlock(code, message), code, message, refund: refundOf(run) };
   }
   const { stage, shot } = stageOf(run.current_step);
+  const step = run.current_step ?? '';
   const label =
     stage === 'visuals' && shot
       ? `Generating product shot ${shot}`
-      : run.current_step === 'captions'
-        ? 'Adding the Arabic Captions'
+      : Object.hasOwn(STEP_LABEL, step)
+        ? STEP_LABEL[step]
         : RENDER_STAGES.find((s) => s.stage === stage)!.label;
   return { kind: 'rendering', stage, shot, label };
 }
 
 // ── Render phase + Idempotency-Key lifecycle ───────────────────────────────
 
-/**
- * What one confirmation asks the server for. Everything in the run body is here:
- * the Idempotency-Key names exactly this request (the server refuses the same
- * key with a different body, 409 idempotency_key_reused).
- */
-export interface ConfirmationRequest {
-  draftId: string;
-  photoUrl: string;
-  /** Music Bed on/off (#9). */
-  music: boolean;
-  /** Captions on/off (#10); absent = off. */
-  captions?: boolean;
-}
-
-/** One confirmation of a request, and the key it sends. */
-export interface Confirmation extends ConfirmationRequest {
+/** One confirmation of a RenderChoice, and the Idempotency-Key it sends (the server refuses the same key with a different body). */
+export interface Confirmation {
+  choice: RenderChoice;
   key: string;
 }
 
@@ -360,8 +385,8 @@ export type RenderEvent =
   | { type: 'quote_requested' }
   | { type: 'quote_loaded'; quote: Quote }
   | { type: 'refused'; outcome: ApiOutcome }
-  /** `freshKey` is used only if this is a new (draft, photo, music, captions) confirmation. */
-  | ({ type: 'confirm'; freshKey: string } & ConfirmationRequest)
+  /** `freshKey` is used only if `choice` differs from the pending confirmation's. */
+  | { type: 'confirm'; choice: RenderChoice; freshKey: string }
   | { type: 'run_started'; runId: string }
   /** Show an existing run (reload, or a render already in flight). */
   | { type: 'resume'; runId: string }
@@ -371,16 +396,15 @@ export type RenderEvent =
 
 export const initialRenderState: RenderState = { render: { phase: 'idle' }, confirmation: null };
 
-/** The key for confirming this request: the pending one only if it is the same request. */
-export function confirmationFor(prev: Confirmation | null, req: ConfirmationRequest, freshKey: string): Confirmation {
-  const same =
-    prev &&
-    prev.draftId === req.draftId &&
-    prev.photoUrl === req.photoUrl &&
-    prev.music === req.music &&
-    (prev.captions ?? false) === (req.captions ?? false);
-  if (prev && same) return prev;
-  return { draftId: req.draftId, photoUrl: req.photoUrl, music: req.music, captions: req.captions ?? false, key: freshKey };
+/** Two choices are the same request. */
+export function sameChoice(a: RenderChoice, b: RenderChoice): boolean {
+  return a.draftId === b.draftId && a.photoUrl === b.photoUrl && a.music === b.music && a.captions === b.captions;
+}
+
+/** The key for confirming this choice: the pending one only if it is the same request. */
+export function confirmationFor(prev: Confirmation | null, choice: RenderChoice, freshKey: string): Confirmation {
+  if (prev && sameChoice(prev.choice, choice)) return prev;
+  return { choice: { ...choice }, key: freshKey };
 }
 
 function quoteOf(p: RenderPhase): Quote | null {
@@ -415,11 +439,7 @@ export function renderReducer(state: RenderState, event: RenderEvent): RenderSta
       if (!quote) return state;
       return {
         render: { phase: 'starting', quote },
-        confirmation: confirmationFor(
-          state.confirmation,
-          { draftId: event.draftId, photoUrl: event.photoUrl, music: event.music, captions: event.captions ?? false },
-          event.freshKey,
-        ),
+        confirmation: confirmationFor(state.confirmation, event.choice, event.freshKey),
       };
     }
     case 'run_started':

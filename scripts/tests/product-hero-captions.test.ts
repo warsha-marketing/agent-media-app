@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CAPTIONS_OFF_LINE,
+  CAPTIONS_FALLBACK_LINE,
   captionsLine,
   confirmationFor,
   initialRenderState,
@@ -12,48 +12,66 @@ import {
   quoteBody,
   renderBody,
   renderReducer,
+  stageOf,
   viewOfRun,
+  type RenderChoice,
   type RenderState,
 } from '../../apps/web/lib/product-hero-flow.ts';
 
 const DRAFT = '11111111-1111-4111-8111-111111111111';
 const PHOTO = 'https://media.example/vnext/uploads/u/photo.png';
+const choice = (captions: boolean, music = true): RenderChoice => ({ draftId: DRAFT, photoUrl: PHOTO, music, captions });
 
 describe('Captions on the Product Hero page', () => {
   it('are off unless turned on: the bodies carry captions only when on (the server default is off)', () => {
-    assert.deepEqual(renderBody(DRAFT, PHOTO, true), { draft_id: DRAFT, product_image_url: PHOTO, music: true });
-    assert.deepEqual(renderBody(DRAFT, PHOTO, true, true), { draft_id: DRAFT, product_image_url: PHOTO, music: true, captions: true });
-    assert.deepEqual(quoteBody(DRAFT, PHOTO, false, true), renderBody(DRAFT, PHOTO, false, true));
+    assert.deepEqual(renderBody(choice(false)), { draft_id: DRAFT, product_image_url: PHOTO, music: true });
+    assert.deepEqual(renderBody(choice(true)), { draft_id: DRAFT, product_image_url: PHOTO, music: true, captions: true });
+    assert.deepEqual(quoteBody(choice(true, false)), renderBody(choice(true, false)));
   });
 
   it('toggling Captions makes the next Confirm a new confirmation with a new key', () => {
-    const prev = { draftId: DRAFT, photoUrl: PHOTO, music: true, captions: false, key: 'k1' };
-    assert.equal(confirmationFor(prev, { draftId: DRAFT, photoUrl: PHOTO, music: true, captions: true }, 'k2').key, 'k2');
-    assert.equal(confirmationFor(prev, { draftId: DRAFT, photoUrl: PHOTO, music: true, captions: false }, 'k2').key, 'k1');
-    // A confirmation from before the toggle existed counts as Captions off.
-    const legacy = { draftId: DRAFT, photoUrl: PHOTO, music: true, key: 'k0' };
-    assert.equal(confirmationFor(legacy, { draftId: DRAFT, photoUrl: PHOTO, music: true, captions: false }, 'k2').key, 'k0');
+    const prev = { choice: choice(false), key: 'k1' };
+    assert.equal(confirmationFor(prev, choice(true), 'k2').key, 'k2');
+    assert.equal(confirmationFor(prev, choice(false), 'k2').key, 'k1');
   });
 
-  it('the reducer carries the Captions choice into the confirmation it starts', () => {
+  it('the reducer carries the choice, Captions included, into the confirmation it starts', () => {
     const quoted: RenderState = { ...initialRenderState, render: { phase: 'quoted', quote: { credits: 1, available: null, sufficient: true } } };
-    const s = renderReducer(quoted, { type: 'confirm', draftId: DRAFT, photoUrl: PHOTO, music: true, captions: true, freshKey: 'k1' });
+    const s = renderReducer(quoted, { type: 'confirm', choice: choice(true), freshKey: 'k1' });
     assert.equal(s.render.phase, 'starting');
-    assert.deepEqual(s.confirmation, { draftId: DRAFT, photoUrl: PHOTO, music: true, captions: true, key: 'k1' });
+    assert.deepEqual(s.confirmation, { choice: choice(true), key: 'k1' });
   });
 
-  it('reads the quote’s Captions and shows the server’s line for this setting', () => {
+  it('shows the server’s line for this setting; the fallback only names the setting', () => {
     const on = parseQuote({ credits: 280, sufficient: true, captions: { on: true, detail: 'Server: Captions on.' } })!;
     assert.deepEqual(on.captions, { on: true, detail: 'Server: Captions on.' });
     assert.equal(captionsLine(true, on), 'Server: Captions on.');
     // A quote for the other setting is not shown as this one’s line.
-    assert.equal(captionsLine(false, on), CAPTIONS_OFF_LINE);
-    assert.equal(captionsLine(false, parseQuote({ credits: 1, sufficient: true })!), CAPTIONS_OFF_LINE);
+    assert.equal(captionsLine(false, on), CAPTIONS_FALLBACK_LINE.off);
+    assert.equal(captionsLine(true, parseQuote({ credits: 1, sufficient: true })!), CAPTIONS_FALLBACK_LINE.on);
+    // The fallback does not restate what Captions are (that is the server's detail).
+    for (const line of Object.values(CAPTIONS_FALLBACK_LINE)) assert.doesNotMatch(line, /right-to-left|timed|Script|Free/i);
   });
 
   it('shows the caption burn as part of the cut, with its own label', () => {
     const v = viewOfRun({ status: 'running', current_step: 'captions' }) as { stage: string; label: string };
     assert.equal(v.stage, 'cut');
     assert.match(v.label, /Captions/);
+  });
+
+  it('maps every workflow step to a stage; an unknown step (or a prototype key) is queued', () => {
+    const stages = Object.fromEntries(['pending', 'audio', 'clip_3', 'mux', 'music_bed', 'captions', 'done', 'constructor', 'later'].map((s) => [s, stageOf(s).stage]));
+    assert.deepEqual(stages, {
+      pending: 'queued',
+      audio: 'voice',
+      clip_3: 'visuals',
+      mux: 'cut',
+      music_bed: 'cut',
+      captions: 'cut',
+      done: 'cut',
+      constructor: 'queued',
+      later: 'queued',
+    });
+    assert.equal(stageOf(null).stage, 'queued');
   });
 });

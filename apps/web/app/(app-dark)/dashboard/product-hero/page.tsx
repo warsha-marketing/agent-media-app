@@ -44,7 +44,7 @@
  * reducer there is the single gate for Confirm.
  */
 
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ImagePlus, Loader2, Mic, Sparkles, X } from 'lucide-react';
 import {
   classifyApiError,
@@ -66,6 +66,7 @@ import {
   unknownDeliveryTags,
   writeFlowParams,
   type ApiOutcome,
+  type RenderChoice,
   type SkillRunBody,
 } from '@/lib/product-hero-flow';
 import { postJson } from '@/lib/post-json';
@@ -475,24 +476,31 @@ export default function ProductHeroPage() {
 
   // Only the latest quote request may land (a toggle can race an answer).
   const quoteSeq = useRef(0);
-  const requestQuote = useCallback(async (draftId: string, photoUrl: string, musicOn: boolean, captionsOn: boolean) => {
+  const requestQuote = useCallback(async (choice: RenderChoice) => {
     const seq = ++quoteSeq.current;
     dispatch({ type: 'quote_requested' });
-    const r = await postJson(`/api/v1/skills/${SKILL}/quote`, quoteBody(draftId, photoUrl, musicOn, captionsOn));
+    const r = await postJson(`/api/v1/skills/${SKILL}/quote`, quoteBody(choice));
     if (seq !== quoteSeq.current) return;
     const quote = r.status === 200 ? parseQuote(r.body) : null;
     if (quote) dispatch({ type: 'quote_loaded', quote });
-    else handleRefusal(draftId, classifyApiError(r.status, r.body));
+    else handleRefusal(choice.draftId, classifyApiError(r.status, r.body));
   }, [handleRefusal]);
+
+  // What would render now: the voiced draft, the photo and the toggles. The
+  // quote, the Confirm and the run request all take this one object.
+  const draftId = draft?.id ?? null;
+  const photoUrl = photo?.url ?? null;
+  const choice = useMemo<RenderChoice | null>(
+    () => (draftId && photoUrl ? { draftId, photoUrl, music, captions } : null),
+    [draftId, photoUrl, music, captions],
+  );
 
   // Price the render as soon as there is a voiced draft and a photo. Only a
   // quote is fetched here: nothing is charged until Confirm.
-  const draftId = draft?.id ?? null;
-  const photoUrl = photo?.url ?? null;
   useEffect(() => {
-    if (render.phase !== 'idle' || !draftId || !photoUrl || edited) return;
-    void requestQuote(draftId, photoUrl, music, captions);
-  }, [render.phase, draftId, photoUrl, edited, music, captions, requestQuote]);
+    if (render.phase !== 'idle' || !choice || edited) return;
+    void requestQuote(choice);
+  }, [render.phase, choice, edited, requestQuote]);
 
   // An unvoiced edit makes the quote on screen stale: withdraw it (the reducer
   // leaves a starting or running render alone). Undoing the edit re-quotes.
@@ -502,27 +510,27 @@ export default function ProductHeroPage() {
 
   /** Ask the reducer to confirm; it is the only gate (see renderReducer 'confirm'). */
   function confirmRender() {
-    if (!draft || !photo) return;
-    dispatch({ type: 'confirm', draftId: draft.id, photoUrl: photo.url, music, captions, freshKey: crypto.randomUUID() });
+    if (!choice) return;
+    dispatch({ type: 'confirm', choice, freshKey: crypto.randomUUID() });
   }
 
   // Start the render when — and only when — the reducer accepted a Confirm. The
-  // key is the confirmation's: the same (draft, photo, music, captions) confirmed again after
-  // a network blip sends the same key, so the server replays instead of charging
-  // twice; a changed Music Bed or Captions choice is a new confirmation with a new key.
+  // key is the confirmation's: the same choice confirmed again after a network
+  // blip sends the same key, so the server replays instead of charging twice; a
+  // changed Music Bed or Captions choice is a new confirmation with a new key.
   const starting = render.phase === 'starting' ? rs.confirmation : null;
   useEffect(() => {
     if (!starting) return;
-    const { draftId: id, photoUrl: url, music: musicOn, captions: captionsOn, key } = starting;
+    const { choice: started, key } = starting;
     void (async () => {
       // aspect_ratio is left to the server's default: Product Hero is always 9:16.
-      const r = await postJson(`/api/v1/skills/${SKILL}/run`, renderBody(id, url, musicOn, captionsOn ?? false), { 'Idempotency-Key': key });
+      const r = await postJson(`/api/v1/skills/${SKILL}/run`, renderBody(started), { 'Idempotency-Key': key });
       const runId = r.status === 202 ? startedRunId(r.body) : null;
       if (runId) {
         dispatch({ type: 'run_started', runId });
-        syncUrl(id, runId);
+        syncUrl(started.draftId, runId);
       } else {
-        handleRefusal(id, classifyApiError(r.status, r.body));
+        handleRefusal(started.draftId, classifyApiError(r.status, r.body));
       }
     })();
   }, [starting, handleRefusal]);
