@@ -13,3 +13,4 @@ export { wireframeGpt2Workflow } from './wireframe-gpt2.js';
 export { lipSyncWorkflow } from './lip-sync.js';
 export { brollTalkingHeadWorkflow } from './broll-talking-head.js';
 export { makePodcastWorkflow } from './make-podcast.js';
+export { makeProductHeroWorkflow } from './make-product-hero.js';

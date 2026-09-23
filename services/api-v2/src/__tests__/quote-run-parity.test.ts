@@ -9,7 +9,8 @@
 // that shared behavior at the pure-module level (no server/DB import).
 
 import { describe, it, expect } from 'vitest';
-import { MakeUgcSkillInputSchema } from '../skills/registry.js';
+import { planProductHeroShots, PRODUCT_HERO } from '@agentmedia/schema';
+import { MakeUgcSkillInputSchema, MakeProductHeroSkillInputSchema } from '../skills/registry.js';
 import { quoteSkillCredits } from '../skills/credit-quotes.js';
 import { decideMakeUgcRoute } from '../skills/make-ugc-router.js';
 
@@ -39,5 +40,24 @@ describe('quote/route credit coherence (invariant 9)', () => {
       const routed = decideMakeUgcRoute(input);
       expect(quoteSkillCredits('make_ugc', input)).toBe(quoteSkillCredits(routed.slug, routed.body));
     }
+  });
+});
+
+describe('make_product_hero quote == charge (invariant 9)', () => {
+  // The worker charges each planned clip its Preset price; the quote must be that sum.
+  const charged = (ms: number) =>
+    planProductHeroShots(ms).reduce((sum, d) => sum + PRODUCT_HERO.budget.clipCredits[d], 0);
+
+  it('quotes representative draft durations at exactly the planned clips', () => {
+    for (const ms of [5_000, 5_001, 9_999, 10_000, 10_001, 12_000, 15_000]) {
+      expect(quoteSkillCredits('make_product_hero', { duration_ms: ms })).toBe(charged(ms));
+    }
+  });
+
+  it('quote and run validate with the same schema (9:16 only, one photo)', () => {
+    const base = { draft_id: '00000000-0000-4000-8000-000000000001', product_image_url: 'https://x.test/p.png' };
+    expect(MakeProductHeroSkillInputSchema.safeParse(base).success).toBe(true);
+    expect(MakeProductHeroSkillInputSchema.safeParse({ ...base, aspect_ratio: '1:1' }).success).toBe(false);
+    expect(MakeProductHeroSkillInputSchema.safeParse({ draft_id: base.draft_id }).success).toBe(false);
   });
 });

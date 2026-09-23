@@ -13,7 +13,7 @@
 import { decideMakeUgcRoute, type MakeUgcProps } from './make-ugc-router.js';
 // Shared take planner — the SAME module the worker plans with, so quote and run
 // cannot disagree. See packages/schema/src/take-planner.ts.
-import { countWords, fitDuration, planTakeDurations } from '@agentmedia/schema';
+import { countWords, fitDuration, planTakeDurations, quoteProductHeroCredits } from '@agentmedia/schema';
 
 // Portraits are free; a character sheet is charged only standalone (a sheet
 // generated inside make_ugc_video is free — see the make_ugc_video case).
@@ -182,6 +182,22 @@ export function quoteSkillCredits(
       }
       const subs = (i as { subtitles?: boolean }).subtitles ? SUBTITLES_CREDITS : 0;
       return cost + subs;
+    }
+    case 'make_product_hero': {
+      // Price the planned render: the silent clips that cover the approved
+      // draft's measured speech (the SAME plan the worker renders from, in
+      // @agentmedia/schema). The routes resolve the draft and put its
+      // duration_ms on the input before quoting; the skill_runs row stores it
+      // so the in-flight reservation prices the run identically. The audio
+      // fetch and the mux are free.
+      const ms = Number((i as { duration_ms?: unknown }).duration_ms);
+      try {
+        return quoteProductHeroCredits(ms);
+      } catch {
+        // No (or an out-of-contract) duration: unpriceable — the route refuses
+        // such a draft before it ever reaches a preflight.
+        return 0;
+      }
     }
     case 'make_ugc_video': {
       // Portrait + character sheet are free inside a video — only the selfie (and

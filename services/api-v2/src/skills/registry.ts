@@ -22,6 +22,7 @@ import {
   WireframeGpt2ToolInputSchema,
   LipSyncToolInputSchema,
   BrollTalkingHeadToolInputSchema,
+  PRODUCT_HERO,
 } from '@agentmedia/schema';
 
 /**
@@ -290,6 +291,36 @@ export const MakePodcastSkillInputSchema = z
     path: ['character_b'],
   });
 
+/**
+ * User-facing skill input for make_product_hero — the Product Hero render phase
+ * (ADR 0001). It renders an APPROVED draft (from POST /v1/drafts/product-hero):
+ * the draft's audio is the Short's voice, unchanged. The product photo follows
+ * make_product_in_hands' convention — any https URL or base64, re-hosted and
+ * moderated before anything is spent. Always 9:16. Music Bed and Captions are
+ * later additions to this schema.
+ */
+export const MakeProductHeroSkillInputSchema = z
+  .object({
+    draft_id: z
+      .string()
+      .uuid()
+      .describe(
+        'The approved draft to render: its id from the draft step. Show the user the Script and let them hear the voice preview first, and get their OK — the Short speaks exactly that audio. A draft renders once.',
+      ),
+    product_image_url: z
+      .string()
+      .url()
+      .regex(/^https:\/\//, 'product_image_url must use https')
+      .describe('The product photo, an https URL. If you only hold bytes, call `upload_image` first and pass the URL it returns.')
+      .optional(),
+    product_image_base64: z.string().min(64).describe('The product photo as base64 (prefer product_image_url).').optional(),
+    aspect_ratio: z.literal(PRODUCT_HERO.aspectRatio).default(PRODUCT_HERO.aspectRatio),
+  })
+  .refine((d) => Boolean(d.product_image_url) !== Boolean(d.product_image_base64), {
+    message: 'provide exactly one of product_image_url (any https URL) or product_image_base64 (data URL or raw base64)',
+    path: ['product_image_url'],
+  });
+
 export interface SkillEntry {
   slug: string;
   name: string;
@@ -304,6 +335,10 @@ export interface SkillEntry {
   /** When true, this is the curated agent surface (make_ugc). The MCP tools/list
    *  and public-skill pack filter to these once MAKE_UGC_ENABLED is on. */
   agentFacing?: boolean;
+  /** A Preset declares its own cost budget: the most one run may be charged.
+   *  Dispatch refuses a quote above it; the worker holds the Preset's clips to
+   *  the matching provider budget in place of the per-primitive cap. */
+  costBudget?: { maxCredits: number };
 }
 
 export const SKILLS: Record<string, SkillEntry> = {
@@ -410,6 +445,18 @@ export const SKILLS: Record<string, SkillEntry> = {
     workflowType: 'makePodcastWorkflow',
     inputSchema: MakePodcastSkillInputSchema,
     agentFacing: true,
+  },
+  make_product_hero: {
+    slug: 'make_product_hero',
+    name: 'Product Hero',
+    version: '1.0.0',
+    description:
+      'Render an APPROVED Product Hero draft into a finished 9:16 Short: silent product visuals from your product photo, cut to the exact length of the draft\'s voice-over, with that audio as the soundtrack — the voice is never re-generated, trimmed or stretched. Needs `draft_id` (an approved 5–15 s draft of yours that has not been rendered yet) and the product photo (`product_image_url`, or `product_image_base64`). Show the user the Script and play the voice preview, and get their OK and the quoted cost, before calling this.',
+    primitive: 'composed:make_product_hero',
+    workflowType: 'makeProductHeroWorkflow',
+    inputSchema: MakeProductHeroSkillInputSchema,
+    agentFacing: true,
+    costBudget: { maxCredits: PRODUCT_HERO.budget.maxCredits },
   },
   make_ugc: {
     slug: 'make_ugc',
