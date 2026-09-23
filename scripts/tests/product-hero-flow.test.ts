@@ -46,10 +46,10 @@ describe('API error → UI state', () => {
   it('a plain invalid upload is an error, not a moderation block', () => {
     assert.equal(classifyApiError(400, { error: { code: 'INVALID_INPUT', message: 'r2: uploaded file is not a PNG or JPEG' } }).kind, 'error');
   });
-  it('402 reports what is needed and what is spendable', () => {
+  it('402 shows the server\'s own account of what is needed and spendable (no client arithmetic)', () => {
     assert.deepEqual(
-      classifyApiError(402, { error: 'insufficient_credits', needed: 30, available: 40, committed: 20, detail: 'Top up' }),
-      { kind: 'insufficient_credits', needed: 30, available: 20, message: 'Top up' },
+      classifyApiError(402, { error: 'insufficient_credits', needed: 30, available: 40, committed: 20, detail: 'This needs 30 credits but you have 20 available' }),
+      { kind: 'insufficient_credits', message: 'This needs 30 credits but you have 20 available' },
     );
   });
   for (const code of ['voice_not_approved', 'draft_out_of_band']) it(`${code} asks for a re-voice`, () => {
@@ -160,7 +160,7 @@ describe('render phase and Idempotency-Key lifecycle', () => {
     assert.equal(s.confirmation?.key, 'k1');
   });
   it('a refusal the user must fix (credits) cannot be confirmed straight away', () => {
-    const s = run(quoted(), confirm('k1'), { type: 'refused', outcome: { kind: 'insufficient_credits', needed: 30, available: 0, message: 'x' } }, confirm('k2'));
+    const s = run(quoted(), confirm('k1'), { type: 'refused', outcome: { kind: 'insufficient_credits', message: 'x' } }, confirm('k2'));
     assert.equal(s.render.phase, 'refused');
   });
   it('a different photo is a new confirmation with a new key', () => {
@@ -195,6 +195,20 @@ describe('render phase and Idempotency-Key lifecycle', () => {
   it('a stale quote answer after starting is ignored', () => {
     const s = run(quoted(), confirm('k1'), { type: 'quote_requested' });
     assert.equal(s.render.phase, 'starting');
+  });
+  it('editing the Script withdraws the quote, so an unvoiced edit can never be confirmed', () => {
+    const s = run(quoted(), { type: 'invalidate_quote' });
+    assert.equal(s.render.phase, 'idle');
+    assert.equal(run(s, confirm('k1')).render.phase, 'idle');
+    const refused = run(quoted(), confirm('k1'), { type: 'refused', outcome: { kind: 'retryable', message: 'x' } }, { type: 'invalidate_quote' });
+    assert.equal(refused.render.phase, 'idle');
+    assert.equal(refused.confirmation?.key, 'k1');
+  });
+  it('withdrawing the quote never interrupts a render that started', () => {
+    const starting = run(quoted(), confirm('k1'));
+    assert.equal(run(starting, { type: 'invalidate_quote' }), starting);
+    const rendering = run(starting, { type: 'run_started', runId: RUN_A });
+    assert.equal(run(rendering, { type: 'invalidate_quote' }), rendering);
   });
   it('resume shows an existing run without confirming anything', () => {
     const s = run(initialRenderState, { type: 'resume', runId: RUN_A });

@@ -17,7 +17,7 @@
  *     the SAME draft is a new run rather than a replay of the failed one;
  *   - the URL state (?draft=…&run=…) and which run to resume after a reload.
  *
- * No imports: node --test loads this file directly with type stripping.
+ * No imports: scripts/tests loads this file directly.
  */
 
 // ── API bodies ──────────────────────────────────────────────────────────────
@@ -72,7 +72,8 @@ export type ApiOutcome =
   | { kind: 'already_rendered' }
   /** The photo was refused by moderation. Nothing was charged. */
   | { kind: 'moderation_blocked'; message: string }
-  | { kind: 'insufficient_credits'; needed: number | null; available: number | null; message: string }
+  /** 402: `message` is the server's own line (needed, spendable, reserved). */
+  | { kind: 'insufficient_credits'; message: string }
   /** voice_not_approved / draft_out_of_band: the draft cannot render; re-voice. */
   | { kind: 'revoice'; code: string; message: string }
   | { kind: 'draft_missing'; message: string }
@@ -118,18 +119,8 @@ export function classifyApiError(status: number, body: unknown): ApiOutcome {
       return { kind: 'resume_in_flight' };
     case 'draft_already_rendered':
       return { kind: 'already_rendered' };
-    case 'insufficient_credits': {
-      const b = body as { needed?: unknown; available?: unknown; committed?: unknown };
-      const available = typeof b.available === 'number'
-        ? Math.max(0, b.available - (typeof b.committed === 'number' ? b.committed : 0))
-        : null;
-      return {
-        kind: 'insufficient_credits',
-        needed: typeof b.needed === 'number' ? b.needed : null,
-        available,
-        message: message ?? 'Not enough credits for this render.',
-      };
-    }
+    case 'insufficient_credits':
+      return { kind: 'insufficient_credits', message: message ?? 'Not enough credits for this render.' };
     case 'voice_not_approved':
     case 'draft_out_of_band':
       return { kind: 'revoice', code: lc, message: message ?? 'Re-voice the Script, then render the new draft.' };
@@ -256,6 +247,8 @@ export interface RenderState {
 
 export type RenderEvent =
   | { type: 'reset' }
+  /** The Script was edited: the quote on screen no longer prices what would render. */
+  | { type: 'invalidate_quote' }
   | { type: 'quote_requested' }
   | { type: 'quote_loaded'; quote: Quote }
   | { type: 'refused'; outcome: ApiOutcome }
@@ -286,6 +279,9 @@ export function renderReducer(state: RenderState, event: RenderEvent): RenderSta
     case 'reset':
       // A new draft or photo: whatever was quoted no longer applies.
       return { render: { phase: 'idle' }, confirmation: state.confirmation };
+    case 'invalidate_quote':
+      if (r.phase !== 'quoting' && r.phase !== 'quoted' && r.phase !== 'refused') return state;
+      return { ...state, render: { phase: 'idle' } };
     case 'quote_requested':
       if (r.phase === 'starting' || r.phase === 'rendering') return state;
       return { ...state, render: { phase: 'quoting' } };
@@ -295,8 +291,10 @@ export function renderReducer(state: RenderState, event: RenderEvent): RenderSta
     case 'refused':
       return { ...state, render: { phase: 'refused', outcome: event.outcome, quote: quoteOf(r) } };
     case 'confirm': {
-      // Only a quoted cost can be confirmed — also again after a network blip or
-      // a busy server, with the SAME key. A second click while starting is a no-op.
+      // THE gate for spending: only a quoted cost can be confirmed — also again
+      // after a network blip or a busy server, with the SAME key. A second click
+      // while starting is a no-op. The page sends the run request only when this
+      // moves the phase to 'starting'.
       const again = r.phase === 'refused' && (r.outcome.kind === 'retryable' || r.outcome.kind === 'busy');
       if (r.phase !== 'quoted' && !again) return state;
       const quote = quoteOf(r);

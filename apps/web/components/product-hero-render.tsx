@@ -23,8 +23,6 @@ const danger = { border: '1px solid rgba(255,79,79,0.3)', backgroundColor: 'rgba
 const good = { border: '1px solid rgba(52,211,153,0.3)', backgroundColor: 'rgba(52,211,153,0.08)', color: '#6EE7B7' } as const;
 
 const credits = (n: number) => `${n} credit${n === 1 ? '' : 's'}`;
-/** Server messages from the storage layer carry an internal prefix. */
-export const cleanMessage = (m: string) => m.replace(/^r2:\s*/i, '');
 
 export function Stepper({ current }: { current: FlowStep }) {
   const at = FLOW_STEPS.indexOf(current);
@@ -158,9 +156,8 @@ function Refusal({ outcome, quoted, onConfirm, onRequote, onNewPhoto }: RenderPa
     case 'insufficient_credits':
       return box(
         <>
-          This render needs {outcome.needed !== null ? credits(outcome.needed) : 'more credits'}
-          {outcome.available !== null ? `; you have ${credits(outcome.available)} available` : ''}. Nothing was charged.{' '}
-          <Link href="/dashboard/billing" className="underline">Top up on the Billing page</Link>.
+          {outcome.message} Nothing was charged.{' '}
+          <Link href="/dashboard/billing" className="underline">Go to Billing</Link>
         </>,
         button(onRequote, <><RotateCcw className="h-4 w-4" /> Check again</>),
       );
@@ -183,7 +180,7 @@ function Refusal({ outcome, quoted, onConfirm, onRequote, onNewPhoto }: RenderPa
     case 'resume_in_flight':
       return box(<>This draft is already rendering. Reload the page to follow it.</>);
     case 'error':
-      return box(<>{cleanMessage(outcome.message)}</>, button(onRequote, <><RotateCcw className="h-4 w-4" /> Try again</>));
+      return box(<>{outcome.message}</>, button(onRequote, <><RotateCcw className="h-4 w-4" /> Try again</>));
   }
 }
 
@@ -308,7 +305,7 @@ function Failure({ canceled, moderation, message, refund, onRetry, onNewPhoto }:
     <>
       <div role="alert" className="flex flex-col gap-1 rounded-xl px-3 py-2 text-sm" style={danger}>
         <span className="inline-flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> {headline}</span>
-        {!moderation && !canceled && message ? <span className="text-xs opacity-80">{cleanMessage(message)}</span> : null}
+        {!moderation && !canceled && message ? <span className="text-xs opacity-80">{message}</span> : null}
       </div>
       <RefundNotice refund={refund} />
       <div className="flex flex-wrap gap-2">

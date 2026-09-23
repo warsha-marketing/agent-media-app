@@ -27,14 +27,14 @@
  * a double-click or a retried request replays instead of charging twice. The
  * draft and run ids live in the URL (?draft=…&run=…): a reload re-reads the
  * draft and resumes whichever run holds its render claim. The state machine,
- * the error mapping and the key lifecycle are in lib/product-hero-flow.ts.
+ * the error mapping and the key lifecycle are in lib/product-hero-flow.ts; the
+ * reducer there is the single gate for Confirm.
  */
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { ImagePlus, Loader2, Mic, Sparkles, X } from 'lucide-react';
 import {
   classifyApiError,
-  confirmationFor,
   currentStep,
   initialRenderState,
   isRunSettled,
@@ -47,8 +47,9 @@ import {
   type ApiOutcome,
   type SkillRunBody,
 } from '@/lib/product-hero-flow';
-import { PHOTO_TYPES, uploadProductPhoto } from '@/lib/product-hero-upload';
-import { RenderPanel, Stepper, cleanMessage } from './_render';
+import { postJson } from '@/lib/post-json';
+import { PHOTO_ACCEPT, uploadProductPhoto } from '@/lib/product-hero-upload';
+import { RenderPanel, Stepper } from '@/components/product-hero-render';
 
 type Dialect = 'levantine' | 'gulf';
 
@@ -107,20 +108,6 @@ async function readDraft(id: string): Promise<Draft | null> {
   return ((await r.json().catch(() => ({}))) as { draft?: Draft }).draft ?? null;
 }
 
-async function postSkill(path: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: unknown }> {
-  try {
-    const r = await fetch(path, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify(body),
-    });
-    return { status: r.status, body: await r.json().catch(() => null) };
-  } catch (e) {
-    return { status: 0, body: { error: { code: 'network', message: (e as Error).message } } };
-  }
-}
-
 type Gender = 'female' | 'male' | 'neutral';
 
 /** An Approved Voice, as GET /v1/voices returns it. */
@@ -150,14 +137,9 @@ const label = 'text-[11px] uppercase tracking-wider';
 const muted = { color: 'rgba(255,255,255,0.45)' } as const;
 
 async function post(path: string, body: unknown): Promise<{ draft?: Draft; error?: ApiError }> {
-  const r = await fetch(path, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const j = (await r.json().catch(() => ({}))) as { draft?: Draft; error?: ApiError | string };
-  if (r.ok && j.draft) return { draft: j.draft };
+  const r = await postJson(path, body);
+  const j = (r.body ?? {}) as { draft?: Draft; error?: ApiError | string };
+  if (r.status >= 200 && r.status < 300 && j.draft) return { draft: j.draft };
   const error = typeof j.error === 'string' ? { message: j.error } : j.error ?? { message: `HTTP ${r.status}` };
   return { error };
 }
@@ -188,8 +170,6 @@ export default function ProductHeroPage() {
   const [photoError, setPhotoError] = useState<ApiOutcome | null>(null);
   const [rs, dispatch] = useReducer(renderReducer, initialRenderState);
   const photoInput = useRef<HTMLInputElement>(null);
-  /** Guards Confirm within one tick, before the reducer's 'starting' renders. */
-  const startingRef = useRef(false);
 
   /** Approved Voices of the Dialect under the current filters. Never cached. */
   const loadVoices = useCallback(async () => {
@@ -380,7 +360,7 @@ export default function ProductHeroPage() {
 
   const requestQuote = useCallback(async (draftId: string, photoUrl: string) => {
     dispatch({ type: 'quote_requested' });
-    const r = await postSkill(`/api/v1/skills/${SKILL}/quote`, { draft_id: draftId, product_image_url: photoUrl });
+    const r = await postJson(`/api/v1/skills/${SKILL}/quote`, { draft_id: draftId, product_image_url: photoUrl });
     const quote = r.status === 200 ? parseQuote(r.body) : null;
     if (quote) dispatch({ type: 'quote_loaded', quote });
     else handleRefusal(draftId, classifyApiError(r.status, r.body));
@@ -395,31 +375,37 @@ export default function ProductHeroPage() {
     void requestQuote(draftId, photoUrl);
   }, [render.phase, draftId, photoUrl, edited, requestQuote]);
 
-  async function confirmRender() {
-    // Confirmable: a fresh quote, or the same quote again after a network blip / busy server.
-    const again = render.phase === 'refused' && !!render.quote && (render.outcome.kind === 'retryable' || render.outcome.kind === 'busy');
-    if (!draft || !photo || edited || startingRef.current || (render.phase !== 'quoted' && !again)) return;
-    startingRef.current = true;
-    try {
-      // Same (draft, photo) as the pending confirmation → same key → a replay, never a second charge.
-      const { key } = confirmationFor(rs.confirmation, draft.id, photo.url, crypto.randomUUID());
-      dispatch({ type: 'confirm', draftId: draft.id, photoUrl: photo.url, freshKey: key });
-      const r = await postSkill(
-        `/api/v1/skills/${SKILL}/run`,
-        { draft_id: draft.id, product_image_url: photo.url, aspect_ratio: '9:16' },
-        { 'Idempotency-Key': key },
-      );
+  // An unvoiced edit makes the quote on screen stale: withdraw it (the reducer
+  // leaves a starting or running render alone). Undoing the edit re-quotes.
+  useEffect(() => {
+    if (edited) dispatch({ type: 'invalidate_quote' });
+  }, [edited]);
+
+  /** Ask the reducer to confirm; it is the only gate (see renderReducer 'confirm'). */
+  function confirmRender() {
+    if (!draft || !photo) return;
+    dispatch({ type: 'confirm', draftId: draft.id, photoUrl: photo.url, freshKey: crypto.randomUUID() });
+  }
+
+  // Start the render when — and only when — the reducer accepted a Confirm. The
+  // key is the confirmation's: the same (draft, photo) confirmed again after a
+  // network blip sends the same key, so the server replays instead of charging twice.
+  const starting = render.phase === 'starting' ? rs.confirmation : null;
+  useEffect(() => {
+    if (!starting) return;
+    const { draftId: id, photoUrl: url, key } = starting;
+    void (async () => {
+      // aspect_ratio is left to the server's default: Product Hero is always 9:16.
+      const r = await postJson(`/api/v1/skills/${SKILL}/run`, { draft_id: id, product_image_url: url }, { 'Idempotency-Key': key });
       const runId = r.status === 202 ? startedRunId(r.body) : null;
       if (runId) {
         dispatch({ type: 'run_started', runId });
-        syncUrl(draft.id, runId);
+        syncUrl(id, runId);
       } else {
-        handleRefusal(draft.id, classifyApiError(r.status, r.body));
+        handleRefusal(id, classifyApiError(r.status, r.body));
       }
-    } finally {
-      startingRef.current = false;
-    }
-  }
+    })();
+  }, [starting, handleRefusal]);
 
   function retryRender() {
     dispatch({ type: 'retry' });
@@ -486,7 +472,7 @@ export default function ProductHeroPage() {
         <input
           ref={photoInput}
           type="file"
-          accept={PHOTO_TYPES.join(',')}
+          accept={PHOTO_ACCEPT}
           className="hidden"
           aria-label="Product photo"
           onChange={(e) => {
@@ -532,14 +518,14 @@ export default function ProductHeroPage() {
             style={{ border: '1px dashed rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.6)' }}
           >
             {photoBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
-            {photoBusy ? 'Uploading and checking…' : 'Upload a product photo (PNG or JPEG, up to 25 MB)'}
+            {photoBusy ? 'Uploading and checking…' : 'Upload a product photo (PNG or JPEG)'}
           </button>
         )}
         {photoError ? (
           <p role="alert" className="rounded-xl px-3 py-2 text-sm" style={{ border: '1px solid rgba(255,79,79,0.3)', backgroundColor: 'rgba(255,79,79,0.08)', color: '#FCA5A5' }}>
             {photoError.kind === 'moderation_blocked'
               ? 'This photo was blocked by our content check. Try a different photo. Nothing was charged.'
-              : cleanMessage('message' in photoError ? photoError.message : 'The upload failed. Try again.')}
+              : 'message' in photoError ? photoError.message : 'The upload failed. Try again.'}
           </p>
         ) : null}
       </section>
