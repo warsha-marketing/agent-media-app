@@ -186,24 +186,23 @@ export async function assertPresetAvailable(
  * Preset–Dialect pair (assertPresetAvailable), so a Dialect qualified only for
  * Reaction drafts fine and renders as Reaction, never as Product Hero.
  *
- * Refuses with PRESET_NOT_QUALIFIED (422) carrying the Dialect, `available`
- * (the Dialects some Preset is qualified for) and `presets` (none offered here).
+ * Refuses with PRESET_NOT_QUALIFIED (422) carrying the Dialect and `available`
+ * (the Dialects some Preset is qualified for). Returns nothing: passing is the answer.
  */
 export async function assertDialectDraftable(
   access: PresetAccess,
   userId: string,
   dialect: string,
-): Promise<{ operatorSample: boolean; presets: string[] }> {
+): Promise<void> {
   const qualified = await Promise.all(PRESET_SLUGS.map(async (p) => [p, await access.qualifiedDialects(p)] as const));
-  const presets = qualified.filter(([, ds]) => ds.includes(dialect)).map(([p]) => p);
-  if (presets.length) return { operatorSample: false, presets };
+  if (qualified.some(([, ds]) => ds.includes(dialect))) return;
   let operator = false;
   try {
     operator = await access.isOperator(userId);
   } catch (err) {
     console.error(`[presets] operator check failed: ${(err as Error)?.message ?? 'unknown error'}`);
   }
-  if (operator) return { operatorSample: true, presets: [] };
+  if (operator) return;
   const available = DIALECTS.filter((d) => qualified.some(([, ds]) => ds.includes(d)));
   throw new PresetError(
     422,
