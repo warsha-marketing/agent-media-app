@@ -109,8 +109,9 @@ const STORAGE_SOURCES = [process.env.R2_PUBLIC_URL, process.env.S3_PUBLIC_ENDPOI
   .map((origin) => ` ${origin}`)
   .join('');
 
-// Approved Voice samples are provider-hosted previews.
-const VOICE_SAMPLE_SOURCES = ' https://storage.googleapis.com https://cdn.elevenlabs.io';
+// Approved Voice samples are provider-hosted previews: exactly the hosts
+// safeSampleUrl() in services/api-v2/src/voices/candidates.ts accepts.
+const VOICE_SAMPLE_SOURCES = ' https://storage.googleapis.com https://cdn.elevenlabs.io https://api.us.elevenlabs.io';
 
 /** Security headers applied to every response. */
 const SECURITY_HEADERS: Record<string, string> = {
