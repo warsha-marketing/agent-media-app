@@ -178,6 +178,42 @@ export async function assertPresetAvailable(
   );
 }
 
+/**
+ * The drafting gate: a draft (Brief → Script → Voice) does not depend on the
+ * Preset it is later rendered with, so it is refused only when its Dialect is
+ * not a Qualified Preset for ANY Preset — there would be nothing to render it
+ * as. Operators pass (reviewer samples). Each render still checks its own
+ * Preset–Dialect pair (assertPresetAvailable), so a Dialect qualified only for
+ * Reaction drafts fine and renders as Reaction, never as Product Hero.
+ *
+ * Refuses with PRESET_NOT_QUALIFIED (422) carrying the Dialect, `available`
+ * (the Dialects some Preset is qualified for) and `presets` (none offered here).
+ */
+export async function assertDialectDraftable(
+  access: PresetAccess,
+  userId: string,
+  dialect: string,
+): Promise<{ operatorSample: boolean; presets: string[] }> {
+  const qualified = await Promise.all(PRESET_SLUGS.map(async (p) => [p, await access.qualifiedDialects(p)] as const));
+  const presets = qualified.filter(([, ds]) => ds.includes(dialect)).map(([p]) => p);
+  if (presets.length) return { operatorSample: false, presets };
+  let operator = false;
+  try {
+    operator = await access.isOperator(userId);
+  } catch (err) {
+    console.error(`[presets] operator check failed: ${(err as Error)?.message ?? 'unknown error'}`);
+  }
+  if (operator) return { operatorSample: true, presets: [] };
+  const available = DIALECTS.filter((d) => qualified.some(([, ds]) => ds.includes(d)));
+  throw new PresetError(
+    422,
+    PRESET_NOT_QUALIFIED,
+    `No Preset is offered in ${dialectName(dialect)} yet (coming soon). ` +
+      (available.length ? `Available: ${available.map(dialectName).join(', ')}.` : 'No Dialect is available yet.'),
+    { dialect, available },
+  );
+}
+
 // ── The picker ───────────────────────────────────────────────────────────────
 
 /**

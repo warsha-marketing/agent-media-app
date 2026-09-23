@@ -336,7 +336,7 @@ describe('drafting honours qualification', () => {
     const h = await start();
     const r = await call(h, 'POST', '/v1/drafts/product-hero', USER, brief('gulf', GULF_VOICE));
     expect(r.status).toBe(422);
-    expect(r.body.error).toMatchObject({ code: 'PRESET_NOT_QUALIFIED', preset: 'product_hero', dialect: 'gulf', available: ['levantine'] });
+    expect(r.body.error).toMatchObject({ code: 'PRESET_NOT_QUALIFIED', dialect: 'gulf', available: ['levantine'] });
     expect(h.written).toHaveLength(0);
     expect(h.voiced).toHaveLength(0);
     expect(h.drafts).toHaveLength(0);
@@ -362,6 +362,27 @@ describe('drafting honours qualification', () => {
     const again = await call(h, 'POST', '/v1/drafts/product-hero/revoice', USER, { script: SCRIPT, dialect: 'gulf', parent_draft_id: r.body.draft.id });
     expect(again.status).toBe(201);
     expect(again.body.draft.dialect).toBe('gulf');
+  });
+
+  it('a Dialect qualified only for Reaction is drafted: the draft is Preset-agnostic', async () => {
+    const h = await start();
+    expect((await call(h, 'POST', `${pair('reaction', 'gulf')}/qualify`, OPERATOR, {})).status).toBe(200);
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', USER, brief('gulf', GULF_VOICE));
+    expect(r.status).toBe(201);
+    expect(r.body.draft.dialect).toBe('gulf');
+    const again = await call(h, 'POST', '/v1/drafts/product-hero/revoice', USER, { script: SCRIPT, dialect: 'gulf', parent_draft_id: r.body.draft.id });
+    expect(again.status).toBe(201);
+    // (make-reaction.test.ts: such a draft renders as Reaction and is refused as Product Hero.)
+  });
+
+  it('a Dialect qualified for no Preset lists the Dialects any Preset is offered in', async () => {
+    const h = await start();
+    expect((await call(h, 'POST', `${pair('hands_on', 'gulf')}/qualify`, OPERATOR, {})).status).toBe(200);
+    expect((await call(h, 'POST', `${pair('product_hero', 'levantine')}/withdraw`, OPERATOR, {})).status).toBe(200);
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', USER, brief('levantine', LEVANTINE_VOICE));
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatchObject({ code: 'PRESET_NOT_QUALIFIED', dialect: 'levantine', available: ['gulf'] });
+    expect(h.written).toHaveLength(0);
   });
 
   it('the Gulf Script writer is told to write Gulf, not Levantine', () => {

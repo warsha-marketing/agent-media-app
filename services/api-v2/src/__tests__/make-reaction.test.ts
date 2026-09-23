@@ -154,9 +154,9 @@ const body = (draftId: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-async function call(route: (req: Request, res: Response) => Promise<void>, userId: string, payload: Record<string, unknown>) {
+async function call(route: (req: Request, res: Response) => Promise<void>, userId: string, payload: Record<string, unknown>, slug = 'make_reaction') {
   const out = { status: 0, body: {} as Record<string, unknown> };
-  const req = { userId, params: { slug: 'make_reaction' }, body: payload, header: () => undefined } as unknown as Request;
+  const req = { userId, params: { slug }, body: payload, header: () => undefined } as unknown as Request;
   const res = {
     status(code: number) { out.status = code; return this; },
     json(p: Record<string, unknown>) { out.body = p; return this; },
@@ -421,6 +421,22 @@ describe('make_reaction renders only a Qualified Preset', () => {
     }
     expect(uploads).toHaveLength(0);
     expect(started).toHaveLength(0);
+  });
+
+  it('a draft in a Dialect qualified only for Reaction renders as Reaction and is refused as Product Hero', async () => {
+    // Gulf is qualified for Reaction only (beforeEach). Drafting it is allowed
+    // (qualified-presets.test.ts); each render checks its own Preset.
+    const id = seedDraft({ dialect: 'gulf' });
+    const { product_image_url } = body(id);
+    for (const route of [quoteSkillRoute, runSkillRoute]) {
+      const hero = await call(route, OWNER, { draft_id: id, product_image_url }, 'make_product_hero');
+      expect(hero.status).toBe(422);
+      expect(hero.body).toMatchObject({ error: 'PRESET_NOT_QUALIFIED', skill: 'make_product_hero', preset: 'product_hero', dialect: 'gulf' });
+    }
+    expect(started).toHaveLength(0);
+    const r = await call(runSkillRoute, OWNER, body(id));
+    expect(r.status).toBe(202);
+    expect(started[0].type).toBe('makeReactionWorkflow');
   });
 
   it('a Product Hero qualification does not qualify Reaction', async () => {
