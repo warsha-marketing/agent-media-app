@@ -22,6 +22,7 @@
 
 import { VIDEO_CLIP_CREDITS, VIDEO_CLIP_USD } from './video-pricing.js';
 import type { MusicBedTrack } from './music-bed/types.js';
+import type { ModestyDefault, ShotSubject } from './modesty.js';
 
 /** Clip lengths a Preset renders from. 15 s clips are never needed: two clips
  *  (10 + 5) already cover the longest allowed speech. */
@@ -53,6 +54,12 @@ export interface PresetDefinition<Kind extends string = string> {
   /** The duration contract: the draft's speech must fall in this band. */
   minSpeechMs: number;
   maxSpeechMs: number;
+  /**
+   * Every kind of shot this Preset makes, and what it shows besides the product
+   * (#17): the pipeline adds the Modesty Default to every `hands` and `person`
+   * shot, and to no other.
+   */
+  shotKinds: Readonly<Record<Kind, { shows: ShotSubject }>>;
   /** Which kinds of shots, in what order. Clip lengths follow the shared rule. */
   shotPlan: PresetShotOrder<Kind>;
   /** Inputs the render needs beyond the draft. */
@@ -74,6 +81,13 @@ export interface PresetDefinition<Kind extends string = string> {
    * musicBedSet(id). Empty = every Short of this Preset is voice only.
    */
   musicBed: readonly MusicBedTrack[];
+  /**
+   * The Modesty Default (#17, ./modesty.ts): how covered the arms are at the
+   * least, and the hijab rule per Dialect. Every Preset declares one; it only
+   * reaches the prompts of shots that show people or hands, so a Preset with
+   * product shots only renders exactly as before.
+   */
+  modesty: ModestyDefault;
   // Extension points (later tickets, deliberately not declared yet): any
   // Preset-specific steps before the clips (e.g. product-in-hands frames) join
   // here as further fields, priced by quotePresetCredits.

@@ -12,7 +12,13 @@ vi.mock('openai', () => ({
   },
 }));
 
+import { readFileSync } from 'node:fs';
 import { moderateImageOrThrow, ModerationError } from '../lib/image-moderation.js';
+
+/** #17 regression: the provider's verdict on a benign headscarf portrait (see the fixture's _comment). */
+const HEADSCARF_PORTRAIT = JSON.parse(
+  readFileSync(new URL('./fixtures/headscarf-portrait.moderation.json', import.meta.url), 'utf8'),
+) as { results: Array<{ flagged: boolean }> };
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
 
@@ -79,5 +85,24 @@ describe('image moderation gate', () => {
         input: [expect.objectContaining({ type: 'image_url' })],
       }),
     );
+  });
+
+  // Modest by default (#17): a headscarf portrait was refused with a generic
+  // content_policy_violation on Seedance Mini (docs/mena-ugc-acceptance.md).
+  // Provider-side moderation cannot be unit-tested (manual check:
+  // services/primitive-worker-vnext/README.md); OUR gate must never add a
+  // refusal of its own, even when the provider flags the image overall.
+  it('ALLOWS a headscarf portrait the provider flags on a category we do not block', async () => {
+    expect(HEADSCARF_PORTRAIT.results[0].flagged).toBe(true);
+    createMock.mockResolvedValue(HEADSCARF_PORTRAIT);
+    await expect(moderateImageOrThrow(PNG, 'image/jpeg')).resolves.toBeUndefined();
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('never refuses on the provider’s overall flag alone, only on a blocked category’s score', async () => {
+    createMock.mockResolvedValue({
+      results: [{ flagged: true, categories: { violence: true, harassment: true, hate: true }, category_scores: { violence: 0.99, harassment: 0.99, hate: 0.99 } }],
+    });
+    await expect(moderateImageOrThrow(PNG, 'image/png')).resolves.toBeUndefined();
   });
 });

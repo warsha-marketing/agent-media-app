@@ -6,7 +6,7 @@
 // same path as Product Hero.
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { PRODUCT_HERO, quotePresetCredits, type PresetDefinition } from '@agentmedia/schema';
+import { PRODUCT_HERO, STANDARD_MODESTY, quotePresetCredits, type PresetDefinition } from '@agentmedia/schema';
 import { SKILLS } from '../skills/registry.js';
 import { quoteSkillCredits } from '../skills/credit-quotes.js';
 
@@ -17,9 +17,11 @@ const NARROW: PresetDefinition<'person' | 'product'> = {
   aspectRatio: '9:16',
   minSpeechMs: 5_000,
   maxSpeechMs: 10_000,
+  shotKinds: { person: { shows: 'person' }, product: { shows: 'product' } },
   shotPlan: { order: ['person', 'product'], last: 'product' },
   requiredInputs: ['product_image'],
   musicBed: [],
+  modesty: STANDARD_MODESTY,
   budget: { maxCredits: 280, maxProviderUsd: 1.2 },
 };
 

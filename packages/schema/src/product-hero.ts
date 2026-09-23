@@ -12,6 +12,7 @@
 
 import { planPresetShots, presetProviderUsd, quotePresetCredits, type PresetDefinition } from './preset-definition.js';
 import { musicBedSet } from './music-bed/index.js';
+import { STANDARD_MODESTY } from './modesty.js';
 
 /** Clip lengths Product Hero renders from (the shared Preset clip rule). */
 export type ProductHeroClipSeconds = 5 | 10;
@@ -37,11 +38,15 @@ export const PRODUCT_HERO = {
   /** The duration contract: a Product Hero Short speaks for 5–15 s. */
   minSpeechMs: 5_000,
   maxSpeechMs: 15_000,
+  /** Product only: nobody on screen, so the Modesty Default never reaches a prompt. */
+  shotKinds: { hero: { shows: 'product' }, detail: { shows: 'product' } },
   /** Shot 1 is the hero; a second shot is a detail closer, so the cut reads as an edit. */
   shotPlan: { order: ['hero', 'detail'] },
   requiredInputs: ['product_image'],
   /** Licensed Music Bed tracks (#9) — data in ./music-bed/; empty until one is licensed. */
   musicBed: musicBedSet('product_hero'),
+  /** Declared like every Preset's; a no-op here (no people or hands shots). */
+  modesty: STANDARD_MODESTY,
   budget: {
     /** The most one render may charge: two clips (10 + 5) for 15 s of speech. */
     maxCredits: 420,
