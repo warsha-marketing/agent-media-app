@@ -19,7 +19,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerDraftRoutes, draftOpenApi } from '../routes/v1/drafts.js';
-import { productionDraftDeps } from '../drafts/providers.js';
+import { anthropicScriptWriter, productionDraftDeps, systemPrompt, userPrompt } from '../drafts/providers.js';
+import { DELIVERY_TAGS } from '@agentmedia/schema';
 import {
   CreateDraftInputSchema,
   RevoiceDraftInputSchema,
@@ -46,6 +47,18 @@ const VOICE = '10000000-0000-4000-8000-000000000001';
 
 const SCRIPT_A = 'هَيْدا المُنْتَجْ رَحْ يْغَيِّرْ يومَكْ';
 const SCRIPT_B = 'جَرِّبُو هَلَّقْ وْشُوفْ الفَرِقْ بْعَيْنَكْ';
+
+/** The Script from the first live Product Hero render (2026-09-23), which sounded right. */
+const LIVE_SCRIPT =
+  '[confidently] رومي رويال ريتشوالز، فريش وراقية. [softly] برغموت، فلفل زهري، جِلد ومِسك. [warmly] بتضلّ معك للسهرة. [excited] جرّبها.';
+const LIVE_TERMS = ['جِلد', 'مِسك'];
+/** The same Script with the two nouns the voice misread left unmarked. */
+const LIVE_UNMARKED = LIVE_SCRIPT.replace('جِلد', 'جلد').replace('ومِسك', 'ومسك');
+const RUMI_DETAILS =
+  'RUMI Royal Rituals — Eau de Parfum. Notes: Aqueous, Bergamot, Pink Pepper, Geranium, Orris, Orange Blossom, Leather, Patchouli, Musk. Long-lasting, made for the evening.';
+
+/** A writer reply: a Script alone, or a Script with the product terms it reports. */
+type Written = string | { script: string; product_terms: string[] };
 
 function alignmentFor(text: string, ms: number): Alignment {
   const chars = [...text];
@@ -74,17 +87,18 @@ afterEach(async () => {
 });
 
 /** @param durations ms of speech the fake voice returns, one per voicing, in order. */
-async function start(opts: { durations: number[]; scripts?: string[]; override?: Partial<DraftDeps> }): Promise<Harness> {
+async function start(opts: { durations: number[]; scripts?: Written[]; ttsModel?: string; override?: Partial<DraftDeps> }): Promise<Harness> {
   const rows: DraftRow[] = [];
   const calls = { write: [] as Array<Record<string, unknown>>, voice: [] as string[], store: [] as string[], sign: [] as string[] };
   const durations = [...opts.durations];
-  const scripts = [...(opts.scripts ?? [SCRIPT_A, SCRIPT_B])];
+  const scripts: Written[] = [...(opts.scripts ?? [SCRIPT_A, SCRIPT_B])];
   let seq = 0;
 
   const deps: DraftDeps = {
     writeScript: async (input) => {
       calls.write.push(input as unknown as Record<string, unknown>);
-      return { script: scripts.shift() ?? SCRIPT_A, model: 'claude-test' };
+      const next = scripts.shift() ?? SCRIPT_A;
+      return typeof next === 'string' ? { script: next, model: 'claude-test' } : { ...next, model: 'claude-test' };
     },
     voiceScript: async ({ script, voice }) => {
       calls.voice.push(script);
@@ -95,9 +109,10 @@ async function start(opts: { durations: number[]; scripts?: string[]; override?:
         alignment: alignmentFor(script, ms),
         provider: voice.provider,
         voiceId: voice.provider_voice_id,
-        ttsModel: 'eleven_test',
+        ttsModel: opts.ttsModel ?? 'eleven_v3',
       };
     },
+    ttsModel: opts.ttsModel ?? 'eleven_v3',
     storeAudio: async ({ userId, draftId }) => {
       const key = `vnext/drafts/${userId}/${draftId}.mp3`;
       calls.store.push(key);
@@ -252,11 +267,12 @@ describe('POST /v1/drafts/product-hero', () => {
     expect(Math.abs(d.duration_ms - 9000)).toBeLessThan(30);
     expect(d.alignment.characters.join('')).toBe(SCRIPT_A);
     // The provider is whatever voiced it, not a name the draft core assumes.
-    expect(d.voice).toEqual({ id: VOICE, provider: 'fake-voice', provider_voice_id: 'voice-test', model: 'eleven_test' });
+    expect(d.voice).toEqual({ id: VOICE, provider: 'fake-voice', provider_voice_id: 'voice-test', model: 'eleven_v3' });
+    expect(d.product_details).toBeNull();
     expect(d.render_started_at).toBeNull();
     expect(d.render_run_id).toBeNull();
     // The Brief went to the writer with its Dialect; the writer's Script is what got voiced.
-    expect(h.calls.write[0]).toMatchObject({ brief: 'Cold brew promo', dialect: 'levantine' });
+    expect(h.calls.write[0]).toMatchObject({ brief: 'Cold brew promo', product_details: null, dialect: 'levantine', delivery_tags: true });
     expect(h.calls.voice).toEqual([SCRIPT_A]);
     expect(h.rows).toHaveLength(1);
     expect(h.rows[0].user_id).toBe('user-a');
@@ -297,14 +313,219 @@ describe('POST /v1/drafts/product-hero', () => {
   });
 });
 
-describe('Script writer output guard', () => {
-  it('refuses a Script that came back without تشكيل, before paying for a voice', async () => {
-    const h = await start({ durations: [8000], scripts: ['هيدا المنتج رح يغير يومك'] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine', voice_id: VOICE });
+describe('Product Details', () => {
+  it('are optional, bounded, and never a stand-in for the Brief', () => {
+    expect(CreateDraftInputSchema.safeParse({ brief: 'Promo', product_details: RUMI_DETAILS, dialect: 'levantine', voice_id: VOICE }).success).toBe(true);
+    expect(CreateDraftInputSchema.safeParse({ brief: 'Promo', product_details: 'x'.repeat(3001), dialect: 'levantine', voice_id: VOICE }).success).toBe(false);
+    expect(CreateDraftInputSchema.safeParse({ product_details: RUMI_DETAILS, dialect: 'levantine', voice_id: VOICE }).success).toBe(false);
+  });
+
+  it('go to the writer as the facts to sell, and are saved on the draft', async () => {
+    const h = await start({ durations: [9000], scripts: [{ script: LIVE_SCRIPT, product_terms: LIVE_TERMS }] });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', {
+      brief: 'Evening fragrance ad, confident and warm',
+      product_details: `  ${RUMI_DETAILS}  `,
+      dialect: 'levantine',
+      voice_id: VOICE,
+    });
+    expect(r.status).toBe(201);
+    expect(h.calls.write[0]).toMatchObject({ product_details: RUMI_DETAILS });
+    expect(r.body.draft.product_details).toBe(RUMI_DETAILS);
+    expect(h.rows[0].product_details).toBe(RUMI_DETAILS);
+    expect(r.body.draft.script).toBe(LIVE_SCRIPT);
+  });
+
+  it('carry over to a re-voice of the draft', async () => {
+    const h = await start({ durations: [9000, 9000], scripts: [{ script: LIVE_SCRIPT, product_terms: LIVE_TERMS }] });
+    const first = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', product_details: RUMI_DETAILS, dialect: 'levantine', voice_id: VOICE })).body.draft;
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', {
+      script: LIVE_SCRIPT.replace('برغموت', 'بِرغموت'),
+      dialect: 'levantine',
+      parent_draft_id: first.id,
+      product_details: 'ignored: the parent has its own',
+    });
+    expect(r.status).toBe(201);
+    expect(r.body.draft.product_details).toBe(RUMI_DETAILS);
+    expect(h.rows[1].product_details).toBe(RUMI_DETAILS);
+  });
+
+  it('are taken from the request when a re-voice has no parent', async () => {
+    const h = await start({ durations: [9000] });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: LIVE_SCRIPT, dialect: 'levantine', voice_id: VOICE, product_details: RUMI_DETAILS });
+    expect(r.status).toBe(201);
+    expect(r.body.draft.product_details).toBe(RUMI_DETAILS);
+  });
+});
+
+describe('the Script-writing prompt', () => {
+  it('sells the Product Details with Targeted Diacritics and 2–4 allowed Delivery Tags', () => {
+    const system = systemPrompt('levantine', { deliveryTags: true });
+    expect(system).toMatch(/Product Details/);
+    expect(system).toMatch(/never invent/i);
+    expect(system).toMatch(/generic lines/);
+    expect(system).toMatch(/Targeted Diacritics/);
+    expect(system).toMatch(/plain dialect spelling/);
+    expect(system).toContain('جِلد');
+    expect(system).toContain('مِسك');
+    expect(system).not.toMatch(/full تشكيل on every word/);
+    expect(system).toMatch(/2 to 4 Delivery Tags/);
+    for (const t of DELIVERY_TAGS) expect(system).toContain(`[${t}]`);
+    expect(system).toMatch(/product_terms/);
+  });
+
+  it('asks for no Delivery Tags when the voice would read them aloud', () => {
+    const system = systemPrompt('levantine', { deliveryTags: false });
+    expect(system).toMatch(/Delivery Tags: do not add any/);
+    expect(system).not.toContain('[softly]');
+  });
+
+  it('puts the Brief and the Product Details in the user turn, and the reasons on a rewrite', () => {
+    const base = { brief: 'Evening ad', product_details: RUMI_DETAILS, dialect: 'levantine' as const, delivery_tags: true };
+    expect(userPrompt(base)).toBe(`Brief:\nEvening ad\n\nProduct Details:\n${RUMI_DETAILS}`);
+    expect(userPrompt({ ...base, product_details: null })).toBe('Brief:\nEvening ad');
+    const again = userPrompt({ ...base, rejected: { script: LIVE_UNMARKED, reasons: ['These words need at least one diacritic: جلد'] } });
+    expect(again).toContain('refused by the Script check');
+    expect(again).toContain('جلد');
+    expect(again).toContain(LIVE_UNMARKED);
+  });
+
+  it('the real writer asks Claude for structured output and reads the Script and its product terms', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ script: ` ${LIVE_SCRIPT}\n`, product_terms: LIVE_TERMS }) }] }), { status: 200 }),
+    );
+    try {
+      const write = anthropicScriptWriter({ apiKey: 'k', model: 'claude-test' });
+      const out = await write({ brief: 'Evening ad', product_details: RUMI_DETAILS, dialect: 'levantine', delivery_tags: true });
+      expect(out).toEqual({ script: LIVE_SCRIPT, product_terms: LIVE_TERMS, model: 'claude-test' });
+      const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(body.output_config.format).toMatchObject({ type: 'json_schema', schema: { required: ['script', 'product_terms'] } });
+      expect(body.system).toContain('[softly]');
+      expect(body.messages[0].content).toContain(RUMI_DETAILS);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+describe('the Script check on generated Scripts', () => {
+  const create = (h: Harness) =>
+    call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Evening ad', product_details: RUMI_DETAILS, dialect: 'levantine', voice_id: VOICE });
+
+  it('accepts the live Script: plain spelling, marked جِلد and مِسك, allowed Delivery Tags', async () => {
+    const h = await start({ durations: [9000], scripts: [{ script: LIVE_SCRIPT, product_terms: LIVE_TERMS }] });
+    const r = await create(h);
+    expect(r.status).toBe(201);
+    expect(h.calls.write).toHaveLength(1);
+    expect(h.calls.voice).toEqual([LIVE_SCRIPT]);
+  });
+
+  it('gives the writer one rewrite, told why, when product nouns come back unmarked', async () => {
+    const h = await start({
+      durations: [9000],
+      scripts: [{ script: LIVE_UNMARKED, product_terms: ['جلد', 'مسك'] }, { script: LIVE_SCRIPT, product_terms: LIVE_TERMS }],
+    });
+    const r = await create(h);
+    expect(r.status).toBe(201);
+    expect(r.body.draft.script).toBe(LIVE_SCRIPT);
+    expect(h.calls.write).toHaveLength(2);
+    const rejected = h.calls.write[1].rejected as { script: string; reasons: string[] };
+    expect(rejected.script).toBe(LIVE_UNMARKED);
+    expect(rejected.reasons.join(' ')).toMatch(/جلد/);
+    // Only the Script that passed was voiced.
+    expect(h.calls.voice).toEqual([LIVE_SCRIPT]);
+  });
+
+  it('catches unmarked جلد / مسك even when the writer does not report them', async () => {
+    const h = await start({ durations: [9000], scripts: [{ script: LIVE_UNMARKED, product_terms: [] }, LIVE_SCRIPT] });
+    const r = await create(h);
+    expect(r.status).toBe(201);
+    expect(h.calls.write).toHaveLength(2);
+  });
+
+  it('rewrites a Script carrying an unknown tag like [wisper]', async () => {
+    const h = await start({ durations: [9000], scripts: [LIVE_SCRIPT.replace('[softly]', '[wisper]'), LIVE_SCRIPT] });
+    const r = await create(h);
+    expect(r.status).toBe(201);
+    expect((h.calls.write[1].rejected as { reasons: string[] }).reasons.join(' ')).toContain('[wisper]');
+  });
+
+  it('after a second refusal, hands the user the Script and the reasons, having paid for no voice', async () => {
+    const h = await start({ durations: [9000], scripts: [LIVE_UNMARKED, LIVE_UNMARKED] });
+    const r = await create(h);
+    expect(r.status).toBe(422);
+    expect(r.body.error.code).toBe('SCRIPT_CHECK_FAILED');
+    expect(r.body.error.script).toBe(LIVE_UNMARKED);
+    expect(r.body.error.issues).toEqual([expect.objectContaining({ code: 'WORD_NOT_MARKED', found: ['جلد', 'ومسك'] })]);
+    expect(r.body.error.message).toMatch(/re-voice/);
+    expect(h.calls.write).toHaveLength(2);
+    expect(h.calls.voice).toHaveLength(0);
+    expect(h.rows).toHaveLength(0);
+  });
+
+  it('refuses an empty Script from the writer before paying for a voice', async () => {
+    const h = await start({ durations: [8000], scripts: ['   '] });
+    const r = await create(h);
     expect(r.status).toBe(502);
     expect(r.body.error.code).toBe('SCRIPT_GENERATION_FAILED');
     expect(h.calls.voice).toHaveLength(0);
-    expect(h.rows).toHaveLength(0);
+  });
+});
+
+describe('Delivery Tags on re-voice', () => {
+  it('accepts any allowed tag the user adds', async () => {
+    const h = await start({ durations: [9000] });
+    const edited = `[whispers] ${LIVE_SCRIPT.replace('[excited]', '[Cheerfully]')}`;
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: edited, dialect: 'levantine', voice_id: VOICE });
+    expect(r.status).toBe(201);
+    expect(h.calls.voice).toEqual([edited]);
+  });
+
+  it('refuses an unknown tag with UNKNOWN_DELIVERY_TAG and the allowed list, before any voicing', async () => {
+    const h = await start({ durations: [9000] });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', {
+      script: LIVE_SCRIPT.replace('[softly]', '[wisper]'),
+      dialect: 'levantine',
+      voice_id: VOICE,
+    });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatchObject({ code: 'UNKNOWN_DELIVERY_TAG', tags: ['[wisper]'], allowed: [...DELIVERY_TAGS] });
+    expect(r.body.error.message).toContain('[wisper]');
+    expect(h.calls.voice).toHaveLength(0);
+  });
+
+  it('refuses Latin text with SCRIPT_NOT_ARABIC', async () => {
+    const h = await start({ durations: [9000] });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: 'جرّبها RUMI هلق', dialect: 'levantine', voice_id: VOICE });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatchObject({ code: 'SCRIPT_NOT_ARABIC', found: ['RUMI'] });
+    expect(h.calls.voice).toHaveLength(0);
+  });
+
+  it('does not hold a user edit to the product-noun rule: the user judges their own marks', async () => {
+    const h = await start({ durations: [9000] });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: LIVE_UNMARKED, dialect: 'levantine', voice_id: VOICE });
+    expect(r.status).toBe(201);
+  });
+});
+
+describe('a TTS model that does not honour Delivery Tags', () => {
+  it('writes without tags and strips any that come back before voicing', async () => {
+    const h = await start({ durations: [9000], ttsModel: 'eleven_multilingual_v2', scripts: [{ script: LIVE_SCRIPT, product_terms: LIVE_TERMS }] });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine', voice_id: VOICE });
+    expect(r.status).toBe(201);
+    expect(h.calls.write[0]).toMatchObject({ delivery_tags: false });
+    expect(h.calls.voice[0]).not.toMatch(/[[\]]/);
+    expect(h.calls.voice[0]).toBe('رومي رويال ريتشوالز، فريش وراقية. برغموت، فلفل زهري، جِلد ومِسك. بتضلّ معك للسهرة. جرّبها.');
+    // The draft keeps the Script exactly as it was spoken.
+    expect(r.body.draft.script).toBe(h.calls.voice[0]);
+  });
+
+  it('strips the tags of an edited Script before voicing it', async () => {
+    const h = await start({ durations: [9000], ttsModel: 'eleven_multilingual_v2' });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: LIVE_SCRIPT, dialect: 'levantine', voice_id: VOICE });
+    expect(r.status).toBe(201);
+    expect(h.calls.voice[0]).not.toMatch(/[[\]]/);
+    expect(r.body.draft.script).toBe(h.calls.voice[0]);
   });
 });
 
@@ -557,6 +778,22 @@ describe('draft routes in the OpenAPI spec', () => {
     expect(draft.properties).toHaveProperty('audio_url_expires_at');
     expect(draft.properties).not.toHaveProperty('audio_key');
     expect(draft.required).toContain('audio_url');
+  });
+
+  it('documents Product Details, the Delivery Tags and the Script check error codes', () => {
+    const spec = draftOpenApi();
+    const draft = spec.schemas.Draft as { properties: Record<string, { description?: string }> };
+    expect(draft.properties).toHaveProperty('product_details');
+    expect(draft.properties.script.description).toContain('[softly]');
+    const create = (spec.paths['/v1/drafts/product-hero'] as any).post;
+    const revoice = (spec.paths['/v1/drafts/product-hero/revoice'] as any).post;
+    expect(create.requestBody.content['application/json'].schema.properties).toHaveProperty('product_details');
+    expect(revoice.requestBody.content['application/json'].schema.properties).toHaveProperty('product_details');
+    expect(create.responses['422'].description).toContain('SCRIPT_CHECK_FAILED');
+    expect(revoice.responses['422'].description).toContain('UNKNOWN_DELIVERY_TAG');
+    expect(revoice.responses['422'].description).toContain('SCRIPT_NOT_ARABIC');
+    const err = (spec.schemas.DraftError as any).properties.error.properties;
+    for (const f of ['tags', 'allowed', 'found', 'issues', 'script']) expect(err).toHaveProperty(f);
   });
 
   it('server.ts publishes them in /openapi.json', () => {

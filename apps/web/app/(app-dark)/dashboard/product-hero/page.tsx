@@ -7,12 +7,18 @@
  *
  *   Photo → Brief → Script review + voice preview → cost confirmation → render → Short
  *
- * Draft phase (free): Brief + Dialect + Approved Voice → the server writes a
- * fully diacritized Script and voices it with that Voice. The user reads the
- * Script, hears it, edits it, and re-voices; every voicing is a new draft, so
+ * Draft phase (free): Brief + Product Details + Dialect + Approved Voice → the
+ * server writes a Script that sells the Product Details (plain dialect spelling,
+ * Targeted Diacritics, a few Delivery Tags; ADR 0002) and voices it with that
+ * Voice. The user reads the Script, hears it, edits it (adding a mark to a word
+ * they hear misread, or an allowed Delivery Tag), and re-voices; every voicing
+ * is a new draft, so
  * what they finally approve is exactly what renders. When the voiced Script
  * falls outside 5–15 s the server refuses the draft (SCRIPT_TOO_SHORT /
- * SCRIPT_TOO_LONG) and returns the Script, which lands in the editor.
+ * SCRIPT_TOO_LONG) and returns the Script, which lands in the editor; so does a
+ * written Script that failed the Script check twice (SCRIPT_CHECK_FAILED). The
+ * editor lists the allowed Delivery Tags and flags an unknown one (e.g. [wisper])
+ * before it is sent, since the server refuses it (UNKNOWN_DELIVERY_TAG).
  *
  * The Voice picker lists only Approved Voices of the chosen Dialect, re-read
  * whenever the Dialect or a filter changes and after a VOICE_NOT_APPROVED
@@ -36,13 +42,16 @@ import { ImagePlus, Loader2, Mic, Sparkles, X } from 'lucide-react';
 import {
   classifyApiError,
   currentStep,
+  DELIVERY_TAGS,
   initialRenderState,
+  insertDeliveryTag,
   isRunSettled,
   parseQuote,
   readFlowParams,
   renderReducer,
   runToResume,
   startedRunId,
+  unknownDeliveryTags,
   writeFlowParams,
   type ApiOutcome,
   type SkillRunBody,
@@ -57,6 +66,7 @@ interface Draft {
   id: string;
   dialect: Dialect;
   brief: string | null;
+  product_details?: string | null;
   script: string;
   /** Short-lived signed URL; re-read the draft for a fresh one. */
   audio_url: string;
@@ -75,6 +85,8 @@ interface Photo {
 }
 
 const PHOTO_KEY = 'product-hero:photo';
+/** Matches the API's PRODUCT_DETAILS_MAX_CHARS. */
+const PRODUCT_DETAILS_MAX = 3000;
 const POLL_MS = 4000;
 const SKILL = 'make_product_hero';
 
@@ -153,6 +165,7 @@ const GENDERS: Array<{ id: '' | Gender; label: string }> = [
 
 export default function ProductHeroPage() {
   const [brief, setBrief] = useState('');
+  const [productDetails, setProductDetails] = useState('');
   const [dialect, setDialect] = useState<Dialect>('levantine');
   const [voices, setVoices] = useState<Voice[] | null>(null);
   const [styles, setStyles] = useState<string[]>([]);
@@ -170,6 +183,7 @@ export default function ProductHeroPage() {
   const [photoError, setPhotoError] = useState<ApiOutcome | null>(null);
   const [rs, dispatch] = useReducer(renderReducer, initialRenderState);
   const photoInput = useRef<HTMLInputElement>(null);
+  const scriptInput = useRef<HTMLTextAreaElement>(null);
 
   /** Approved Voices of the Dialect under the current filters. Never cached. */
   const loadVoices = useCallback(async () => {
@@ -225,6 +239,7 @@ export default function ProductHeroPage() {
       setScript(d.script);
       setHistory([d]);
       if (d.brief) setBrief(d.brief);
+      if (d.product_details) setProductDetails(d.product_details);
       setDialect(d.dialect);
       if (d.voice?.id) setVoiceId(d.voice.id);
       const runId = runToResume(params, d);
@@ -257,7 +272,7 @@ export default function ProductHeroPage() {
     setError(e);
     // The Voice was revoked since the picker loaded: refresh it.
     if (e.code === 'VOICE_NOT_APPROVED') void loadVoices();
-    // A duration refusal still hands back the Script: put it in the editor.
+    // A duration or Script-check refusal still hands back the Script: put it in the editor.
     if (e.script) setScript(e.script);
   }
 
@@ -266,7 +281,12 @@ export default function ProductHeroPage() {
     setBusy('write');
     setError(null);
     try {
-      const r = await post('/api/v1/drafts/product-hero', { brief: brief.trim(), dialect, voice_id: voiceId });
+      const r = await post('/api/v1/drafts/product-hero', {
+        brief: brief.trim(),
+        ...(productDetails.trim() ? { product_details: productDetails.trim() } : {}),
+        dialect,
+        voice_id: voiceId,
+      });
       if (r.draft) accept(r.draft);
       else refuse(r.error!);
     } catch (e) {
@@ -287,7 +307,13 @@ export default function ProductHeroPage() {
         dialect: draft ? draft.dialect : dialect,
         // The picked Voice; without one, a re-voice reuses the parent draft's Voice.
         ...(voiceId ? { voice_id: voiceId } : {}),
-        ...(draft ? { parent_draft_id: draft.id } : brief.trim() ? { brief: brief.trim() } : {}),
+        // With a parent, its Brief and Product Details carry over server-side.
+        ...(draft
+          ? { parent_draft_id: draft.id }
+          : {
+              ...(brief.trim() ? { brief: brief.trim() } : {}),
+              ...(productDetails.trim() ? { product_details: productDetails.trim() } : {}),
+            }),
       });
       if (r.draft) accept(r.draft);
       else refuse(r.error!);
@@ -298,6 +324,18 @@ export default function ProductHeroPage() {
     }
   }
 
+  /** Put `[tag] ` at the caret in the Script editor. */
+  function addTag(tag: string) {
+    const el = scriptInput.current;
+    const next = insertDeliveryTag(script, tag, el?.selectionStart ?? script.length, el?.selectionEnd ?? script.length);
+    setScript(next.script);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(next.caret, next.caret);
+    });
+  }
+
+  const badTags = unknownDeliveryTags(script);
   const voiceChanged = !!draft && !!voiceId && voiceId !== draft.voice?.id;
   const edited = draft ? script.trim() !== draft.script || voiceChanged : script.trim().length > 0;
   const render = rs.render;
@@ -459,9 +497,9 @@ export default function ProductHeroPage() {
           From product photo to Short
         </h1>
         <p className="mt-1 max-w-2xl text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
-          Add a product photo and describe the ad in any language. We write a fully diacritized Script in your Dialect and
-          voice it so you can hear it first; drafts are free, and the Short must speak for 5–15 seconds. You see the price
-          before anything is charged.
+          Add a product photo, describe the ad in any language, and paste the product&apos;s details. We write a Script in
+          your Dialect that sells those details and voice it so you can hear it first; drafts are free, and the Short must
+          speak for 5–15 seconds. You see the price before anything is charged.
         </p>
       </div>
       <Stepper current={step} />
@@ -543,6 +581,20 @@ export default function ProductHeroPage() {
           className="w-full resize-y rounded-xl px-3 py-2 text-sm outline-none"
           style={field}
         />
+        <label className={label} style={muted} htmlFor="product-details">Product Details (optional)</label>
+        <textarea
+          id="product-details"
+          value={productDetails}
+          onChange={(e) => setProductDetails(e.target.value)}
+          placeholder="Name, description, notes or ingredients, benefits. e.g. RUMI Royal Rituals, Eau de Parfum. Notes: Bergamot, Pink Pepper, Leather, Musk. Lasts all evening."
+          maxLength={PRODUCT_DETAILS_MAX}
+          rows={4}
+          className="w-full resize-y rounded-xl px-3 py-2 text-sm outline-none"
+          style={field}
+        />
+        <p className="-mt-1 text-xs" style={muted}>
+          The facts the Script sells, in any language. Without them the Script can only work from the Brief.
+        </p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
             <label className={label} style={muted} htmlFor="dialect">Dialect</label>
@@ -662,6 +714,7 @@ export default function ProductHeroPage() {
           </div>
           <textarea
             id="script"
+            ref={scriptInput}
             dir="rtl"
             lang="ar"
             value={script}
@@ -672,6 +725,33 @@ export default function ProductHeroPage() {
             className="w-full resize-y rounded-xl px-4 py-3 outline-none"
             style={{ ...field, fontSize: 20, lineHeight: 1.9 }}
           />
+          {/* Delivery Tags: the only bracketed text a Script may carry. */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs" style={muted}>Delivery Tags (never spoken):</span>
+              {DELIVERY_TAGS.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  disabled={renderLocked}
+                  onClick={() => addTag(t)}
+                  className="h-6 rounded-md px-2 font-mono text-[11px] disabled:opacity-60"
+                  style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}
+                >
+                  [{t}]
+                </button>
+              ))}
+            </div>
+            <p className="text-xs" style={muted}>
+              A tag shapes how the words after it are spoken. If the voice misreads a word, add a mark to it (e.g. جِلد) and re-voice.
+            </p>
+            {badTags.length ? (
+              <p role="alert" className="text-xs" style={{ color: '#FCA5A5' }}>
+                {badTags.join(', ')} {badTags.length === 1 ? 'is not a Delivery Tag' : 'are not Delivery Tags'} and would be refused. Use one
+                of the tags above, or remove it.
+              </p>
+            ) : null}
+          </div>
           {draft && !edited ? (
             // key: a new draft swaps the source, so remount the player.
             <audio key={draft.id} controls src={draft.audio_url} onError={() => onAudioError(draft)} className="w-full" />
@@ -680,7 +760,7 @@ export default function ProductHeroPage() {
             <button
               type="button"
               onClick={revoice}
-              disabled={!!busy || renderLocked || !script.trim() || !edited}
+              disabled={!!busy || renderLocked || !script.trim() || !edited || badTags.length > 0}
               className="inline-flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-semibold disabled:opacity-60"
               style={{ border: '1px solid rgba(167,139,250,0.5)', color: '#C9B8FF' }}
             >

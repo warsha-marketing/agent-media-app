@@ -19,3 +19,5 @@ export * from './video-pricing.js';
 // Product Hero shot plan + cost budget — quote (api-v2) and render
 // (primitive-worker-vnext) plan identically. See src/product-hero.ts.
 export * from './product-hero.js';
+// Delivery Tags — the allowed list and the strip helpers (Captions, viewer display).
+export * from './delivery-tags.js';

@@ -897,7 +897,7 @@ registerToolingMarketplaceRoutes(
   },
 );
 
-// ── Product Hero drafts (#4): Brief → diacritized Script → voice preview ────
+// ── Product Hero drafts (#4, #14): Brief + Product Details → Script → voice preview
 // Free to the user (no credits, before the cost gate) but each draft costs us a
 // Claude call and one or two TTS calls, so it gets its own per-user ceiling on
 // top of the generate tier. Runs after authMiddleware, so it keys on userId.

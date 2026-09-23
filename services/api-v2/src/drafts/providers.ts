@@ -43,6 +43,7 @@ import {
   type WriteScriptInput,
 } from './product-hero-draft.js';
 import { randomUUID } from 'node:crypto';
+import { DELIVERY_TAGS } from '@agentmedia/schema';
 import { supabaseVoiceRepo } from '../voices/providers.js';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
@@ -58,32 +59,68 @@ const DIALECT_GUIDE: Record<Dialect, string> = {
     '(e.g. وَايِد، شْلُون، الحِين، أَبِي، هَذَا), never فصحى phrasing a native speaker would find stiff.',
 };
 
-function systemPrompt(dialect: Dialect): string {
+/** The Delivery Tags, as the writer sees them: "[softly], [whispers], …". */
+const TAG_LIST = DELIVERY_TAGS.map((t) => `[${t}]`).join(', ');
+
+export function systemPrompt(dialect: Dialect, opts: { deliveryTags: boolean }): string {
+  const tags = opts.deliveryTags
+    ? `Delivery Tags: add 2 to 4 Delivery Tags to direct the voice, each in square brackets right before the words it shapes, e.g. "[softly] برغموت، فلفل زهري". Use only these: ${TAG_LIST}. They are never spoken; any other bracketed text would be read aloud.`
+    : 'Delivery Tags: do not add any. This voice would read bracketed text aloud.';
   return `You write the spoken voice-over Script for a short vertical product ad (a "Product Hero" Short). A synthetic voice will read your Script aloud exactly as written, over silent product visuals.
 
 Write in ${DIALECT_GUIDE[dialect]}
 
-The Brief may be in any language; it tells you what to sell, never the words to say. Write a fresh Script in the Dialect.
+The Brief may be in any language; it tells you what to sell and the tone, never the words to say. The Product Details, when given, are the facts about the product: its name, description, notes or ingredients, and benefits. Sell those facts. Name the real product, its notes or ingredients and what it does for the buyer; never invent claims, and avoid generic lines that could sell any product. Without Product Details, sell what the Brief says.
 
 Length: the voice must speak for 8 to 12 seconds, which is about 18 to 28 words. Never under 5 seconds or over 15.
 
-Diacritics: put full تشكيل on every word (fatha, damma, kasra, sukun, shadda, tanween) so the voice cannot mispronounce anything. Mark the Dialect's pronunciation, not the فصحى one.
+Spelling: plain dialect spelling, as a native speaker would text it. Targeted Diacritics: add تشكيل only on words the voice could misread, and nowhere else. That means every product noun, note and ingredient that has a second reading, and any other word with a common second reading. Mark just enough to fix the reading: جِلد (leather, not جَلد), مِسك (musk, not مَسَك). Full تشكيل makes the voice slow and formal, so never mark every word. Transliterated names and loanwords with only one reading (برغموت) stay plain.
+
+${tags}
 
 Write brand and product names in Arabic letters as they are said. Write numbers and prices as words. No emojis, hashtags, Latin letters, stage directions, speaker labels, quotation marks or line breaks.
 
-Reply with the Script only: one paragraph of diacritized Arabic, nothing before or after it.`;
+Reply with JSON only: {"script": the Script as one paragraph, "product_terms": the words of your Script that name the Product Details' nouns, notes or ingredients and that you marked because a voice could misread them, each exactly as it appears in the Script (with its marks); [] if none}.`;
 }
 
-function userPrompt(input: WriteScriptInput): string {
-  const brief = `Brief:\n${input.brief}`;
-  if (!input.previous) return brief;
-  const secs = (input.previous.duration_ms / 1000).toFixed(1);
-  return `${brief}
+/** The writer's reply: the Script and the product terms it marked (see WrittenScript). */
+export const SCRIPT_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    script: { type: 'string' },
+    product_terms: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['script', 'product_terms'],
+  additionalProperties: false,
+} as const;
 
-Your previous Script, voiced, ran ${secs} seconds, which is outside the ${MIN_SPEECH_MS / 1000}–${MAX_SPEECH_MS / 1000} second limit. ${
-    input.previous.direction === 'shorten' ? 'Shorten' : 'Lengthen'
-  } it to land at about 10 seconds. Previous Script:
-${input.previous.script}`;
+export function userPrompt(input: WriteScriptInput): string {
+  let prompt = `Brief:\n${input.brief}`;
+  if (input.product_details) prompt += `\n\nProduct Details:\n${input.product_details}`;
+  if (input.rejected) {
+    prompt += `\n\nYour previous Script was refused by the Script check:\n- ${input.rejected.reasons.join('\n- ')}\nWrite it again with those fixed. Previous Script:\n${input.rejected.script}`;
+  }
+  if (input.previous) {
+    const secs = (input.previous.duration_ms / 1000).toFixed(1);
+    prompt += `\n\nYour previous Script, voiced, ran ${secs} seconds, which is outside the ${MIN_SPEECH_MS / 1000}–${MAX_SPEECH_MS / 1000} second limit. ${
+      input.previous.direction === 'shorten' ? 'Shorten' : 'Lengthen'
+    } it to land at about 10 seconds. Previous Script:\n${input.previous.script}`;
+  }
+  return prompt;
+}
+
+/** Read the writer's JSON reply; a reply that is not the expected shape is an upstream failure. */
+export function parseWriterReply(text: string): { script: string; product_terms: string[] } {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('anthropic: Script reply is not JSON');
+  }
+  const d = data as { script?: unknown; product_terms?: unknown };
+  if (typeof d.script !== 'string') throw new Error('anthropic: Script reply has no script');
+  const terms = Array.isArray(d.product_terms) ? d.product_terms.filter((t): t is string => typeof t === 'string') : [];
+  return { script: d.script.replace(/\s+/g, ' ').trim(), product_terms: terms.map((t) => t.trim()).filter(Boolean) };
 }
 
 export function anthropicScriptWriter(opts: { apiKey: string; model: string }): DraftDeps['writeScript'] {
@@ -100,8 +137,9 @@ export function anthropicScriptWriter(opts: { apiKey: string; model: string }): 
       body: JSON.stringify({
         model: opts.model,
         max_tokens: 16000,
-        output_config: { effort: 'medium' },
-        system: systemPrompt(input.dialect),
+        // Structured output: the Script plus the product terms the check holds it to.
+        output_config: { effort: 'medium', format: { type: 'json_schema', schema: SCRIPT_OUTPUT_SCHEMA } },
+        system: systemPrompt(input.dialect, { deliveryTags: input.delivery_tags }),
         messages: [{ role: 'user', content: userPrompt(input) }],
       }),
       signal: AbortSignal.timeout(90_000),
@@ -115,13 +153,11 @@ export function anthropicScriptWriter(opts: { apiKey: string; model: string }): 
     if (data.stop_reason === 'refusal') {
       throw new DraftError(422, 'BRIEF_REFUSED', 'This Brief cannot be turned into an ad Script. Rephrase the Brief.');
     }
-    const script = (data.content ?? [])
+    const text = (data.content ?? [])
       .filter((b) => b.type === 'text' && typeof b.text === 'string')
       .map((b) => b.text)
-      .join('')
-      .replace(/\s+/g, ' ')
-      .trim();
-    return { script, model: opts.model };
+      .join('');
+    return { ...parseWriterReply(text), model: opts.model };
   };
 }
 
@@ -232,6 +268,7 @@ export function productionDraftDeps(supabase: SupabaseClient): { deps: DraftDeps
   const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
   const elevenKey = process.env.ELEVENLABS_API_KEY?.trim();
   const storageReady = isPrivateStorageConfigured();
+  const ttsModel = process.env.PRODUCT_HERO_TTS_MODEL?.trim() || 'eleven_v3';
   const providersMissing = [
     !anthropicKey && 'ANTHROPIC_API_KEY',
     !elevenKey && 'ELEVENLABS_API_KEY',
@@ -256,10 +293,11 @@ export function productionDraftDeps(supabase: SupabaseClient): { deps: DraftDeps
         elevenKey && storageReady
           ? elevenLabsVoicer({
               apiKey: elevenKey,
-              modelId: process.env.PRODUCT_HERO_TTS_MODEL?.trim() || 'eleven_v3',
+              modelId: ttsModel,
               apiBase: process.env.ELEVENLABS_API_BASE?.trim() || undefined,
             })
           : unconfigured,
+      ttsModel,
       storeAudio: r2DraftAudioStore,
       signAudioUrl: r2DraftAudioSigner,
       repo: supabaseDraftRepo(supabase),
