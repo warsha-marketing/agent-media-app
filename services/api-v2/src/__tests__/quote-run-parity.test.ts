@@ -54,6 +54,12 @@ describe('make_product_hero quote == charge (invariant 9)', () => {
     }
   });
 
+  it('fails closed without a priceable duration: rejects, never quotes 0', () => {
+    for (const input of [{}, { duration_ms: null }, { duration_ms: 'x' }, { duration_ms: 4_999 }, { duration_ms: 15_001 }]) {
+      expect(() => quoteSkillCredits('make_product_hero', input)).toThrow(RangeError);
+    }
+  });
+
   it('quote and run validate with the same schema (9:16 only, one photo)', () => {
     const base = { draft_id: '00000000-0000-4000-8000-000000000001', product_image_url: 'https://x.test/p.png' };
     expect(MakeProductHeroSkillInputSchema.safeParse(base).success).toBe(true);

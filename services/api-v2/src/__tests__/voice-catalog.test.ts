@@ -29,6 +29,7 @@ import {
   type VoiceRow,
 } from '../voices/catalog.js';
 import { normalizeCandidate, safeSampleUrl, suggestedDialect } from '../voices/candidates.js';
+import { adminEmailOperatorCheck } from '../voices/providers.js';
 import type { DraftDeps, DraftRow } from '../drafts/product-hero-draft.js';
 
 // ── Fakes ────────────────────────────────────────────────────────────────────
@@ -525,5 +526,35 @@ describe('voice routes in the OpenAPI spec', () => {
   it('drafting no longer depends on a single pre-configured voice', () => {
     const providers = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'drafts/providers.ts'), 'utf8');
     expect(providers).not.toContain('PRODUCT_HERO_VOICE_ID');
+  });
+});
+
+// ── Who is an operator (the real check, over a fake auth admin API) ──────────
+
+describe('adminEmailOperatorCheck', () => {
+  const users: Record<string, { email?: string; email_confirmed_at?: string | null }> = {
+    confirmed: { email: 'Ops@Example.com', email_confirmed_at: '2026-09-01T00:00:00Z' },
+    unconfirmed: { email: 'ops@example.com', email_confirmed_at: null },
+    stranger: { email: 'someone@example.com', email_confirmed_at: '2026-09-01T00:00:00Z' },
+  };
+  const fakeAuth = {
+    auth: {
+      admin: {
+        getUserById: async (id: string) => ({ data: { user: users[id] ?? null }, error: null }),
+      },
+    },
+  } as unknown as Parameters<typeof adminEmailOperatorCheck>[0];
+
+  it('accepts only an allowlisted email that the user has confirmed', async () => {
+    const isOperator = adminEmailOperatorCheck(fakeAuth, ' ops@example.com , other@example.com');
+    expect(await isOperator('confirmed')).toBe(true);
+    // Signing up with an operator's address must not grant operator rights.
+    expect(await isOperator('unconfirmed')).toBe(false);
+    expect(await isOperator('stranger')).toBe(false);
+    expect(await isOperator('nobody')).toBe(false);
+  });
+
+  it('grants nobody when ADMIN_EMAILS is empty', async () => {
+    expect(await adminEmailOperatorCheck(fakeAuth, '')('confirmed')).toBe(false);
   });
 });

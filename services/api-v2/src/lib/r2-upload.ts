@@ -27,8 +27,9 @@ interface R2Env {
   accessKeyId: string;
   secretAccessKey: string;
   bucket: string;
-  /** Bucket for objects that must never be publicly readable (draft audio). */
-  privateBucket: string;
+  /** Bucket for objects that must never be publicly readable (draft audio);
+   *  null when R2_PRIVATE_BUCKET is unset — there is no fallback. */
+  privateBucket: string | null;
   /** Public URL prefix, without a trailing slash. */
   publicUrl: string;
 }
@@ -58,10 +59,9 @@ function readEnv(): R2Env {
     secretAccessKey: secretAccessKey!,
     bucket: process.env.R2_BUCKET || 'agent-media-outputs',
     // R2 grants public access per bucket, not per object, so an object is only
-    // really private in a bucket with public access off. Unset → the main
-    // bucket, where a private object is still reachable by anyone who learns
-    // its key (the key is unguessable and never leaves the server).
-    privateBucket: process.env.R2_PRIVATE_BUCKET?.trim() || process.env.R2_BUCKET || 'agent-media-outputs',
+    // really private in a bucket with public access off. FAILS CLOSED: unset
+    // means private storage is unavailable, never "use the public bucket".
+    privateBucket: process.env.R2_PRIVATE_BUCKET?.trim() || null,
     publicUrl: (
       process.env.R2_PUBLIC_URL ||
       'https://pub-16e2ed8f6be84691845e91436920ce0a.r2.dev'
@@ -97,6 +97,26 @@ export function getR2PublicUrlPrefix(): string {
   return readEnv().publicUrl;
 }
 
+/** Private storage was asked for but R2_PRIVATE_BUCKET is not configured. */
+export class PrivateStorageUnconfiguredError extends Error {
+  readonly code = 'DRAFT_STORAGE_UNCONFIGURED';
+  constructor() {
+    super('Private storage is not configured: set R2_PRIVATE_BUCKET to a bucket with public access off.');
+    this.name = 'PrivateStorageUnconfiguredError';
+  }
+}
+
+/** True when R2_PRIVATE_BUCKET is set (without touching the other R2 env). */
+export function isPrivateStorageConfigured(): boolean {
+  return Boolean(process.env.R2_PRIVATE_BUCKET?.trim());
+}
+
+function privateBucketOrThrow(): string {
+  const bucket = readEnv().privateBucket;
+  if (!bucket) throw new PrivateStorageUnconfiguredError();
+  return bucket;
+}
+
 /**
  * Store server-produced bytes (not user uploads: no sniffing or moderation
  * applies) under `key` in the private bucket. Nothing public points at it:
@@ -104,8 +124,8 @@ export function getR2PublicUrlPrefix(): string {
  * Used for draft voice audio.
  */
 export async function putPrivateObject(key: string, body: Buffer, contentType: string): Promise<void> {
-  const env = readEnv();
-  await getClient().send(new PutObjectCommand({ Bucket: env.privateBucket, Key: key, Body: body, ContentType: contentType }));
+  const bucket = privateBucketOrThrow();
+  await getClient().send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }));
 }
 
 /** A read capability for one private object, minted per request. */
@@ -116,11 +136,11 @@ export interface SignedGet {
 
 /** Sign a GET for one private object, valid for `ttlSeconds`. */
 export async function presignPrivateGet(key: string, ttlSeconds: number): Promise<SignedGet> {
-  const env = readEnv();
+  const bucket = privateBucketOrThrow();
   const url = await getSignedUrl(
     // Same version-skew cast as presignUpload() below.
     getPresignClient() as unknown as Parameters<typeof getSignedUrl>[0],
-    new GetObjectCommand({ Bucket: env.privateBucket, Key: key }) as unknown as Parameters<typeof getSignedUrl>[1],
+    new GetObjectCommand({ Bucket: bucket, Key: key }) as unknown as Parameters<typeof getSignedUrl>[1],
     { expiresIn: ttlSeconds },
   );
   return { url, expires_at: new Date(Date.now() + ttlSeconds * 1000).toISOString() };

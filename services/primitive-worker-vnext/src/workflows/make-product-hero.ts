@@ -60,7 +60,7 @@ const MAX_CUT_DRIFT_MS = 50;
 const NON_RETRYABLE = [
   'INVALID_INPUT', 'BUDGET_CAP_DAY',
   'REFERENCE_URL_NOT_ALLOWED', 'PROVIDER_UNCONFIGURED', 'INSUFFICIENT_CREDITS',
-  'DRAFT_AUDIO_MISSING',
+  'DRAFT_AUDIO_MISSING', 'DRAFT_STORAGE_UNCONFIGURED',
   // A moderation verdict is final; resubmitting is another paid render of a
   // photo that will be refused again.
   'EVOLINK_CONTENT_POLICY_VIOLATION',

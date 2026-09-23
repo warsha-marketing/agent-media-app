@@ -46,8 +46,9 @@ export interface WorkerConfig {
     secretAccessKey: string;
     bucket: string;
     /** Bucket with public access OFF, for objects only the server may read
-     *  (draft voice audio). Defaults to `bucket`, as in api-v2. */
-    privateBucket: string;
+     *  (draft voice audio). null when R2_PRIVATE_BUCKET is unset: there is no
+     *  fallback to the public `bucket`, and reading draft audio then fails. */
+    privateBucket: string | null;
     publicUrl: string;
   };
   supabase: {
@@ -73,6 +74,15 @@ function readNumber(name: string, fallback: number): number {
   if (!raw) return fallback;
   const n = Number.parseFloat(raw);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * R2_PRIVATE_BUCKET, or null. Must name the same bucket as api-v2's (it writes
+ * the draft audio this worker reads by key). Fails closed like api-v2: unset
+ * never means "use the public R2_BUCKET".
+ */
+export function privateBucketFromEnv(): string | null {
+  return optional('R2_PRIVATE_BUCKET') ?? null;
 }
 
 export function getConfig(): WorkerConfig {
@@ -115,9 +125,7 @@ export function getConfig(): WorkerConfig {
       accessKeyId: required('R2_ACCESS_KEY_ID'),
       secretAccessKey: required('R2_SECRET_ACCESS_KEY'),
       bucket: optional('R2_BUCKET') ?? 'agent-media-outputs',
-      // Same resolution as api-v2's r2-upload readEnv(): the draft audio api-v2
-      // writes privately is read back here by key, so both must agree.
-      privateBucket: optional('R2_PRIVATE_BUCKET') ?? optional('R2_BUCKET') ?? 'agent-media-outputs',
+      privateBucket: privateBucketFromEnv(),
       publicUrl: optional('R2_PUBLIC_URL') ?? 'https://pub-16e2ed8f6be84691845e91436920ce0a.r2.dev',
     },
     supabase: {

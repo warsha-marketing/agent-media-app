@@ -8,8 +8,8 @@ export interface R2Config {
   secretAccessKey: string;
   bucket: string;
   /** Private bucket (see WorkerConfig.r2.privateBucket). Required only by
-   *  r2GetPrivateObject. */
-  privateBucket?: string;
+   *  r2GetPrivateObject, which never falls back to `bucket`. */
+  privateBucket?: string | null;
   publicUrl: string;
 }
 
@@ -68,9 +68,12 @@ export async function r2UploadVnext(
  * Returns null when the key does not exist.
  */
 export async function r2GetPrivateObject(cfg: R2Config, key: string): Promise<Buffer | null> {
+  if (!cfg.privateBucket) {
+    throw new Error('private storage is not configured: set R2_PRIVATE_BUCKET (never read from the public bucket)');
+  }
   try {
     const out = await getClient(cfg).send(
-      new GetObjectCommand({ Bucket: cfg.privateBucket ?? cfg.bucket, Key: key }),
+      new GetObjectCommand({ Bucket: cfg.privateBucket, Key: key }),
     );
     if (!out.Body) return null;
     return Buffer.from(await out.Body.transformToByteArray());

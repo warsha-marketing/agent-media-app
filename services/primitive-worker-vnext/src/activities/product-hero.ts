@@ -72,6 +72,13 @@ async function probeSeconds(path: string, stream?: 'a:0' | 'v:0'): Promise<numbe
 }
 
 async function readDraftAudio(cfg: WorkerConfig, key: string): Promise<Buffer> {
+  if (!cfg.r2.privateBucket) {
+    // Retrying cannot configure a bucket; fail the render (and refund) now.
+    throw ApplicationFailure.nonRetryable(
+      'draft audio storage is not configured on this worker: set R2_PRIVATE_BUCKET (the same bucket as api-v2)',
+      'DRAFT_STORAGE_UNCONFIGURED',
+    );
+  }
   const bytes = await r2GetPrivateObject(cfg.r2, key);
   if (!bytes || bytes.byteLength < 256) {
     throw ApplicationFailure.nonRetryable(`draft audio ${key} is missing or empty`, 'DRAFT_AUDIO_MISSING');

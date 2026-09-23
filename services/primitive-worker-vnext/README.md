@@ -60,8 +60,10 @@ own budget for the whole render (`PRODUCT_HERO.budget` in `@agentmedia/schema`),
 and its shot plan is held to it by tests. The day cap still applies. Every
 other activity keeps the per-primitive cap.
 
-`R2_PRIVATE_BUCKET` (default `R2_BUCKET`) must match api-v2's: the Product Hero
-render reads the draft's private audio from it by key.
+`R2_PRIVATE_BUCKET` is required for Product Hero and must match api-v2's: the
+render reads the draft's private audio from it by key. It never falls back to
+`R2_BUCKET`; unset, a render fails with `DRAFT_STORAGE_UNCONFIGURED`
+(non-retryable, refunded).
 
 ## Simulate mode
 

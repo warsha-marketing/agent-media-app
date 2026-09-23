@@ -8,7 +8,8 @@
  * Operators are the ADMIN_EMAILS allowlist, the same comma-separated env the web
  * admin panel (apps/web/lib/admin-allowlist.ts) already uses. api-v2 only knows
  * a user id after auth, so the check looks up that user's email with the auth
- * admin API. Empty ADMIN_EMAILS = nobody is an operator (fail closed).
+ * admin API, and counts it only once the user has confirmed that address.
+ * Empty ADMIN_EMAILS = nobody is an operator (fail closed).
  *
  * Env: ADMIN_EMAILS, ELEVENLABS_API_KEY (candidate search only), ELEVENLABS_API_BASE.
  */
@@ -80,8 +81,11 @@ export function adminEmailOperatorCheck(supabase: SupabaseClient, adminEmails = 
     if (allow.size === 0 || !userId) return false;
     const { data, error } = await supabase.auth.admin.getUserById(userId);
     if (error) throw new Error(`operator check: ${error.message}`);
-    const email = data?.user?.email?.toLowerCase();
-    return !!email && allow.has(email);
+    // Only a CONFIRMED address counts: anyone can sign up with an operator's
+    // email, and must not become an operator before proving they own it.
+    const user = data?.user;
+    const email = user?.email?.toLowerCase();
+    return !!email && !!user?.email_confirmed_at && allow.has(email);
   };
 }
 

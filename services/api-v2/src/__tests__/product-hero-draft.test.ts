@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerDraftRoutes, draftOpenApi } from '../routes/v1/drafts.js';
+import { productionDraftDeps } from '../drafts/providers.js';
 import {
   CreateDraftInputSchema,
   RevoiceDraftInputSchema,
@@ -73,7 +74,7 @@ afterEach(async () => {
 });
 
 /** @param durations ms of speech the fake voice returns, one per voicing, in order. */
-async function start(opts: { durations: number[]; scripts?: string[] }): Promise<Harness> {
+async function start(opts: { durations: number[]; scripts?: string[]; override?: Partial<DraftDeps> }): Promise<Harness> {
   const rows: DraftRow[] = [];
   const calls = { write: [] as Array<Record<string, unknown>>, voice: [] as string[], store: [] as string[], sign: [] as string[] };
   const durations = [...opts.durations];
@@ -128,6 +129,7 @@ async function start(opts: { durations: number[]; scripts?: string[] }): Promise
           : null,
     },
     newId: () => `00000000-0000-4000-8000-${String(++seq).padStart(12, '0')}`,
+    ...opts.override,
   };
 
   const app = express();
@@ -455,6 +457,52 @@ describe('draft audio storage', () => {
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();
+    }
+  });
+
+  it('never falls back to the public bucket: without R2_PRIVATE_BUCKET it refuses to store or sign', async () => {
+    vi.resetModules();
+    vi.stubEnv('R2_ACCESS_KEY_ID', 'AKIATEST');
+    vi.stubEnv('R2_SECRET_ACCESS_KEY', 'secret');
+    vi.stubEnv('S3_ENDPOINT', 'https://s3.example.test');
+    vi.stubEnv('R2_BUCKET', 'public-outputs');
+    vi.stubEnv('R2_PRIVATE_BUCKET', '');
+    try {
+      const { presignPrivateGet, putPrivateObject } = await import('../lib/r2-upload.js');
+      const refused = expect.objectContaining({ code: 'DRAFT_STORAGE_UNCONFIGURED' });
+      await expect(presignPrivateGet('vnext/drafts/user-a/d1.mp3', 900)).rejects.toEqual(refused);
+      await expect(putPrivateObject('vnext/drafts/user-a/d1.mp3', Buffer.from('x'), 'audio/mpeg')).rejects.toEqual(refused);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it('drafting answers 503 DRAFT_STORAGE_UNCONFIGURED without a private bucket, before any provider is paid', async () => {
+    // productionDraftDeps reads the env when called; it is imported statically
+    // so its DraftError is the one the route recognises.
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
+    vi.stubEnv('ELEVENLABS_API_KEY', 'test-key');
+    vi.stubEnv('R2_BUCKET', 'public-outputs');
+    vi.stubEnv('R2_PRIVATE_BUCKET', '');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      const { deps: prod, missing } = productionDraftDeps({} as never);
+      expect(missing).toContain('R2_PRIVATE_BUCKET');
+      const h = await start({
+        durations: [8000],
+        override: { writeScript: prod.writeScript, voiceScript: prod.voiceScript, storeAudio: prod.storeAudio },
+      });
+      fetchSpy.mockClear();
+      const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Cold brew promo', dialect: 'levantine', voice_id: VOICE });
+      expect(r.status).toBe(503);
+      expect(r.body.error.code).toBe('DRAFT_STORAGE_UNCONFIGURED');
+      // Only the test's own request went out: no Claude, no ElevenLabs.
+      expect(fetchSpy.mock.calls.map((c) => String(c[0]))).toEqual([expect.stringContaining('/v1/drafts/product-hero')]);
+      expect(h.rows).toHaveLength(0);
+    } finally {
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
     }
   });
 

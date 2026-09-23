@@ -129,7 +129,9 @@ const DRAFT_ERRORS = {
   '404': draftError('NOT_FOUND: no such draft on this account'),
   '429': draftError('RATE_LIMITED: per-user draft ceiling'),
   '502': draftError('DRAFT_FAILED / SCRIPT_GENERATION_FAILED: an upstream provider failed; retryable'),
-  '503': draftError('DRAFTING_UNCONFIGURED: this server lacks a provider key'),
+  '503': draftError(
+    'DRAFTING_UNCONFIGURED: this server lacks a provider key / DRAFT_STORAGE_UNCONFIGURED: no private bucket (R2_PRIVATE_BUCKET) for draft audio',
+  ),
 };
 
 /** Paths and component schemas for the draft routes, merged into /openapi.json by server.ts. */

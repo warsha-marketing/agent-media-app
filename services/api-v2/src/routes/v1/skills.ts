@@ -198,7 +198,14 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     res.status(200).json({ slug, credits: 0, available: null, committed: 0, sufficient: true });
     return;
   }
-  const credits = quoteSkillCredits(slug, input);
+  let credits: number;
+  try {
+    credits = quoteSkillCredits(slug, input);
+  } catch (err) {
+    // Pricing fails closed: an input it cannot price is refused, never quoted 0.
+    res.status(422).json({ error: 'unpriceable_input', skill: slug, detail: errorMessage(err) });
+    return;
+  }
 
   let available: number | null = null;
   const { data } = await supabase

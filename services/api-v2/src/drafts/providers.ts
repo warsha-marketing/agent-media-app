@@ -18,11 +18,18 @@
  *   ELEVENLABS_API_KEY           (existing)
  *   ELEVENLABS_API_BASE          (existing, optional)
  *   PRODUCT_HERO_TTS_MODEL       ElevenLabs model (default eleven_v3, as media-worker-v2)
- *   R2_PRIVATE_BUCKET            bucket without public access for the audio (default R2_BUCKET)
+ *   R2_PRIVATE_BUCKET            REQUIRED bucket without public access for the audio. Unset →
+ *                                drafting answers 503 DRAFT_STORAGE_UNCONFIGURED; the audio is
+ *                                never written to the public R2_BUCKET instead.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { presignPrivateGet, putPrivateObject } from '../lib/r2-upload.js';
+import {
+  PrivateStorageUnconfiguredError,
+  isPrivateStorageConfigured,
+  presignPrivateGet,
+  putPrivateObject,
+} from '../lib/r2-upload.js';
 import {
   DraftError,
   MAX_SPEECH_MS,
@@ -167,17 +174,36 @@ export function elevenLabsVoicer(opts: {
 
 // ── Storage + table ──────────────────────────────────────────────────────────
 
-export const r2DraftAudioStore: DraftDeps['storeAudio'] = async ({ userId, draftId, audio, mime }) => {
-  // Same per-user namespace convention as uploads; the draft id makes it unguessable.
-  const key = `vnext/drafts/${userId}/${draftId}.mp3`;
-  await putPrivateObject(key, audio, mime);
-  return { key };
-};
+const storageUnconfigured = () =>
+  new DraftError(
+    503,
+    'DRAFT_STORAGE_UNCONFIGURED',
+    'Draft audio storage is not configured on this server (set R2_PRIVATE_BUCKET to a bucket with public access off).',
+  );
+
+/** Map the storage layer's fail-closed refusal onto the draft API's code. */
+async function privately<T>(op: () => Promise<T>): Promise<T> {
+  try {
+    return await op();
+  } catch (err) {
+    if (err instanceof PrivateStorageUnconfiguredError) throw storageUnconfigured();
+    throw err;
+  }
+}
+
+export const r2DraftAudioStore: DraftDeps['storeAudio'] = ({ userId, draftId, audio, mime }) =>
+  privately(async () => {
+    // Same per-user namespace convention as uploads; the draft id makes it unguessable.
+    const key = `vnext/drafts/${userId}/${draftId}.mp3`;
+    await putPrivateObject(key, audio, mime);
+    return { key };
+  });
 
 /** Long enough to listen and re-listen; the page re-reads the draft when it lapses. */
 export const DRAFT_AUDIO_URL_TTL_SECONDS = 15 * 60;
 
-export const r2DraftAudioSigner: DraftDeps['signAudioUrl'] = (key) => presignPrivateGet(key, DRAFT_AUDIO_URL_TTL_SECONDS);
+export const r2DraftAudioSigner: DraftDeps['signAudioUrl'] = (key) =>
+  privately(() => presignPrivateGet(key, DRAFT_AUDIO_URL_TTL_SECONDS));
 
 const TABLE = 'short_drafts';
 
@@ -205,24 +231,29 @@ export function supabaseDraftRepo(supabase: SupabaseClient): DraftDeps['repo'] {
 export function productionDraftDeps(supabase: SupabaseClient): { deps: DraftDeps; missing: string[] } {
   const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
   const elevenKey = process.env.ELEVENLABS_API_KEY?.trim();
-  const missing = [
+  const storageReady = isPrivateStorageConfigured();
+  const providersMissing = [
     !anthropicKey && 'ANTHROPIC_API_KEY',
     !elevenKey && 'ELEVENLABS_API_KEY',
   ].filter(Boolean) as string[];
+  const missing = [...providersMissing, ...(storageReady ? [] : ['R2_PRIVATE_BUCKET'])];
   const unconfigured = async (): Promise<never> => {
-    throw new DraftError(503, 'DRAFTING_UNCONFIGURED', `Drafting is not configured on this server (missing ${missing.join(', ')}).`);
+    if (providersMissing.length === 0) throw storageUnconfigured();
+    throw new DraftError(503, 'DRAFTING_UNCONFIGURED', `Drafting is not configured on this server (missing ${providersMissing.join(', ')}).`);
   };
   return {
     missing,
     deps: {
-      writeScript: anthropicKey
+      // Without private storage nothing is paid for: the first provider call
+      // already refuses, so no Script is written or voiced only to be dropped.
+      writeScript: anthropicKey && storageReady
         ? anthropicScriptWriter({
             apiKey: anthropicKey,
             model: process.env.PRODUCT_HERO_SCRIPT_MODEL?.trim() || 'claude-opus-5-5',
           })
         : unconfigured,
       voiceScript:
-        elevenKey
+        elevenKey && storageReady
           ? elevenLabsVoicer({
               apiKey: elevenKey,
               modelId: process.env.PRODUCT_HERO_TTS_MODEL?.trim() || 'eleven_v3',

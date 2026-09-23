@@ -186,14 +186,13 @@ export function quoteSkillCredits(
       // duration_ms on the input before quoting; the skill_runs row stores it
       // so the in-flight reservation prices the run identically. The audio
       // fetch and the mux are free.
-      const ms = Number((i as { duration_ms?: unknown }).duration_ms);
-      try {
-        return quoteProductHeroCredits(ms);
-      } catch {
-        // No (or an out-of-contract) duration: unpriceable — the route refuses
-        // such a draft before it ever reaches a preflight.
-        return 0;
-      }
+      //
+      // FAILS CLOSED: without a duration in the 5–15 s contract there is no
+      // plan to price, and a render is never free — so this throws (RangeError)
+      // rather than quoting 0. The routes resolve the draft first, so only a
+      // bug reaches this; the quote route answers it with 422 unpriceable_input.
+      const raw = (i as { duration_ms?: unknown }).duration_ms;
+      return quoteProductHeroCredits(typeof raw === 'number' ? raw : Number.NaN);
     }
     case 'make_ugc_video': {
       // Portrait + character sheet are free inside a video — only the selfie (and
