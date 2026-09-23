@@ -6,12 +6,17 @@
  * (read back through short-lived signed URLs), Supabase keeps the draft row.
  * Wired in server.ts; the route tests use fakes instead.
  *
+ * The Voice is no longer configured here: each draft names an Approved Voice
+ * from the catalog (voices/, #7), and the voicer speaks with that Voice's
+ * provider id. A fresh environment has no Approved Voices, so drafting refuses
+ * every request with VOICE_NOT_APPROVED until an operator adds and approves one
+ * (POST /v1/operator/voices, then /approve; see routes/v1/voices.ts).
+ *
  * Env:
  *   ANTHROPIC_API_KEY            (existing)
  *   PRODUCT_HERO_SCRIPT_MODEL    Claude model for Script writing (default claude-opus-5-5)
  *   ELEVENLABS_API_KEY           (existing)
  *   ELEVENLABS_API_BASE          (existing, optional)
- *   PRODUCT_HERO_VOICE_ID        the one pre-configured Voice until the catalog (#7)
  *   PRODUCT_HERO_TTS_MODEL       ElevenLabs model (default eleven_v3, as media-worker-v2)
  *   R2_PRIVATE_BUCKET            bucket without public access for the audio (default R2_BUCKET)
  */
@@ -31,6 +36,7 @@ import {
   type WriteScriptInput,
 } from './product-hero-draft.js';
 import { randomUUID } from 'node:crypto';
+import { supabaseVoiceRepo } from '../voices/providers.js';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -116,14 +122,14 @@ export function anthropicScriptWriter(opts: { apiKey: string; model: string }): 
 
 export function elevenLabsVoicer(opts: {
   apiKey: string;
-  voiceId: string;
   modelId: string;
   apiBase?: string;
 }): DraftDeps['voiceScript'] {
   const base = (opts.apiBase ?? 'https://api.elevenlabs.io/v1').replace(/\/+$/, '');
-  return async ({ script }): Promise<VoicedScript> => {
+  return async ({ script, voice }): Promise<VoicedScript> => {
+    if (voice.provider !== 'elevenlabs') throw new Error(`voice provider ${voice.provider} is not supported`);
     const resp = await fetch(
-      `${base}/text-to-speech/${encodeURIComponent(opts.voiceId)}/with-timestamps?output_format=mp3_44100_128`,
+      `${base}/text-to-speech/${encodeURIComponent(voice.provider_voice_id)}/with-timestamps?output_format=mp3_44100_128`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'xi-api-key': opts.apiKey },
@@ -153,7 +159,7 @@ export function elevenLabsVoicer(opts: {
         character_end_times_seconds: alignment.character_end_times_seconds,
       },
       provider: 'elevenlabs',
-      voiceId: opts.voiceId,
+      voiceId: voice.provider_voice_id,
       ttsModel: opts.modelId,
     };
   };
@@ -199,11 +205,9 @@ export function supabaseDraftRepo(supabase: SupabaseClient): DraftDeps['repo'] {
 export function productionDraftDeps(supabase: SupabaseClient): { deps: DraftDeps; missing: string[] } {
   const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
   const elevenKey = process.env.ELEVENLABS_API_KEY?.trim();
-  const voiceId = process.env.PRODUCT_HERO_VOICE_ID?.trim();
   const missing = [
     !anthropicKey && 'ANTHROPIC_API_KEY',
     !elevenKey && 'ELEVENLABS_API_KEY',
-    !voiceId && 'PRODUCT_HERO_VOICE_ID',
   ].filter(Boolean) as string[];
   const unconfigured = async (): Promise<never> => {
     throw new DraftError(503, 'DRAFTING_UNCONFIGURED', `Drafting is not configured on this server (missing ${missing.join(', ')}).`);
@@ -218,10 +222,9 @@ export function productionDraftDeps(supabase: SupabaseClient): { deps: DraftDeps
           })
         : unconfigured,
       voiceScript:
-        elevenKey && voiceId
+        elevenKey
           ? elevenLabsVoicer({
               apiKey: elevenKey,
-              voiceId,
               modelId: process.env.PRODUCT_HERO_TTS_MODEL?.trim() || 'eleven_v3',
               apiBase: process.env.ELEVENLABS_API_BASE?.trim() || undefined,
             })
@@ -229,6 +232,7 @@ export function productionDraftDeps(supabase: SupabaseClient): { deps: DraftDeps
       storeAudio: r2DraftAudioStore,
       signAudioUrl: r2DraftAudioSigner,
       repo: supabaseDraftRepo(supabase),
+      voices: supabaseVoiceRepo(supabase),
       newId: () => randomUUID(),
     },
   };

@@ -61,6 +61,8 @@ import {
 import { registerToolingMarketplaceRoutes } from './routes/v1/tooling-marketplace-routes.js';
 import { registerDraftRoutes, draftOpenApi } from './routes/v1/drafts.js';
 import { productionDraftDeps } from './drafts/providers.js';
+import { registerVoiceRoutes, voiceOpenApi } from './routes/v1/voices.js';
+import { productionVoiceDeps } from './voices/providers.js';
 import {
   isPrimitivesRouteEnabled,
   portraitGpt2PrimitiveRoute,
@@ -706,6 +708,9 @@ function buildOpenApiSpec() {
   // they validate with, so the spec cannot drift from what the server accepts.
   const draftSpec = draftOpenApi();
   Object.assign(paths, draftSpec.paths);
+  // Voice catalog (#7): the picker and the operator approve/revoke routes.
+  const voiceSpec = voiceOpenApi();
+  Object.assign(paths, voiceSpec.paths);
   // ── The loose surface (P2/P3) — what the MCP connector exposes ────────
   // Same zod as the routes and the tools, so the spec cannot describe a
   // field the server does not accept.
@@ -827,6 +832,7 @@ function buildOpenApiSpec() {
           required: ['actor'],
         },
         ...draftSpec.schemas,
+        ...voiceSpec.schemas,
       },
     },
   };
@@ -936,6 +942,10 @@ const draftLimiter = rateLimit({
   if (missing.length) logger.warn({ missing }, 'Product Hero drafting unconfigured; draft routes will answer 503');
   registerDraftRoutes(app, { generateLimiter, readLimiter, authMiddleware, draftLimiter }, deps);
 }
+
+// ── Voice catalog (#7): Approved Voices per Dialect ────────────────────────
+// Users list Approved Voices; operators (ADMIN_EMAILS) add, approve and revoke.
+registerVoiceRoutes(app, { generateLimiter, readLimiter, authMiddleware }, productionVoiceDeps(supabase));
 
 // ── vNext primitive routes (feature-flagged off by default) ────────────────
 // Enabled when VNEXT_PRIMITIVES_ENABLED=true. Dispatches to a fresh

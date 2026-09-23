@@ -40,6 +40,9 @@ function silentMp3(ms: number): Buffer {
   return Buffer.concat(Array.from({ length: frames }, () => frame));
 }
 
+/** The one Approved (Levantine) Voice in the fake catalog; see voice-catalog.test.ts for the catalog itself. */
+const VOICE = '10000000-0000-4000-8000-000000000001';
+
 const SCRIPT_A = 'هَيْدا المُنْتَجْ رَحْ يْغَيِّرْ يومَكْ';
 const SCRIPT_B = 'جَرِّبُو هَلَّقْ وْشُوفْ الفَرِقْ بْعَيْنَكْ';
 
@@ -82,15 +85,15 @@ async function start(opts: { durations: number[]; scripts?: string[] }): Promise
       calls.write.push(input as unknown as Record<string, unknown>);
       return { script: scripts.shift() ?? SCRIPT_A, model: 'claude-test' };
     },
-    voiceScript: async ({ script }) => {
+    voiceScript: async ({ script, voice }) => {
       calls.voice.push(script);
       const ms = durations.shift() ?? 8000;
       return {
         audio: silentMp3(ms),
         mime: 'audio/mpeg',
         alignment: alignmentFor(script, ms),
-        provider: 'fake-voice',
-        voiceId: 'voice-test',
+        provider: voice.provider,
+        voiceId: voice.provider_voice_id,
         ttsModel: 'eleven_test',
       };
     },
@@ -113,6 +116,16 @@ async function start(opts: { durations: number[]; scripts?: string[] }): Promise
         return saved;
       },
       getOwned: async (id, userId) => rows.find((r) => r.id === id && r.user_id === userId) ?? null,
+    },
+    voices: {
+      get: async (id) =>
+        id === VOICE
+          ? {
+              id: VOICE, provider: 'fake-voice', provider_voice_id: 'voice-test', display_name: 'Test', dialect: 'levantine',
+              gender: 'female', style: 'warm', sample_url: 'https://samples.test/v.mp3', state: 'approved', added_by: 'op',
+              created_at: '2026-09-23T00:00:00Z', approved_by: 'op', approved_at: '2026-09-23T00:00:00Z', revoked_by: null, revoked_at: null,
+            }
+          : null,
     },
     newId: () => `00000000-0000-4000-8000-${String(++seq).padStart(12, '0')}`,
   };
@@ -160,26 +173,26 @@ async function call(h: Harness, method: string, path: string, user: string | nul
 
 describe('draft input schema', () => {
   it('accepts a Brief in any language with the Levantine Dialect', () => {
-    expect(CreateDraftInputSchema.safeParse({ brief: 'Promo for our new cold brew', dialect: 'levantine' }).success).toBe(true);
-    expect(CreateDraftInputSchema.safeParse({ brief: 'إعلان لقهوة باردة جديدة', dialect: 'levantine' }).success).toBe(true);
+    expect(CreateDraftInputSchema.safeParse({ brief: 'Promo for our new cold brew', dialect: 'levantine', voice_id: VOICE }).success).toBe(true);
+    expect(CreateDraftInputSchema.safeParse({ brief: 'إعلان لقهوة باردة جديدة', dialect: 'levantine', voice_id: VOICE }).success).toBe(true);
   });
 
   it('knows Gulf as a Dialect (so it can be enabled later) but not arbitrary strings', () => {
-    expect(CreateDraftInputSchema.safeParse({ brief: 'Promo', dialect: 'gulf' }).success).toBe(true);
+    expect(CreateDraftInputSchema.safeParse({ brief: 'Promo', dialect: 'gulf', voice_id: VOICE }).success).toBe(true);
     expect(CreateDraftInputSchema.safeParse({ brief: 'Promo', dialect: 'french' }).success).toBe(false);
   });
 
   it('rejects an empty, missing or oversized Brief and unknown fields', () => {
-    expect(CreateDraftInputSchema.safeParse({ brief: '   ', dialect: 'levantine' }).success).toBe(false);
-    expect(CreateDraftInputSchema.safeParse({ dialect: 'levantine' }).success).toBe(false);
-    expect(CreateDraftInputSchema.safeParse({ brief: 'x'.repeat(2001), dialect: 'levantine' }).success).toBe(false);
+    expect(CreateDraftInputSchema.safeParse({ brief: '   ', dialect: 'levantine', voice_id: VOICE }).success).toBe(false);
+    expect(CreateDraftInputSchema.safeParse({ dialect: 'levantine', voice_id: VOICE }).success).toBe(false);
+    expect(CreateDraftInputSchema.safeParse({ brief: 'x'.repeat(2001), dialect: 'levantine', voice_id: VOICE }).success).toBe(false);
     expect(CreateDraftInputSchema.safeParse({ brief: 'Promo', dialect: 'levantine', model: 'x' }).success).toBe(false);
   });
 
   it('re-voice takes the edited Script, bounded in length', () => {
-    expect(RevoiceDraftInputSchema.safeParse({ script: SCRIPT_A, dialect: 'levantine' }).success).toBe(true);
-    expect(RevoiceDraftInputSchema.safeParse({ script: '', dialect: 'levantine' }).success).toBe(false);
-    expect(RevoiceDraftInputSchema.safeParse({ script: 'ب'.repeat(601), dialect: 'levantine' }).success).toBe(false);
+    expect(RevoiceDraftInputSchema.safeParse({ script: SCRIPT_A, dialect: 'levantine', voice_id: VOICE }).success).toBe(true);
+    expect(RevoiceDraftInputSchema.safeParse({ script: '', dialect: 'levantine', voice_id: VOICE }).success).toBe(false);
+    expect(RevoiceDraftInputSchema.safeParse({ script: 'ب'.repeat(601), dialect: 'levantine', voice_id: VOICE }).success).toBe(false);
     expect(RevoiceDraftInputSchema.safeParse({ script: SCRIPT_A, dialect: 'levantine', parent_draft_id: 'nope' }).success).toBe(false);
   });
 });
@@ -202,13 +215,13 @@ describe('mp3DurationMs', () => {
 describe('POST /v1/drafts/product-hero', () => {
   it('requires auth', async () => {
     const h = await start({ durations: [8000] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero', null, { brief: 'Promo', dialect: 'levantine' });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', null, { brief: 'Promo', dialect: 'levantine', voice_id: VOICE });
     expect(r.status).toBe(401);
   });
 
   it('rejects invalid input with 400 before any provider is called', async () => {
     const h = await start({ durations: [8000] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { dialect: 'levantine' });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { dialect: 'levantine', voice_id: VOICE });
     expect(r.status).toBe(400);
     expect(r.body.error.code).toBe('INVALID_INPUT');
     expect(h.calls.write).toHaveLength(0);
@@ -217,7 +230,7 @@ describe('POST /v1/drafts/product-hero', () => {
 
   it('refuses a Dialect that is not live yet with a distinct code', async () => {
     const h = await start({ durations: [8000] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'gulf' });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'gulf', voice_id: VOICE });
     expect(r.status).toBe(422);
     expect(r.body.error.code).toBe('DIALECT_NOT_AVAILABLE');
     expect(h.calls.write).toHaveLength(0);
@@ -225,7 +238,7 @@ describe('POST /v1/drafts/product-hero', () => {
 
   it('writes the Script, voices it, and returns a persisted draft with audio, duration and alignment', async () => {
     const h = await start({ durations: [9000] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Cold brew promo', dialect: 'levantine' });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Cold brew promo', dialect: 'levantine', voice_id: VOICE });
     expect(r.status).toBe(201);
     const d = r.body.draft;
     expect(d.preset).toBe('product_hero');
@@ -237,7 +250,7 @@ describe('POST /v1/drafts/product-hero', () => {
     expect(Math.abs(d.duration_ms - 9000)).toBeLessThan(30);
     expect(d.alignment.characters.join('')).toBe(SCRIPT_A);
     // The provider is whatever voiced it, not a name the draft core assumes.
-    expect(d.voice).toEqual({ provider: 'fake-voice', voice_id: 'voice-test', model: 'eleven_test' });
+    expect(d.voice).toEqual({ id: VOICE, provider: 'fake-voice', provider_voice_id: 'voice-test', model: 'eleven_test' });
     expect(d.rendered_at).toBeNull();
     // The Brief went to the writer with its Dialect; the writer's Script is what got voiced.
     expect(h.calls.write[0]).toMatchObject({ brief: 'Cold brew promo', dialect: 'levantine' });
@@ -250,7 +263,7 @@ describe('POST /v1/drafts/product-hero', () => {
 
   it('keeps draft audio private: a signed URL for the owner, never a public URL or the storage key', async () => {
     const h = await start({ durations: [9000] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine', voice_id: VOICE });
     expect(r.status).toBe(201);
     const text = JSON.stringify(r.body);
     expect(text).not.toContain(PUBLIC_PREFIX);
@@ -262,7 +275,7 @@ describe('POST /v1/drafts/product-hero', () => {
 
   it('asks the writer for one rewrite when the first voicing misses the band, telling it by how much', async () => {
     const h = await start({ durations: [17_000, 11_000] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine', voice_id: VOICE });
     expect(r.status).toBe(201);
     expect(r.body.draft.script).toBe(SCRIPT_B);
     expect(h.calls.write).toHaveLength(2);
@@ -272,7 +285,7 @@ describe('POST /v1/drafts/product-hero', () => {
 
   it('rejects (and persists nothing) when the rewrite still misses the band', async () => {
     const h = await start({ durations: [3000, 3500] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine', voice_id: VOICE });
     expect(r.status).toBe(422);
     expect(r.body.error.code).toBe('SCRIPT_TOO_SHORT');
     expect(r.body.error.script).toBe(SCRIPT_B); // so the UI can put it in the editor
@@ -284,7 +297,7 @@ describe('POST /v1/drafts/product-hero', () => {
 describe('Script writer output guard', () => {
   it('refuses a Script that came back without تشكيل, before paying for a voice', async () => {
     const h = await start({ durations: [8000], scripts: ['هيدا المنتج رح يغير يومك'] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine', voice_id: VOICE });
     expect(r.status).toBe(502);
     expect(r.body.error.code).toBe('SCRIPT_GENERATION_FAILED');
     expect(h.calls.voice).toHaveLength(0);
@@ -308,7 +321,7 @@ describe('server wiring', () => {
 describe('POST /v1/drafts/product-hero/revoice', () => {
   it('voices the edited Script as a NEW draft and leaves the earlier one unchanged', async () => {
     const h = await start({ durations: [8000, 12_000] });
-    const first = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' })).body.draft;
+    const first = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine', voice_id: VOICE })).body.draft;
     const snapshot = JSON.parse(JSON.stringify(h.rows[0]));
 
     const edited = `${SCRIPT_A} ${SCRIPT_B}`;
@@ -335,7 +348,7 @@ describe('POST /v1/drafts/product-hero/revoice', () => {
 
   it('rejects speech under 5 s with SCRIPT_TOO_SHORT and an instruction to lengthen', async () => {
     const h = await start({ durations: [4200] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: SCRIPT_A, dialect: 'levantine' });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: SCRIPT_A, dialect: 'levantine', voice_id: VOICE });
     expect(r.status).toBe(422);
     expect(r.body.error).toMatchObject({ code: 'SCRIPT_TOO_SHORT', action: 'lengthen', min_ms: 5000, max_ms: 15000 });
     expect(Math.abs(r.body.error.duration_ms - 4200)).toBeLessThan(30);
@@ -346,7 +359,7 @@ describe('POST /v1/drafts/product-hero/revoice', () => {
 
   it('rejects speech over 15 s with SCRIPT_TOO_LONG and an instruction to shorten', async () => {
     const h = await start({ durations: [16_300] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: SCRIPT_A, dialect: 'levantine' });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: SCRIPT_A, dialect: 'levantine', voice_id: VOICE });
     expect(r.status).toBe(422);
     expect(r.body.error).toMatchObject({ code: 'SCRIPT_TOO_LONG', action: 'shorten' });
     expect(r.body.error.message).toMatch(/shorten/i);
@@ -355,7 +368,7 @@ describe('POST /v1/drafts/product-hero/revoice', () => {
 
   it("rejects a Dialect that differs from the parent's before paying for a voice", async () => {
     const h = await start({ durations: [8000, 8000] });
-    const first = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' })).body.draft;
+    const first = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine', voice_id: VOICE })).body.draft;
     const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', {
       script: SCRIPT_A,
       dialect: 'gulf',
@@ -369,7 +382,7 @@ describe('POST /v1/drafts/product-hero/revoice', () => {
 
   it("cannot branch from another user's draft", async () => {
     const h = await start({ durations: [8000, 8000] });
-    const first = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' })).body.draft;
+    const first = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine', voice_id: VOICE })).body.draft;
     const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-b', {
       script: SCRIPT_A,
       dialect: 'levantine',
@@ -383,7 +396,7 @@ describe('POST /v1/drafts/product-hero/revoice', () => {
 describe('GET /v1/drafts/:id', () => {
   it('returns the draft to its owner and 404 to anyone else', async () => {
     const h = await start({ durations: [8000] });
-    const d = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' })).body.draft;
+    const d = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine', voice_id: VOICE })).body.draft;
 
     const mine = await call(h, 'GET', `/v1/drafts/${d.id}`, 'user-a');
     expect(mine.status).toBe(200);
@@ -400,7 +413,7 @@ describe('GET /v1/drafts/:id', () => {
 
   it('signs a fresh audio URL on every read, since signed URLs expire', async () => {
     const h = await start({ durations: [8000] });
-    const d = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' })).body.draft;
+    const d = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine', voice_id: VOICE })).body.draft;
     const a = (await call(h, 'GET', `/v1/drafts/${d.id}`, 'user-a')).body.draft;
     const b = (await call(h, 'GET', `/v1/drafts/${d.id}`, 'user-a')).body.draft;
     expect(a.audio_url.startsWith(SIGNED_PREFIX)).toBe(true);
