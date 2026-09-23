@@ -1,7 +1,8 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * Workflow test harness: run a real workflow from ../../workflows in Temporal's
+ * Workflow test harness: run a real workflow from ../../workflows (plus the
+ * test-only drivers in ./test-workflows.ts) in Temporal's
  * time-skipping test environment against FAKE activities, so pipeline order and
  * outcomes are testable without providers, a database, or a Temporal server.
  *
@@ -24,7 +25,7 @@ import { Context, ApplicationFailure } from '@temporalio/activity';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { bundleWorkflowCode, DefaultLogger, Runtime, Worker, type WorkflowBundle } from '@temporalio/worker';
 import type { PrimitiveActivities } from '../../activities/index.js';
-import type * as workflows from '../../workflows/index.js';
+import type * as workflows from './test-workflows.js';
 
 type Workflows = typeof workflows;
 type WorkflowName = keyof Workflows;
@@ -98,7 +99,8 @@ export interface WorkflowHarness {
   teardown(): Promise<void>;
 }
 
-const WORKFLOWS_PATH = fileURLToPath(new URL('../../workflows/index.ts', import.meta.url));
+// The worker's registered workflows plus test-only drivers of internal pipelines.
+const WORKFLOWS_PATH = fileURLToPath(new URL('./test-workflows.ts', import.meta.url));
 
 /** Start the test server and bundle the worker's workflows (once per test file). */
 export async function startWorkflowHarness(): Promise<WorkflowHarness> {

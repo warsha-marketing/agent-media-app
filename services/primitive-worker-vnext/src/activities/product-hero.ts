@@ -2,8 +2,8 @@
 
 /**
  * The Preset render activities (ADR 0001: audio first, the video model never
- * speaks). Every Preset's render (workflows/make-product-hero.ts,
- * renderPresetWorkflow) runs them in order; the names date from Product Hero,
+ * speaks). Every Preset's render (workflows/render-preset.ts,
+ * renderPreset) runs them in order; the names date from Product Hero,
  * the first Preset, and stay stable for in-flight runs:
  *
  *   fetchDraftAudio  — read the approved draft's PRIVATE audio by key and measure it

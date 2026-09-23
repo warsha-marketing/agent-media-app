@@ -12,7 +12,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { WorkflowFailedError } from '@temporalio/client';
 import { planPresetShots } from '@agentmedia/schema';
 import { startWorkflowHarness, fakeActivities, type CannedActivities, type WorkflowHarness } from './support/workflow-harness.js';
-import type { RenderPresetWorkflowInput } from '../workflows/make-product-hero.js';
+import type { TestPresetRenderInput } from './support/test-preset-workflow.js';
 import type { PresetRenderDefinition } from '../presets/index.js';
 import { PRODUCT_HERO_RENDER } from '../presets/index.js';
 import type { FetchDraftAudioInput, ProductHeroClipInput, MuxProductHeroInput } from '../activities/product-hero.js';
@@ -38,7 +38,7 @@ const INTERCUT: PresetRenderDefinition<'person' | 'product'> = {
   },
 };
 
-function renderInput(durationMs: number, preset: PresetRenderDefinition = INTERCUT): RenderPresetWorkflowInput {
+function renderInput(durationMs: number, preset: PresetRenderDefinition = INTERCUT): TestPresetRenderInput {
   return {
     preset,
     skill_run_id: SKILL_RUN_ID,
@@ -84,10 +84,10 @@ afterAll(async () => {
   await harness?.teardown();
 });
 
-describe('renderPresetWorkflow — a second Preset on the same pipeline', () => {
+describe('renderPreset — a second Preset on the same pipeline (test-only driver)', () => {
   it('renders the test Preset’s own shot kinds, in its order, with its own prompts', async () => {
     const fakes = happyFakes();
-    await harness.execute('renderPresetWorkflow', [renderInput(12_000)], fakes);
+    await harness.execute('renderTestPresetWorkflow', [renderInput(12_000)], fakes);
 
     const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
     expect(clips.map((c) => [c.shot_kind, c.duration])).toEqual([
@@ -100,14 +100,14 @@ describe('renderPresetWorkflow — a second Preset on the same pipeline', () => 
 
   it('ends on the declared last kind even with a single clip', async () => {
     const fakes = happyFakes();
-    await harness.execute('renderPresetWorkflow', [renderInput(8_000)], fakes);
+    await harness.execute('renderTestPresetWorkflow', [renderInput(8_000)], fakes);
     const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
     expect(clips.map((c) => c.shot_kind)).toEqual(['product']);
   });
 
   it('fetches the draft audio first, disables audio on every clip, and cuts to the audio', async () => {
     const fakes = happyFakes();
-    const result = await harness.execute('renderPresetWorkflow', [renderInput(12_480)], fakes);
+    const result = await harness.execute('renderTestPresetWorkflow', [renderInput(12_480)], fakes);
 
     expect(fakes.names().filter((n) => n !== 'composedSkillState')).toEqual([
       'fetchDraftAudio',
@@ -129,7 +129,7 @@ describe('renderPresetWorkflow — a second Preset on the same pipeline', () => 
 
   it('plans exactly what the shared planner quotes for the Preset', async () => {
     const fakes = happyFakes();
-    await harness.execute('renderPresetWorkflow', [renderInput(14_000)], fakes);
+    await harness.execute('renderTestPresetWorkflow', [renderInput(14_000)], fakes);
     const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
     expect(clips.map((c) => ({ kind: c.shot_kind, seconds: c.duration }))).toEqual(planPresetShots(INTERCUT, 14_000));
   });
@@ -137,7 +137,7 @@ describe('renderPresetWorkflow — a second Preset on the same pipeline', () => 
   it('refuses a draft outside the Preset’s own speech band before anything is requested', async () => {
     const narrow = { ...INTERCUT, minSpeechMs: 6_000, maxSpeechMs: 9_000 };
     const fakes = happyFakes();
-    await expect(harness.execute('renderPresetWorkflow', [renderInput(12_000, narrow)], fakes)).rejects.toBeInstanceOf(
+    await expect(harness.execute('renderTestPresetWorkflow', [renderInput(12_000, narrow)], fakes)).rejects.toBeInstanceOf(
       WorkflowFailedError,
     );
     expect(fakes.names()).not.toContain('productHeroClip');
@@ -148,7 +148,7 @@ describe('renderPresetWorkflow — a second Preset on the same pipeline', () => 
   it('refuses to start without an input the Preset requires, and gives the draft back', async () => {
     const fakes = happyFakes();
     const input = { ...renderInput(9_000), product_image_url: '' };
-    await expect(harness.execute('renderPresetWorkflow', [input], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
+    await expect(harness.execute('renderTestPresetWorkflow', [input], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
     expect(fakes.names()).not.toContain('fetchDraftAudio');
     expect(fakes.names()).not.toContain('productHeroClip');
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
@@ -163,7 +163,7 @@ describe('renderPresetWorkflow — a second Preset on the same pipeline', () => 
         return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 1.2 };
       },
     });
-    await expect(harness.execute('renderPresetWorkflow', [renderInput(12_000)], fakes)).rejects.toBeInstanceOf(
+    await expect(harness.execute('renderTestPresetWorkflow', [renderInput(12_000)], fakes)).rejects.toBeInstanceOf(
       WorkflowFailedError,
     );
 
@@ -188,5 +188,14 @@ describe('makeProductHeroWorkflow — Product Hero is one definition on that pip
     expect(clips.map((c) => c.prompt)).toEqual([PRODUCT_HERO_RENDER.shotPrompts.hero, PRODUCT_HERO_RENDER.shotPrompts.detail]);
     const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
     expect(mux.preset).toBe('product_hero');
+  });
+
+  it('ignores a Preset definition smuggled into its input: prompts come from the server-side registry', async () => {
+    const fakes = happyFakes();
+    const smuggled = { ...renderInput(12_000), preset: { ...INTERCUT, id: 'product_hero' } };
+    await harness.execute('makeProductHeroWorkflow', [smuggled as never], fakes);
+    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    expect(clips.map((c) => c.shot_kind)).toEqual(['hero', 'detail']);
+    expect(clips.map((c) => c.prompt)).toEqual([PRODUCT_HERO_RENDER.shotPrompts.hero, PRODUCT_HERO_RENDER.shotPrompts.detail]);
   });
 });

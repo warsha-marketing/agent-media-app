@@ -13,4 +13,6 @@ export { wireframeGpt2Workflow } from './wireframe-gpt2.js';
 export { lipSyncWorkflow } from './lip-sync.js';
 export { brollTalkingHeadWorkflow } from './broll-talking-head.js';
 export { makePodcastWorkflow } from './make-podcast.js';
-export { makeProductHeroWorkflow, renderPresetWorkflow } from './make-product-hero.js';
+// Only the per-Preset wrappers are workflow types; the shared pipeline they call
+// (./render-preset.ts, renderPreset) is internal and must never be exported here.
+export { makeProductHeroWorkflow } from './make-product-hero.js';
