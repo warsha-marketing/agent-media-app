@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Loader2, ShieldAlert } from 'lucide-react';
+import { catalogOf, withCatalogVoice } from '@/lib/voice-candidates';
 
 type State = 'pending' | 'approved' | 'revoked';
 
@@ -111,13 +112,16 @@ export default function VoiceCatalogPage() {
     e.preventDefault();
     setBusy('add');
     setError(null);
-    const r = await api('/api/v1/operator/voices', {
+    const r = await api<{ voice?: OperatorVoice }>('/api/v1/operator/voices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     });
     setBusy(null);
     if (!r.ok) return setError(r.data.error?.message ?? `HTTP ${r.status}`);
+    // The candidate list was marked when it was searched: mark the one just added.
+    const added = r.data.voice;
+    if (added) setCandidates((prev) => (prev ? withCatalogVoice(prev, added) : prev));
     setForm(EMPTY_FORM);
     await load();
   }
@@ -302,14 +306,15 @@ export default function VoiceCatalogPage() {
             Provider candidates (not reviewed) · {candidates.length} loaded{more ? '' : ' · no more'}
           </p>
           <ul className="mt-2 flex flex-col gap-2">
-            {candidates.map((c) => (
+            {/* Where each candidate stands now: the loaded catalog rows are newer than the search. */}
+            {candidates.map((c) => ({ c, entry: catalogOf(c, voices) })).map(({ c, entry }) => (
               <li key={c.provider_voice_id} className="flex flex-wrap items-center gap-3 rounded-xl px-3 py-2 text-sm" style={CARD}>
                 <span className="w-32 truncate" style={{ color: '#E9E9F0' }}>{c.display_name}</span>
                 <span className="w-48 text-xs" style={MUTED}>{c.accent || 'no accent'} → {c.suggested_dialect ?? '?'} · {c.gender ?? '?'}</span>
                 {c.sample_url ? <audio controls preload="none" src={c.sample_url} className="h-8 w-56" /> : <span className="w-56 text-xs" style={MUTED}>no sample</span>}
                 <span className="flex-1" />
-                {c.catalog ? (
-                  <span className="text-xs" style={{ color: STATE_COLOR[c.catalog.state] }}>in catalog ({c.catalog.state})</span>
+                {entry ? (
+                  <span className="text-xs" style={{ color: STATE_COLOR[entry.state] }}>in catalog ({entry.state})</span>
                 ) : (
                   <button type="button" onClick={() => pickCandidate(c)} className="rounded-lg px-3 py-1 text-xs" style={{ border: '1px solid rgba(167,139,250,0.5)', color: '#C9B8FF' }}>
                     Use as candidate
