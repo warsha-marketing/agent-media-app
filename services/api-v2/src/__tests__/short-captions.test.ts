@@ -16,6 +16,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { CAPTION_LINE_LIMITS, DEFAULT_CAPTION_STYLE, suggestedCaptionLines, type CharacterAlignment } from '@agentmedia/schema';
 import { registerShortCaptionRoutes, shortCaptionOpenApi } from '../routes/v1/shorts.js';
+import { makeVideoConcurrencyGate } from '../concurrency-gate.js';
 import {
   ExportUnconfiguredError,
   cleanShortUrl,
@@ -63,6 +64,8 @@ interface Harness {
   exports: Array<StoredExport & { user_id: string; idempotency_key: string | null; error_code?: string }>;
   started: Array<{ workflowId: string; input: CaptionExportWorkflowInput }>;
   startFails: Error | null;
+  /** Renders and exports the account has in flight, as the concurrency gate counts them. */
+  inFlight: number;
   close(): Promise<void>;
 }
 
@@ -73,7 +76,7 @@ afterEach(async () => {
 
 async function start(): Promise<Harness> {
   let seq = 0;
-  const h = { runs: [renderRun()], steps: {}, exports: [], started: [], startFails: null } as unknown as Harness;
+  const h = { runs: [renderRun()], steps: {}, exports: [], started: [], startFails: null, inFlight: 0 } as unknown as Harness;
   const deps: ShortCaptionDeps = {
     getRun: async (id, userId) => h.runs.find((r) => r.id === id && r.user_id === userId) ?? null,
     getSteps: async (runId) => h.steps[runId] ?? [],
@@ -110,7 +113,9 @@ async function start(): Promise<Harness> {
     (req as { userId?: string }).userId = hdr.slice(7);
     next();
   };
-  registerShortCaptionRoutes(app, { generateLimiter: NOOP, readLimiter: NOOP, authMiddleware: auth }, deps);
+  // The real gate renders use, with the in-flight count faked (limit 3).
+  const concurrencyGate = makeVideoConcurrencyGate({ max: 3, countInFlight: async () => h.inFlight });
+  registerShortCaptionRoutes(app, { generateLimiter: NOOP, readLimiter: NOOP, authMiddleware: auth, concurrencyGate }, deps);
   const server = http.createServer(app);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   h.baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -317,6 +322,22 @@ describe('POST /v1/shorts/:id/caption-exports', () => {
     expect(h.started).toHaveLength(1);
   });
 
+  it('is refused over the per-account concurrency limit with the render gate\'s 429, and starts nothing', async () => {
+    const h = await start();
+    h.inFlight = 3;
+    const r = await call(h, 'POST', exportPath(), OWNER, { lines: LINES, style: STYLE });
+    expect(r.status).toBe(429);
+    expect(r.body).toEqual({
+      error: { code: 'TOO_MANY_ACTIVE_VIDEOS', message: expect.stringContaining('Limit 3'), active: 3, limit: 3 },
+    });
+    expect(h.exports).toHaveLength(0);
+    expect(h.started).toHaveLength(0);
+    // Reading the suggested lines is not a render: never gated.
+    expect((await call(h, 'GET', captionsPath(), OWNER)).status).toBe(200);
+    h.inFlight = 2;
+    expect((await call(h, 'POST', exportPath(), OWNER, { lines: LINES, style: STYLE })).status).toBe(202);
+  });
+
   it('every export without a key (or with a new one) is a new file', async () => {
     const h = await start();
     await call(h, 'POST', exportPath(), OWNER, { lines: LINES, style: STYLE });
@@ -341,7 +362,7 @@ describe('OpenAPI', () => {
     const spec = shortCaptionOpenApi();
     expect(Object.keys(spec.paths)).toEqual(['/v1/shorts/{id}/captions', '/v1/shorts/{id}/caption-exports']);
     const text = JSON.stringify(spec);
-    for (const code of ['not_found', 'short_not_ready', 'invalid_caption_lines', 'style_not_allowed', 'idempotency_key_reused', 'overlap', 'outside_short']) {
+    for (const code of ['not_found', 'short_not_ready', 'invalid_caption_lines', 'style_not_allowed', 'idempotency_key_reused', 'overlap', 'outside_short', 'TOO_MANY_ACTIVE_VIDEOS']) {
       expect(text).toContain(code);
     }
   });

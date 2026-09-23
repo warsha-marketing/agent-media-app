@@ -48,6 +48,8 @@ interface ShortRouteMiddleware {
   generateLimiter: RequestHandler;
   readLimiter: RequestHandler;
   authMiddleware: RequestHandler;
+  /** The per-account render concurrency gate (videoConcurrencyGate): an export is a render too. */
+  concurrencyGate: RequestHandler;
 }
 
 function sendError(res: Response, err: unknown, tag: string): void {
@@ -62,7 +64,7 @@ function sendError(res: Response, err: unknown, tag: string): void {
 const workflowIdOf = (runId: string) => `${CAPTION_EXPORT_SLUG}-${runId}`;
 
 export function registerShortCaptionRoutes(app: express.Express, middleware: ShortRouteMiddleware, deps: ShortCaptionDeps): void {
-  const { generateLimiter, readLimiter, authMiddleware } = middleware;
+  const { generateLimiter, readLimiter, authMiddleware, concurrencyGate } = middleware;
   const notFound = (res: Response) => sendError(res, new ShortCaptionError('not_found', 'No such Short on this account.'), 'id');
 
   app.get('/v1/shorts/:id/captions', readLimiter, authMiddleware, async (req, res) => {
@@ -75,7 +77,7 @@ export function registerShortCaptionRoutes(app: express.Express, middleware: Sho
     }
   });
 
-  app.post('/v1/shorts/:id/caption-exports', generateLimiter, authMiddleware, async (req, res) => {
+  app.post('/v1/shorts/:id/caption-exports', generateLimiter, authMiddleware, concurrencyGate, async (req, res) => {
     const userId = userOf(req);
     const shortId = String(req.params.id ?? '');
     if (!isUuid(shortId)) return notFound(res);
@@ -241,6 +243,9 @@ export function shortCaptionOpenApi(): { paths: Record<string, unknown>; schemas
               },
             },
             '422': errorResponse(refusals(422)),
+            '429': errorResponse(
+              '`TOO_MANY_ACTIVE_VIDEOS`: the account already has as many renders and exports in flight as it may (carries active and limit); wait for one to finish',
+            ),
             '502': errorResponse('`temporal_dispatch_failed`: the export could not be started'),
             '503': errorResponse('`temporal_unconfigured`'),
           },

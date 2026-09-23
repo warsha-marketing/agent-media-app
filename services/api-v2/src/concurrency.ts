@@ -1,8 +1,7 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
-import type { NextFunction, Request, Response } from 'express';
 import { supabase } from './server.js';
-import { logger } from './logger.js';
+import { makeVideoConcurrencyGate } from './concurrency-gate.js';
 
 /**
  * How many videos one account may have rendering at once.
@@ -44,43 +43,8 @@ async function inFlightCount(userId: string): Promise<number> {
 }
 
 /**
- * Rejects a new render when the account already has MAX_CONCURRENT in flight.
- *
- * Fails OPEN: if the count query errors we let the request through. A database
- * hiccup must not stop paying customers generating; the credit ledger is the
- * backstop that actually protects us from runaway spend.
+ * Rejects a new render (or Caption export) when the account already has
+ * MAX_CONCURRENT in flight: 429 TOO_MANY_ACTIVE_VIDEOS. Fails open; see
+ * concurrency-gate.ts.
  */
-export async function videoConcurrencyGate(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
-  const userId = (req as Request & { userId?: string }).userId;
-  if (!userId || MAX_CONCURRENT <= 0) {
-    next();
-    return;
-  }
-
-  let active: number;
-  try {
-    active = await inFlightCount(userId);
-  } catch (err) {
-    logger.warn({ err, userId }, 'concurrency gate: count failed, allowing');
-    next();
-    return;
-  }
-
-  if (active >= MAX_CONCURRENT) {
-    res.status(429).json({
-      error: {
-        code: 'TOO_MANY_ACTIVE_VIDEOS',
-        message: `You already have ${active} videos generating. Wait for one to finish, then try again. (Limit ${MAX_CONCURRENT}.)`,
-        active,
-        limit: MAX_CONCURRENT,
-      },
-    });
-    return;
-  }
-
-  next();
-}
+export const videoConcurrencyGate = makeVideoConcurrencyGate({ max: MAX_CONCURRENT, countInFlight: inFlightCount });

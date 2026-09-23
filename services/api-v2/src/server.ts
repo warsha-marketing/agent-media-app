@@ -975,7 +975,11 @@ if (isPrimitivesRouteEnabled()) {
   app.post('/v1/skills/runs/:skill_run_id/cancel', generateLimiter, authMiddleware, asyncHandler(cancelSkillRunRoute));
   // Captions after the render (#22): the Caption editor's suggested lines and
   // its export job (free; polled at /v1/skills/runs/:id like any run).
-  registerShortCaptionRoutes(app, { generateLimiter, readLimiter, authMiddleware }, productionShortCaptionDeps(supabase));
+  registerShortCaptionRoutes(
+    app,
+    { generateLimiter, readLimiter, authMiddleware, concurrencyGate: videoConcurrencyGate },
+    productionShortCaptionDeps(supabase),
+  );
   app.get('/v1/me/gallery', readLimiter, authMiddleware, getMyGalleryRoute);
   app.get('/v1/characters', readLimiter, authMiddleware, listMyCharactersRoute);
   // Bytes → R2 URL. Costs no credits and starts no job, so it sits on the
