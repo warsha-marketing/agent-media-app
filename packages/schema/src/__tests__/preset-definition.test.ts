@@ -16,6 +16,7 @@ import {
 } from '../preset-definition.js';
 import { PRESETS } from '../preset-registry.js';
 import { STANDARD_MODESTY } from '../modesty.js';
+import { VIDEO_CLIP_CREDITS } from '../video-pricing.js';
 import { PRODUCT_HERO, planProductHeroShots, productHeroProviderUsd, quoteProductHeroCredits } from '../product-hero.js';
 
 /** A test-only Preset: intercut people and product, always ending on the product. */
@@ -35,12 +36,29 @@ const INTERCUT: PresetDefinition<'product' | 'person'> = {
 
 describe('planPresetShots', () => {
   it('gives each clip a kind from the definition’s order, ending on the declared last kind', () => {
-    expect(planPresetShots(INTERCUT, 5_000)).toEqual([{ kind: 'product', seconds: 5 }]);
-    expect(planPresetShots(INTERCUT, 8_000)).toEqual([{ kind: 'product', seconds: 10 }]);
     expect(planPresetShots(INTERCUT, 12_000)).toEqual([
       { kind: 'person', seconds: 10 },
       { kind: 'product', seconds: 5 },
     ]);
+  });
+
+  it('never collapses a Preset with a last kind to one clip: speech one clip covers is two 5 s clips sharing it', () => {
+    expect(planPresetShots(INTERCUT, 5_000)).toEqual([
+      { kind: 'person', seconds: 5, onScreenMs: 2_500 },
+      { kind: 'product', seconds: 5, onScreenMs: 2_500 },
+    ]);
+    expect(planPresetShots(INTERCUT, 8_001)).toEqual([
+      { kind: 'person', seconds: 5, onScreenMs: 4_001 },
+      { kind: 'product', seconds: 5, onScreenMs: 4_000 },
+    ]);
+    // Priced like the one 10 s clip it replaces.
+    expect(quotePresetCredits(INTERCUT, 8_001)).toBe(VIDEO_CLIP_CREDITS[10]);
+  });
+
+  it('a Preset without a last kind still renders one clip for short speech', () => {
+    const open = { ...INTERCUT, shotPlan: { order: ['person', 'product'] as const } };
+    expect(planPresetShots(open, 5_000)).toEqual([{ kind: 'person', seconds: 5 }]);
+    expect(planPresetShots(open, 8_000)).toEqual([{ kind: 'person', seconds: 10 }]);
   });
 
   it('cycles the order when a plan has more clips than the order names', () => {
@@ -48,9 +66,10 @@ describe('planPresetShots', () => {
     expect(planPresetShots(cycling, 30_000).map((s) => s.kind)).toEqual(['a', 'b', 'a']);
   });
 
-  it('uses the shared 5/10 s clip rule for every Preset', () => {
+  it('uses the shared 5/10 s clip rule for every Preset without a last kind', () => {
+    const open = { ...INTERCUT, shotPlan: { order: ['person', 'product'] as const } };
     for (const ms of [5_000, 5_001, 10_000, 10_001, 15_000]) {
-      expect(planPresetShots(INTERCUT, ms).map((s) => s.seconds)).toEqual(planProductHeroShots(ms));
+      expect(planPresetShots(open, ms).map((s) => s.seconds)).toEqual(planProductHeroShots(ms));
     }
   });
 
@@ -58,7 +77,7 @@ describe('planPresetShots', () => {
     const narrow = { ...INTERCUT, name: 'Narrow', minSpeechMs: 6_000, maxSpeechMs: 9_000 };
     expect(() => planPresetShots(narrow, 5_500)).toThrow(RangeError);
     expect(() => planPresetShots(narrow, 9_001)).toThrow(/Narrow speech must be 6000–9000 ms/);
-    expect(planPresetShots(narrow, 9_000)).toHaveLength(1);
+    expect(planPresetShots(narrow, 9_000)).toHaveLength(2);
   });
 });
 

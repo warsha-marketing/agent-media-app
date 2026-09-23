@@ -43,6 +43,13 @@ export type PresetInput = 'product_image' | 'character' | 'hand_gender' | 'setti
  */
 export interface PresetShotOrder<Kind extends string = string> {
   order: readonly [Kind, ...Kind[]];
+  /**
+   * The kind every Short of this Preset ends on. A Preset with `last` never
+   * collapses to a single clip (that one shot would have to be both `order[0]`
+   * and `last`): speech one clip would cover (≤10 s) renders as two 5 s clips,
+   * `order[0]` then `last`, sharing the speech evenly (closingPair) — the same
+   * price as the one 10 s clip it replaces. Longer speech keeps the shared rule.
+   */
   last?: Kind;
   /**
    * The longest any one shot stays on screen, in ms (at most 5 000: one 5 s
@@ -109,7 +116,8 @@ export interface PlannedShot<Kind extends string = string> {
   kind: Kind;
   seconds: PresetClipSeconds;
   /**
-   * How long this shot stays on screen in the cut (intercut rule only). Absent,
+   * How long this shot stays on screen in the cut (the intercut rule, and a
+   * Preset's closing pair). Absent,
    * the clips play whole, back to back, and the cut trims the tail to the audio.
    */
   onScreenMs?: number;
@@ -152,10 +160,24 @@ export function planPresetShots<Kind extends string>(
   const { order, last, maxShotMs } = preset.shotPlan;
   if (maxShotMs !== undefined) return intercutShots(preset.shotPlan, durationMs);
   const lengths = clipLengths(durationMs);
+  if (last !== undefined && lengths.length === 1) return closingPair(order[0], last, durationMs);
   return lengths.map((seconds, i) => ({
     kind: last !== undefined && i === lengths.length - 1 ? last : order[i % order.length],
     seconds,
   }));
+}
+
+/**
+ * A Preset with a `last` kind whose speech one clip would cover (≤10 s): two
+ * 5 s clips, `first` then `last`, each on screen for half the speech (the first
+ * takes the odd ms). Each share is at most 5 s, so neither clip is ever held.
+ */
+function closingPair<Kind extends string>(first: Kind, last: Kind, durationMs: number): PlannedShot<Kind>[] {
+  const half = Math.floor(durationMs / 2);
+  return [
+    { kind: first, seconds: 5, onScreenMs: durationMs - half },
+    { kind: last, seconds: 5, onScreenMs: half },
+  ];
 }
 
 /** The longest a shot may stay on screen: one 5 s clip, the shortest a video model renders. */

@@ -106,11 +106,13 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
     for (const c of clips) expect(c.preset).toBe('test_intercut');
   });
 
-  it('ends on the declared last kind even with a single clip', async () => {
+  it('never collapses to one clip: ≤10 s is two 5 s clips ending on the declared last kind, cut to half each', async () => {
     const fakes = happyFakes();
     await harness.execute('renderTestPresetWorkflow', [renderInput(8_000)], fakes);
     const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
-    expect(clips.map((c) => c.shot_kind)).toEqual(['product']);
+    expect(clips.map((c) => [c.shot_kind, c.duration])).toEqual([['person', 5], ['product', 5]]);
+    const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+    expect(mux.shot_ms).toEqual([4_000, 4_000]);
   });
 
   it('fetches the draft audio first, disables audio on every clip, and cuts to the audio', async () => {

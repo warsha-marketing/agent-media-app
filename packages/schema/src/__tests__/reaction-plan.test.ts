@@ -117,7 +117,14 @@ describe('the intercut rule (maxShotMs) for any Preset', () => {
 
   it('leaves Presets without a maximum on the shared 5/10 s clip rule', () => {
     const { maxShotMs: _m, ...plain } = base.shotPlan;
-    const shots = planPresetShots({ ...base, shotPlan: plain }, 8_000);
-    expect(shots).toEqual([{ kind: 'b', seconds: 10 }]);
+    expect(planPresetShots({ ...base, shotPlan: plain }, 12_000)).toEqual([
+      { kind: 'a', seconds: 10 },
+      { kind: 'b', seconds: 5 },
+    ]);
+    // With a last kind it never collapses to one clip (the closing pair).
+    expect(planPresetShots({ ...base, shotPlan: plain }, 8_000)).toEqual([
+      { kind: 'a', seconds: 5, onScreenMs: 4_000 },
+      { kind: 'b', seconds: 5, onScreenMs: 4_000 },
+    ]);
   });
 });

@@ -41,10 +41,13 @@ export const HANDS_ON_SETTING_NAMES: Readonly<Record<HandsOnSetting, string>> = 
 export type HandsOnShotKind = 'hands' | 'product';
 
 /**
- * The Preset's definition. The shared 5/10 s clip rule gives one or two clips
- * for 5–15 s of speech: the first is always hands (so every Short shows them),
- * and a second clip closes on the product. The hands prompt itself ends with the
- * product presented to the camera, so a one-clip Short also ends on it.
+ * The Preset's definition. Every Short opens on hands and ends on a product
+ * shot (`last: 'product'`, so the plan never collapses to one clip):
+ *
+ *   5–10 s     → hands 5 s + product 5 s, each on screen for half the speech
+ *                (140 + 140 = 280 credits, the price of one 10 s clip) + 35 frame = 315
+ *   10.001–15 s → hands 10 s + product 5 s, played whole, tail trimmed
+ *                (280 + 140 = 420) + 35 frame = 455
  *
  * Budget: the longest plan (10 s hands + 5 s product) plus the one hands frame.
  */
@@ -58,7 +61,7 @@ export const HANDS_ON = {
     hands: { shows: 'hands', frame: 'product_in_hands' },
     product: { shows: 'product' },
   },
-  shotPlan: { order: ['hands', 'product'] },
+  shotPlan: { order: ['hands', 'product'], last: 'product' },
   requiredInputs: ['product_image', 'hand_gender', 'setting'],
   musicBed: musicBedSet('hands_on'),
   /** Arms covered by default, sleeved at the least; no person on screen, so never a hijab. */

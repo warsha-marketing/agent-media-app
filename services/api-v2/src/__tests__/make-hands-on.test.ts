@@ -411,8 +411,13 @@ describe('make_hands_on quote/charge parity', () => {
     },
   );
 
-  it('charges more than Product Hero by exactly the frame', () => {
-    for (const ms of [5_000, 9_000, 15_000]) {
+  it('quotes 315 credits up to 10 s (two 5 s clips + the frame) and 455 above (10 s + 5 s + the frame)', () => {
+    for (const ms of [5_000, 7_500, 10_000]) expect(quoteSkillCredits('make_hands_on', { duration_ms: ms })).toBe(315);
+    for (const ms of [10_001, 15_000]) expect(quoteSkillCredits('make_hands_on', { duration_ms: ms })).toBe(455);
+  });
+
+  it('charges more than Product Hero by exactly the frame once Product Hero needs a 10 s clip', () => {
+    for (const ms of [5_001, 9_000, 10_000, 15_000]) {
       expect(quoteSkillCredits('make_hands_on', { duration_ms: ms }) - quoteSkillCredits('make_product_hero', { duration_ms: ms })).toBe(
         STARTING_FRAME_CREDITS.product_in_hands,
       );

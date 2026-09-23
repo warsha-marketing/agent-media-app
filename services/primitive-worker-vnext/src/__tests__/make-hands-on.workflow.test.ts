@@ -110,11 +110,16 @@ describe('makeHandsOnWorkflow — the order of the render', () => {
     ]);
   });
 
-  it('makes a one-clip Short a hands shot from its frame', async () => {
+  it('ends a ≤10 s Short on the product too: two 5 s clips, hands from its frame then the product, cut to half each', async () => {
     const fakes = happyFakes();
     await harness.execute('makeHandsOnWorkflow', [renderInput(8_000)], fakes);
     const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
-    expect(clips.map((c) => [c.shot_kind, c.product_image_url])).toEqual([['hands', frameUrl(0)]]);
+    expect(clips.map((c) => [c.shot_kind, c.duration, c.product_image_url])).toEqual([
+      ['hands', 5, frameUrl(0)],
+      ['product', 5, PHOTO],
+    ]);
+    const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+    expect(mux.shot_ms).toEqual([4_000, 4_000]);
   });
 
   it('asks for every clip with the video model’s own audio disabled', async () => {
@@ -148,7 +153,7 @@ describe('makeHandsOnWorkflow — the order of the render', () => {
   });
 
   it('charges exactly what the quote sums: each clip plus the hands frame', async () => {
-    for (const ms of [5_000, 9_000, 12_000, 15_000]) {
+    for (const ms of [5_000, 9_000, 10_000, 10_001, 12_000, 15_000]) {
       const fakes = happyFakes();
       await harness.execute('makeHandsOnWorkflow', [renderInput(ms)], fakes);
       const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];

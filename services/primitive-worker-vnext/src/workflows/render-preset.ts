@@ -30,8 +30,8 @@
  *                        over the draft's duration), so the charge is the quote.
  *                        A shot showing a person also gets the person's reference
  *                        (character_image_url, Reaction #19).
- *   3. muxProductHero  — hard-cuts the clips on the 9:16 canvas (an intercut
- *                        Preset's shots each cut to their planned share), trims (or, if a
+ *   3. muxProductHero  — hard-cuts the clips on the 9:16 canvas (shots with a
+ *                        planned on-screen share each cut to it), trims (or, if a
  *                        clip ran a few ms short, holds) the visuals to the audio's
  *                        exact length, and muxes the draft audio in whole. Audio is
  *                        never trimmed or stretched.
@@ -285,7 +285,8 @@ export async function renderPreset(
       audio_duration_ms: audio.duration_ms,
       aspect_ratio: preset.aspectRatio,
       preset: preset.id,
-      // Intercut Presets (#19) cut each shot to its planned share of the audio.
+      // A plan that shares the speech between its shots (Reaction's intercut, a
+      // closing pair like Hands-on ≤10 s) cuts each shot to its planned share.
       ...(shots.every((s) => s.onScreenMs !== undefined) ? { shot_ms: shots.map((s) => s.onScreenMs!) } : {}),
     });
     // ── 3b. Music Bed (#9): ducked under the voice; never lengthens the Short ─

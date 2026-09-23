@@ -45,19 +45,43 @@ describe('the Hands-on definition', () => {
   });
 });
 
-describe('the Hands-on shot plan (shared 5/10 s clip rule)', () => {
-  it('opens on hands and, when the voice needs a second clip, closes on the product', () => {
-    expect(planPresetShots(HANDS_ON, 5_000)).toEqual([{ kind: 'hands', seconds: 5 }]);
-    expect(planPresetShots(HANDS_ON, 9_000)).toEqual([{ kind: 'hands', seconds: 10 }]);
-    expect(planPresetShots(HANDS_ON, 12_000)).toEqual([
+describe('the Hands-on shot plan: hands first, always ending on the product', () => {
+  it('splits speech one clip would cover (≤10 s) into two 5 s clips, hands then product, each on screen for half', () => {
+    expect(planPresetShots(HANDS_ON, 5_000)).toEqual([
+      { kind: 'hands', seconds: 5, onScreenMs: 2_500 },
+      { kind: 'product', seconds: 5, onScreenMs: 2_500 },
+    ]);
+    expect(planPresetShots(HANDS_ON, 9_001)).toEqual([
+      { kind: 'hands', seconds: 5, onScreenMs: 4_501 },
+      { kind: 'product', seconds: 5, onScreenMs: 4_500 },
+    ]);
+    expect(planPresetShots(HANDS_ON, 10_000)).toEqual([
+      { kind: 'hands', seconds: 5, onScreenMs: 5_000 },
+      { kind: 'product', seconds: 5, onScreenMs: 5_000 },
+    ]);
+  });
+
+  it('over 10 s keeps a 10 s hands clip and a 5 s product closer, played whole', () => {
+    expect(planPresetShots(HANDS_ON, 10_001)).toEqual([
+      { kind: 'hands', seconds: 10 },
+      { kind: 'product', seconds: 5 },
+    ]);
+    expect(planPresetShots(HANDS_ON, 15_000)).toEqual([
       { kind: 'hands', seconds: 10 },
       { kind: 'product', seconds: 5 },
     ]);
   });
 
-  it('always has at least one hands shot', () => {
+  it('for every speech length of 5–15 s: two shots, hands first, the product last, covering the speech', () => {
     for (let ms = HANDS_ON.minSpeechMs; ms <= HANDS_ON.maxSpeechMs; ms += 250) {
-      expect(planPresetShots(HANDS_ON, ms).some((s) => s.kind === 'hands')).toBe(true);
+      const plan = planPresetShots(HANDS_ON, ms);
+      expect(plan.map((s) => s.kind), `${ms} ms`).toEqual(['hands', 'product']);
+      if (ms <= 10_000) {
+        expect(plan.every((s) => s.seconds === 5 && s.onScreenMs! <= 5_000), `${ms} ms`).toBe(true);
+        expect(plan.reduce((sum, s) => sum + s.onScreenMs!, 0), `${ms} ms`).toBe(ms);
+      } else {
+        expect(plan.reduce((sum, s) => sum + s.seconds * 1000, 0), `${ms} ms`).toBeGreaterThanOrEqual(ms);
+      }
     }
   });
 });
@@ -65,8 +89,13 @@ describe('the Hands-on shot plan (shared 5/10 s clip rule)', () => {
 describe('the Hands-on price includes the image step', () => {
   it('charges each clip plus one starting frame per hands shot', () => {
     const frame = STARTING_FRAME_CREDITS.product_in_hands;
-    expect(quotePresetCredits(HANDS_ON, 5_000)).toBe(VIDEO_CLIP_CREDITS[5] + frame);
-    expect(quotePresetCredits(HANDS_ON, 9_000)).toBe(VIDEO_CLIP_CREDITS[10] + frame);
+    // ≤10 s: two 5 s clips cost exactly the one 10 s clip they replace.
+    expect(VIDEO_CLIP_CREDITS[5] * 2).toBe(VIDEO_CLIP_CREDITS[10]);
+    expect(quotePresetCredits(HANDS_ON, 5_000)).toBe(2 * VIDEO_CLIP_CREDITS[5] + frame);
+    expect(quotePresetCredits(HANDS_ON, 9_000)).toBe(315);
+    expect(quotePresetCredits(HANDS_ON, 10_000)).toBe(315);
+    expect(quotePresetCredits(HANDS_ON, 10_001)).toBe(455);
+    expect(presetProviderUsd(HANDS_ON, 9_000)).toBeCloseTo(2 * VIDEO_CLIP_USD[5] + STARTING_FRAME_USD.product_in_hands, 9);
     expect(quotePresetCredits(HANDS_ON, 15_000)).toBe(VIDEO_CLIP_CREDITS[10] + VIDEO_CLIP_CREDITS[5] + frame);
     expect(presetProviderUsd(HANDS_ON, 15_000)).toBeCloseTo(
       VIDEO_CLIP_USD[10] + VIDEO_CLIP_USD[5] + STARTING_FRAME_USD.product_in_hands,
