@@ -6,7 +6,7 @@
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { WorkerConfig } from '../config.js';
-import { makeFetchDraftAudioActivity } from '../activities/product-hero.js';
+import { makeFetchDraftAudioActivity } from '../activities/preset-render.js';
 import { r2GetPrivateObject } from '../client/r2.js';
 import { MUSIC_BED_TRACK, readPrivateObject } from '../lib/media-io.js';
 

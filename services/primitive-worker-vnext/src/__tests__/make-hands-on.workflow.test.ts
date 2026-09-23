@@ -13,7 +13,7 @@ import { WorkflowFailedError } from '@temporalio/client';
 import { quotePresetCredits, HANDS_ON, STARTING_FRAME_CREDITS } from '@agentmedia/schema';
 import { startWorkflowHarness, fakeActivities, type CannedActivities, type WorkflowHarness } from './support/workflow-harness.js';
 import type { MakeHandsOnWorkflowInput } from '../workflows/make-hands-on.js';
-import type { FetchDraftAudioInput, ProductHeroClipInput, MuxProductHeroInput } from '../activities/product-hero.js';
+import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
 import type { PresetStartingFrameInput } from '../activities/preset-frame.js';
 import { HAND_WORDS, HANDS_ON_RENDER, SETTING_WORDS } from '../presets/hands-on.js';
 import { MODESTY_PROMPTS } from '../presets/modesty.js';
@@ -55,13 +55,13 @@ function happyFakes(overrides: CannedActivities = {}) {
       image_url: frameUrl(i.shot_index),
       credits_actual_usd: 0.25,
     }),
-    productHeroClip: (i: ProductHeroClipInput) => ({
+    presetClip: (i: PresetClipInput) => ({
       primitive_run_id: i.primitive_run_id,
       video_url: `https://r2.example.test/clips/${i.shot_index}.mp4`,
       duration_seconds: i.duration,
       credits_actual_usd: i.duration === 10 ? 1.2 : 0.6,
     }),
-    muxProductHero: (i: MuxProductHeroInput) => ({
+    presetMux: (i: PresetMuxInput) => ({
       primitive_run_id: i.primitive_run_id,
       video_url: 'https://r2.example.test/shorts/final.mp4',
       duration_ms: i.audio_duration_ms + CUT_DRIFT_MS,
@@ -96,15 +96,15 @@ describe('makeHandsOnWorkflow — the order of the render', () => {
     const frames = fakes.callsTo('presetStartingFrame') as PresetStartingFrameInput[];
     expect(frames).toHaveLength(1);
     expect(frames[0]).toMatchObject({ frame: 'product_in_hands', shot_kind: 'hands', product_image_url: PHOTO, preset: 'hands_on' });
-    expect(names.lastIndexOf('presetStartingFrame')).toBeLessThan(names.indexOf('productHeroClip'));
+    expect(names.lastIndexOf('presetStartingFrame')).toBeLessThan(names.indexOf('presetClip'));
     expect(names.indexOf('fetchDraftAudio')).toBeLessThan(names.indexOf('presetStartingFrame'));
   });
 
   it('animates each hands shot from its frame, and the product closer from the photo', async () => {
     const fakes = happyFakes();
     await harness.execute('makeHandsOnWorkflow', [renderInput(12_000)], fakes);
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
-    expect(clips.map((c) => [c.shot_kind, c.duration, c.product_image_url])).toEqual([
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
+    expect(clips.map((c) => [c.shot_kind, c.duration, c.start_image_url])).toEqual([
       ['hands', 10, frameUrl(0)],
       ['product', 5, PHOTO],
     ]);
@@ -113,12 +113,12 @@ describe('makeHandsOnWorkflow — the order of the render', () => {
   it('ends a ≤10 s Short on the product too: two 5 s clips, hands from its frame then the product, cut to half each', async () => {
     const fakes = happyFakes();
     await harness.execute('makeHandsOnWorkflow', [renderInput(8_000)], fakes);
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
-    expect(clips.map((c) => [c.shot_kind, c.duration, c.product_image_url])).toEqual([
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
+    expect(clips.map((c) => [c.shot_kind, c.duration, c.start_image_url])).toEqual([
       ['hands', 5, frameUrl(0)],
       ['product', 5, PHOTO],
     ]);
-    const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+    const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
     expect(mux.shot_ms).toEqual([4_000, 4_000]);
   });
 
@@ -126,7 +126,7 @@ describe('makeHandsOnWorkflow — the order of the render', () => {
     for (const ms of [5_000, 9_000, 15_000]) {
       const fakes = happyFakes();
       await harness.execute('makeHandsOnWorkflow', [renderInput(ms)], fakes);
-      const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+      const clips = fakes.callsTo('presetClip') as PresetClipInput[];
       expect(clips.length).toBeGreaterThan(0);
       for (const c of clips) expect(c.generate_audio).toBe(false);
     }
@@ -138,7 +138,7 @@ describe('makeHandsOnWorkflow — the order of the render', () => {
       fetchDraftAudio: (i: FetchDraftAudioInput) => ({ primitive_run_id: i.primitive_run_id, audio_key: i.audio_key, duration_ms: 11_960 }),
     });
     const result = await harness.execute('makeHandsOnWorkflow', [renderInput(12_000)], fakes);
-    const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+    const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
     expect(mux.audio_duration_ms).toBe(11_960);
     expect(result.duration_ms).toBe(11_960 + CUT_DRIFT_MS);
   });
@@ -146,7 +146,7 @@ describe('makeHandsOnWorkflow — the order of the render', () => {
   it('ships the draft’s own audio: nothing voices, and the mux uses the draft audio key', async () => {
     const fakes = happyFakes();
     await harness.execute('makeHandsOnWorkflow', [renderInput(12_000)], fakes);
-    const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+    const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
     expect(mux.audio_key).toBe(AUDIO_KEY);
     expect(mux.preset).toBe('hands_on');
     expect(fakes.names().filter((n) => /voice|tts|speech/i.test(n))).toEqual([]);
@@ -156,7 +156,7 @@ describe('makeHandsOnWorkflow — the order of the render', () => {
     for (const ms of [5_000, 9_000, 10_000, 10_001, 12_000, 15_000]) {
       const fakes = happyFakes();
       await harness.execute('makeHandsOnWorkflow', [renderInput(ms)], fakes);
-      const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+      const clips = fakes.callsTo('presetClip') as PresetClipInput[];
       const frames = fakes.callsTo('presetStartingFrame') as PresetStartingFrameInput[];
       const charged =
         clips.reduce((s, c) => s + quotePrimitiveCredits('product_hero_clip', c.duration), 0) +
@@ -173,7 +173,7 @@ describe('makeHandsOnWorkflow — prompts', () => {
       const fakes = happyFakes();
       await harness.execute('makeHandsOnWorkflow', [renderInput(12_000, { modesty: { arms, hijab: false } })], fakes);
       const frames = fakes.callsTo('presetStartingFrame') as PresetStartingFrameInput[];
-      const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+      const clips = fakes.callsTo('presetClip') as PresetClipInput[];
       for (const f of frames) expect(f.prompt.endsWith(MODESTY_PROMPTS.hands[arms])).toBe(true);
       for (const c of clips) {
         if (c.shot_kind === 'hands') expect(c.prompt.endsWith(MODESTY_PROMPTS.hands[arms])).toBe(true);
@@ -193,7 +193,7 @@ describe('makeHandsOnWorkflow — prompts', () => {
     const fakes = happyFakes();
     await harness.execute('makeHandsOnWorkflow', [renderInput(12_000, { hand_gender: 'male', setting: 'majlis' })], fakes);
     const [frame] = fakes.callsTo('presetStartingFrame') as PresetStartingFrameInput[];
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     for (const p of [frame.prompt, clips[0].prompt]) {
       expect(p).toContain(HAND_WORDS.male);
       expect(p).toContain(SETTING_WORDS.majlis);
@@ -222,7 +222,7 @@ describe('makeHandsOnWorkflow — refusals before anything is requested', () => 
       WorkflowFailedError,
     );
     expect(fakes.names()).not.toContain('presetStartingFrame');
-    expect(fakes.names()).not.toContain('productHeroClip');
+    expect(fakes.names()).not.toContain('presetClip');
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
     expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'INVALID_INPUT' });
     expect(fakes.callsTo('releaseDraftRender')).toEqual([{ skill_run_id: SKILL_RUN_ID, draft_id: 'draft-18' }]);
@@ -233,12 +233,12 @@ describe('makeHandsOnWorkflow — failure refunds every charged child and releas
   const failAt: Array<[string, CannedActivities]> = [
     ['the frame', { presetStartingFrame: () => { throw ApplicationFailure.nonRetryable('image refused', 'OPENAI_400'); } }],
     ['the second clip', {
-      productHeroClip: (i: ProductHeroClipInput) => {
+      presetClip: (i: PresetClipInput) => {
         if (i.shot_index === 1) throw ApplicationFailure.nonRetryable('provider refused', 'EVOLINK_400');
         return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 1.2 };
       },
     }],
-    ['the mux', { muxProductHero: () => { throw ApplicationFailure.nonRetryable('ffmpeg exploded', 'MUX_FAILED'); } }],
+    ['the mux', { presetMux: () => { throw ApplicationFailure.nonRetryable('ffmpeg exploded', 'MUX_FAILED'); } }],
   ];
 
   it.each(failAt)('a terminal failure at %s refunds every frame and clip, then gives the draft back', async (_where, overrides) => {
@@ -250,7 +250,7 @@ describe('makeHandsOnWorkflow — failure refunds every charged child and releas
     const refunded = new Set((fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id));
     const charged = [
       ...(fakes.callsTo('presetStartingFrame') as PresetStartingFrameInput[]),
-      ...(fakes.callsTo('productHeroClip') as ProductHeroClipInput[]),
+      ...(fakes.callsTo('presetClip') as PresetClipInput[]),
     ];
     expect(charged.length).toBeGreaterThan(0);
     for (const c of charged) expect(refunded.has(c.primitive_run_id)).toBe(true);
@@ -267,7 +267,7 @@ describe('makeHandsOnWorkflow — failure refunds every charged child and releas
     await expect(harness.execute('makeHandsOnWorkflow', [renderInput(12_000)], fakes)).rejects.toBeInstanceOf(
       WorkflowFailedError,
     );
-    expect(fakes.names()).not.toContain('productHeroClip');
+    expect(fakes.names()).not.toContain('presetClip');
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
     expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'OPENAI_400' });
   });

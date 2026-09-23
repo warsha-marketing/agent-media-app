@@ -2,7 +2,7 @@
 
 /**
  * presetStartingFrame (#18) — the starting frame of one Preset shot, made
- * before any clip and then animated silently by productHeroClip.
+ * before any clip and then animated silently by presetClip.
  *
  *   product_in_hands — a gpt-image edit of the user's (moderated, R2-hosted)
  *                      product photo: first-person hands holding the exact

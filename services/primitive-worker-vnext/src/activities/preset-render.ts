@@ -3,15 +3,19 @@
 /**
  * The Preset render activities (ADR 0001: audio first, the video model never
  * speaks). Every Preset's render (workflows/render-preset.ts,
- * renderPreset) runs them in order; the names date from Product Hero,
- * the first Preset, and stay stable for in-flight runs:
+ * renderPreset) runs them in order:
  *
- *   fetchDraftAudio  — read the approved draft's PRIVATE audio by key and measure it
- *   productHeroClip  — one silent Seedance clip from the product photo, prompted by
- *                      its Preset for its shot kind (generate_audio: false)
- *   muxProductHero   — hard-cut the clips, trim/hold the visuals to the audio's exact
- *                      length, and mux the draft audio in untouched (never trimmed,
- *                      never stretched)
+ *   fetchDraftAudio — read the approved draft's PRIVATE audio by key and measure it
+ *   presetClip      — one silent Seedance clip from its start image (the shot's
+ *                     starting frame, else the product photo), prompted by its
+ *                     Preset for its shot kind (generate_audio: false)
+ *   presetMux       — hard-cut the clips, trim/hold the visuals to the audio's exact
+ *                     length, and mux the draft audio in untouched (never trimmed,
+ *                     never stretched)
+ *
+ * The persisted names still date from Product Hero, the first Preset, and stay
+ * stable for existing rows and readers: primitive ids `product_hero_clip` and
+ * `product_hero_mux` (captions/short-captions.ts in api-v2 reads the latter).
  *
  * Each writes its own primitive_runs row under the parent skill run. Only the
  * clips are charged, at the shared per-clip price. They are exempt from the
@@ -40,7 +44,7 @@ import { VIDEO_CLIP_USD } from '@agentmedia/schema';
 
 const execFileP = promisify(execFile);
 
-/** The 9:16 canvas every Product Hero Short is cut onto. */
+/** The 9:16 canvas every Preset Short is cut onto. */
 const CANVAS = { w: 1080, h: 1920 };
 const FPS = 30;
 
@@ -103,14 +107,18 @@ export function makeFetchDraftAudioActivity(cfg: WorkerConfig) {
   };
 }
 
-// ── productHeroClip ──────────────────────────────────────────────────────────
+// ── presetClip ──────────────────────────────────────────────────────────
 
-export interface ProductHeroClipInput {
+export interface PresetClipInput {
   primitive_run_id: string;
   user_id: string;
   skill_run_id: string;
-  /** R2-hosted product photo (re-hosted and moderated by api-v2). */
-  product_image_url: string;
+  /**
+   * The R2-hosted image the shot is animated from (`@image1`): the shot's
+   * starting frame if its kind has one (#18), else the product photo
+   * (re-hosted and moderated by api-v2).
+   */
+  start_image_url: string;
   duration: 5 | 10;
   /** 0-based position of this shot in the Short, and how many shots it has. */
   shot_index: number;
@@ -129,22 +137,22 @@ export interface ProductHeroClipInput {
   character_image_url?: string;
 }
 
-export interface ProductHeroClipResult {
+export interface PresetClipResult {
   primitive_run_id: string;
   video_url: string;
   duration_seconds: 5 | 10;
   credits_actual_usd: number;
 }
 
-export function makeProductHeroClipActivity(cfg: WorkerConfig) {
-  return async function productHeroClip(input: ProductHeroClipInput): Promise<ProductHeroClipResult> {
+export function makePresetClipActivity(cfg: WorkerConfig) {
+  return async function presetClip(input: PresetClipInput): Promise<PresetClipResult> {
     const db = getDb(cfg.supabase.url, cfg.supabase.serviceRoleKey);
 
     if (input.generate_audio !== false) {
-      throw ApplicationFailure.nonRetryable('Product Hero clips never generate audio', 'INVALID_INPUT');
+      throw ApplicationFailure.nonRetryable('Preset clips never generate audio', 'INVALID_INPUT');
     }
     if (input.duration !== 5 && input.duration !== 10) {
-      throw ApplicationFailure.nonRetryable(`invalid Product Hero clip length ${input.duration}`, 'INVALID_INPUT');
+      throw ApplicationFailure.nonRetryable(`invalid Preset clip length ${input.duration}`, 'INVALID_INPUT');
     }
     if (typeof input.prompt !== 'string' || input.prompt.trim() === '') {
       throw ApplicationFailure.nonRetryable(`no prompt for ${input.preset} shot ${input.shot_kind}`, 'INVALID_INPUT');
@@ -168,11 +176,11 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
       };
     }
 
-    // SSRF guard — the product photo must be on our R2.
+    // SSRF guard — the start image must be on our R2.
     const allowedPrefix = cfg.r2.publicUrl.replace(/\/+$/, '') + '/';
-    if (!input.product_image_url.startsWith(allowedPrefix)) {
+    if (!input.start_image_url.startsWith(allowedPrefix)) {
       throw ApplicationFailure.nonRetryable(
-        `product_image_url must be hosted on the configured R2 public URL (${allowedPrefix})`,
+        `start_image_url must be hosted on the configured R2 public URL (${allowedPrefix})`,
         'REFERENCE_URL_NOT_ALLOWED',
       );
     }
@@ -213,7 +221,7 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
         primitive_id: 'product_hero_clip',
         status: 'submitted',
         input: {
-          product_image_url: input.product_image_url,
+          start_image_url: input.start_image_url,
           duration: input.duration,
           shot_index: input.shot_index,
           shot_count: input.shot_count,
@@ -252,8 +260,8 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
         try {
           const result = await generateSimpleSelfieEvolink({
             prompt,
-            // @image1 the product; @image2 the person, on a shot that shows one.
-            imageUrls: characterImageUrl ? [input.product_image_url, characterImageUrl] : [input.product_image_url],
+            // @image1 the start image; @image2 the person, on a shot that shows one.
+            imageUrls: characterImageUrl ? [input.start_image_url, characterImageUrl] : [input.start_image_url],
             duration: input.duration,
             aspectRatio: '9:16',
             // ADR 0001: the video model never speaks.
@@ -314,7 +322,7 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
           duration_seconds: input.duration,
           generate_audio: false,
           shot_index: input.shot_index,
-          source_product_image_url: input.product_image_url,
+          source_start_image_url: input.start_image_url,
           ...(characterImageUrl ? { source_character_image_url: characterImageUrl } : {}),
         },
       });
@@ -346,9 +354,9 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
   };
 }
 
-// ── muxProductHero ───────────────────────────────────────────────────────────
+// ── presetMux ───────────────────────────────────────────────────────────
 
-export interface MuxProductHeroInput {
+export interface PresetMuxInput {
   primitive_run_id: string;
   user_id: string;
   skill_run_id: string;
@@ -369,7 +377,7 @@ export interface MuxProductHeroInput {
   shot_ms?: number[];
 }
 
-export interface MuxProductHeroResult {
+export interface PresetMuxResult {
   primitive_run_id: string;
   video_url: string;
   /** Length of the finished Short, measured from the output file. */
@@ -382,7 +390,7 @@ export interface MuxProductHeroResult {
  * the last frame if the clips fall a few ms short, and trims the visuals to
  * exactly `seconds`. Clip audio (there should be none) is never mapped.
  */
-export function productHeroCutFilter(clipCount: number, seconds: number, shotMs?: readonly number[]): string {
+export function presetCutFilter(clipCount: number, seconds: number, shotMs?: readonly number[]): string {
   // An intercut Preset's shot is cut to its planned share before the concat.
   const cut = (i: number) => (shotMs ? `trim=duration=${(shotMs[i] / 1000).toFixed(3)},` : '');
   const segs = Array.from({ length: clipCount }, (_, i) =>
@@ -397,8 +405,8 @@ export function productHeroCutFilter(clipCount: number, seconds: number, shotMs?
   );
 }
 
-export function makeMuxProductHeroActivity(cfg: WorkerConfig) {
-  return async function muxProductHero(input: MuxProductHeroInput): Promise<MuxProductHeroResult> {
+export function makePresetMuxActivity(cfg: WorkerConfig) {
+  return async function presetMux(input: PresetMuxInput): Promise<PresetMuxResult> {
     const db = getDb(cfg.supabase.url, cfg.supabase.serviceRoleKey);
     if (!Array.isArray(input.clip_urls) || input.clip_urls.length === 0) {
       throw ApplicationFailure.nonRetryable('no clips to cut', 'INVALID_INPUT');
@@ -444,7 +452,7 @@ export function makeMuxProductHeroActivity(cfg: WorkerConfig) {
           '-y',
           ...clipPaths.flatMap((p) => ['-i', p]),
           '-i', audioPath,
-          '-filter_complex', productHeroCutFilter(clipPaths.length, audioSeconds, shotMs),
+          '-filter_complex', presetCutFilter(clipPaths.length, audioSeconds, shotMs),
           '-map', '[v]',
           // The whole draft audio: no -t, no -shortest, no atempo.
           '-map', `${clipPaths.length}:a:0`,

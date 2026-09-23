@@ -3,7 +3,7 @@
 /**
  * Music Bed mix (#9) — lays one licensed track under a finished Short's voice.
  *
- * Runs after the cut (muxProductHero) only when api-v2 chose a track
+ * Runs after the cut (presetMux) only when api-v2 chose a track
  * (resolveMusicBed in @agentmedia/schema; the set and its licences are data in
  * packages/schema/src/music-bed/). With the Music Bed off, or no licensed track
  * for the Preset, this step does not run and the Short's audio is the draft

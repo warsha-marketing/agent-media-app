@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { planPresetShots, REACTION } from '@agentmedia/schema';
-import { productHeroCutFilter } from '../activities/product-hero.js';
+import { presetCutFilter } from '../activities/preset-render.js';
 
 const run = promisify(execFile);
 const hasFfmpeg = (() => {
@@ -43,7 +43,7 @@ async function colourAt(path: string, t: number): Promise<'red' | 'blue'> {
   return stdout[0] > stdout[2] ? 'red' : 'blue';
 }
 
-describe.skipIf(!hasFfmpeg)('productHeroCutFilter with planned shot lengths (real ffmpeg)', () => {
+describe.skipIf(!hasFfmpeg)('presetCutFilter with planned shot lengths (real ffmpeg)', () => {
   it('cuts each 5 s clip to its share, in order, to exactly the audio length', async () => {
     const ms = 12_000;
     const shots = planPresetShots(REACTION, ms); // 4 shots of 3 s
@@ -59,7 +59,7 @@ describe.skipIf(!hasFfmpeg)('productHeroCutFilter with planned shot lengths (rea
     await run('ffmpeg', [
       '-y',
       ...clips.flatMap((p) => ['-i', p]),
-      '-filter_complex', productHeroCutFilter(clips.length, seconds, shots.map((s) => s.onScreenMs!)),
+      '-filter_complex', presetCutFilter(clips.length, seconds, shots.map((s) => s.onScreenMs!)),
       '-map', '[v]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '30', out,
     ]);
     const { stdout } = await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration', '-of', 'csv=p=0', out]);
@@ -72,7 +72,7 @@ describe.skipIf(!hasFfmpeg)('productHeroCutFilter with planned shot lengths (rea
   }, 60_000);
 
   it('without planned lengths, plays the clips whole (Product Hero unchanged)', () => {
-    const filter = productHeroCutFilter(2, 12);
+    const filter = presetCutFilter(2, 12);
     expect(filter).not.toMatch(/\[\d:v\][^;]*trim=/);
     expect(filter).toContain('trim=duration=12.000');
   });

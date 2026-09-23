@@ -19,10 +19,10 @@ import { makeRefundCreditsActivity } from './refund-credits.js';
 import { makeMarkPrimitiveRunFailedActivity } from './mark-run-failed.js';
 import {
   makeFetchDraftAudioActivity,
-  makeProductHeroClipActivity,
-  makeMuxProductHeroActivity,
+  makePresetClipActivity,
+  makePresetMuxActivity,
   makeReleaseDraftRenderActivity,
-} from './product-hero.js';
+} from './preset-render.js';
 // Music Bed (#9) — self-contained; mixed after the Product Hero cut.
 import { makeMixMusicBedActivity } from './music-bed.js';
 // Arabic Captions (#10) — burned last, from cues the workflow derives from the draft alignment.
@@ -49,8 +49,8 @@ export function createActivities(cfg: WorkerConfig) {
     podcastScene: makePodcastSceneActivity(cfg),
     podcastReframe: makePodcastReframeActivity(cfg),
     fetchDraftAudio: makeFetchDraftAudioActivity(cfg),
-    productHeroClip: makeProductHeroClipActivity(cfg),
-    muxProductHero: makeMuxProductHeroActivity(cfg),
+    presetClip: makePresetClipActivity(cfg),
+    presetMux: makePresetMuxActivity(cfg),
     releaseDraftRender: makeReleaseDraftRenderActivity(cfg),
     mixMusicBed: makeMixMusicBedActivity(cfg),
     burnCaptions: makeBurnCaptionsActivity(cfg),

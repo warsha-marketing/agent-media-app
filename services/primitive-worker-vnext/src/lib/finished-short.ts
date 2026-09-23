@@ -1,7 +1,7 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * One ffmpeg pass over a finished Short (the cut from muxProductHero, or its
+ * One ffmpeg pass over a finished Short (the cut from presetMux, or its
  * previous pass), published as the Short's new version. The Music Bed mix and
  * the Arabic Captions burn are both this; each supplies only its inputs and
  * its ffmpeg arguments.

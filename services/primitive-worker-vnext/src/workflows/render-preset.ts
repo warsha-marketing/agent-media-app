@@ -23,14 +23,14 @@
  *                        frame (e.g. Hands-on's product-in-hands image): one
  *                        image per such planned shot, all before any clip. The
  *                        shot is then animated from its frame, not the photo.
- *   2. productHeroClip — one silent clip per planned shot (generate_audio: false),
+ *   2. presetClip — one silent clip per planned shot (generate_audio: false),
  *                        from the product photo, prompted for its shot kind (plus the Modesty Default on every
  *                        shot that shows a person or hands, #17). Shots
  *                        come from the SAME plan the quote priced (planPresetShots
  *                        over the draft's duration), so the charge is the quote.
  *                        A shot showing a person also gets the person's reference
  *                        (character_image_url, Reaction #19).
- *   3. muxProductHero  — hard-cuts the clips on the 9:16 canvas (shots with a
+ *   3. presetMux  — hard-cuts the clips on the 9:16 canvas (shots with a
  *                        planned on-screen share each cut to it), trims (or, if a
  *                        clip ran a few ms short, holds) the visuals to the audio's
  *                        exact length, and muxes the draft audio in whole. Audio is
@@ -147,12 +147,12 @@ const NON_RETRYABLE = [
   'EVOLINK_400', 'EVOLINK_401', 'EVOLINK_403', 'EVOLINK_404', 'EVOLINK_413', 'EVOLINK_415', 'EVOLINK_422', 'EVOLINK_451',
 ];
 
-const { productHeroClip, presetStartingFrame } = proxyActivities<PrimitiveActivities>({
+const { presetClip, presetStartingFrame } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '20 minutes',
   heartbeatTimeout: '5 minutes',
   retry: { initialInterval: '10s', maximumInterval: '2m', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: NON_RETRYABLE },
 });
-const { fetchDraftAudio, muxProductHero, mixMusicBed } = proxyActivities<PrimitiveActivities>({
+const { fetchDraftAudio, presetMux, mixMusicBed } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '10 minutes',
   heartbeatTimeout: '2 minutes',
   retry: { initialInterval: '5s', maximumInterval: '60s', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: NON_RETRYABLE },
@@ -252,12 +252,12 @@ export async function renderPreset(
     const clipUrls: string[] = [];
     for (let i = 0; i < shots.length; i += 1) {
       await composedSkillState({ skill_run_id: skillRunId, current_step: `clip_${i + 1}` });
-      const clip = await productHeroClip({
+      const clip = await presetClip({
         primitive_run_id: mint(`clip_${i}`),
         user_id: input.user_id,
         skill_run_id: skillRunId,
-        // The shot's reference image: its starting frame if it has one, else the photo.
-        product_image_url: frameUrls[i] ?? input.product_image_url,
+        // The shot's start image: its starting frame if it has one, else the photo.
+        start_image_url: frameUrls[i] ?? input.product_image_url,
         duration: shots[i].seconds,
         shot_index: i,
         shot_count: shots.length,
@@ -276,7 +276,7 @@ export async function renderPreset(
 
     // ── 3. Cut the visuals to the audio and mux the draft audio in ─────────
     await composedSkillState({ skill_run_id: skillRunId, current_step: 'mux' });
-    let short = await muxProductHero({
+    let short = await presetMux({
       primitive_run_id: mint('mux'),
       user_id: input.user_id,
       skill_run_id: skillRunId,

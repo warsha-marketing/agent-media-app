@@ -14,9 +14,9 @@ import { startWorkflowHarness, fakeActivities, type CannedActivities, type Workf
 import type { MakeProductHeroWorkflowInput } from '../workflows/make-product-hero.js';
 import type {
   FetchDraftAudioInput,
-  ProductHeroClipInput,
-  MuxProductHeroInput,
-} from '../activities/product-hero.js';
+  PresetClipInput,
+  PresetMuxInput,
+} from '../activities/preset-render.js';
 
 const SKILL_RUN_ID = '11111111-2222-4333-8444-555555555555';
 const AUDIO_KEY = 'vnext/drafts/user-1/draft-1.mp3';
@@ -39,7 +39,7 @@ function renderInput(durationMs: number): MakeProductHeroWorkflowInput {
 const CUT_DRIFT_MS = 23;
 
 /** A mux whose finished Short measures `audio + driftMs`. */
-const muxMeasuring = (driftMs: number) => (i: MuxProductHeroInput) => ({
+const muxMeasuring = (driftMs: number) => (i: PresetMuxInput) => ({
   primitive_run_id: i.primitive_run_id,
   video_url: 'https://r2.example.test/shorts/final.mp4',
   duration_ms: i.audio_duration_ms + driftMs,
@@ -60,13 +60,13 @@ function happyFakes(overrides: CannedActivities = {}) {
       audio_key: i.audio_key,
       duration_ms: i.duration_ms,
     }),
-    productHeroClip: (i: ProductHeroClipInput) => ({
+    presetClip: (i: PresetClipInput) => ({
       primitive_run_id: i.primitive_run_id,
       video_url: `https://r2.example.test/clips/${i.shot_index}.mp4`,
       duration_seconds: i.duration,
       credits_actual_usd: i.duration === 10 ? 1.2 : 0.6,
     }),
-    muxProductHero: muxMeasuring(CUT_DRIFT_MS),
+    presetMux: muxMeasuring(CUT_DRIFT_MS),
     ...overrides,
   });
 }
@@ -87,18 +87,18 @@ describe('makeProductHeroWorkflow — audio first, silent visuals cut to the aud
     await harness.execute('makeProductHeroWorkflow', [renderInput(12_000)], fakes);
 
     const steps = fakes.names().filter((n) => n !== 'composedSkillState');
-    expect(steps).toEqual(['fetchDraftAudio', 'productHeroClip', 'productHeroClip', 'muxProductHero']);
+    expect(steps).toEqual(['fetchDraftAudio', 'presetClip', 'presetClip', 'presetMux']);
   });
 
   it('asks for every clip with the video model’s own audio disabled, from the product photo', async () => {
     const fakes = happyFakes();
     await harness.execute('makeProductHeroWorkflow', [renderInput(14_000)], fakes);
 
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.length).toBeGreaterThan(0);
     for (const c of clips) {
       expect(c.generate_audio).toBe(false);
-      expect(c.product_image_url).toBe('https://r2.example.test/uploads/product.png');
+      expect(c.start_image_url).toBe('https://r2.example.test/uploads/product.png');
       expect(c.skill_run_id).toBe(SKILL_RUN_ID);
     }
   });
@@ -109,10 +109,10 @@ describe('makeProductHeroWorkflow — audio first, silent visuals cut to the aud
       const fakes = happyFakes();
       const result = await harness.execute('makeProductHeroWorkflow', [renderInput(durationMs)], fakes);
 
-      const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+      const clips = fakes.callsTo('presetClip') as PresetClipInput[];
       const visualsMs = clips.reduce((s, c) => s + c.duration * 1000, 0);
       expect(visualsMs).toBeGreaterThanOrEqual(durationMs); // visuals cover the speech
-      const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+      const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
       expect(mux.audio_duration_ms).toBe(durationMs); // cut to the audio's length
       expect(mux.clip_urls).toHaveLength(clips.length);
       // The Short's length is what the mux MEASURED, and it matches the audio.
@@ -126,7 +126,7 @@ describe('makeProductHeroWorkflow — audio first, silent visuals cut to the aud
       fetchDraftAudio: (i: FetchDraftAudioInput) => ({ primitive_run_id: i.primitive_run_id, audio_key: i.audio_key, duration_ms: 9_012 }),
     });
     const result = await harness.execute('makeProductHeroWorkflow', [renderInput(9_000)], fakes);
-    const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+    const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
     expect(mux.audio_duration_ms).toBe(9_012);
     expect(result.duration_ms).toBe(9_012 + CUT_DRIFT_MS);
   });
@@ -135,11 +135,11 @@ describe('makeProductHeroWorkflow — audio first, silent visuals cut to the aud
     const fakes = happyFakes();
     await harness.execute('makeProductHeroWorkflow', [renderInput(9_000)], fakes);
 
-    const allowed = new Set(['composedSkillState', 'fetchDraftAudio', 'productHeroClip', 'muxProductHero']);
+    const allowed = new Set(['composedSkillState', 'fetchDraftAudio', 'presetClip', 'presetMux']);
     for (const name of fakes.names()) expect(allowed.has(name)).toBe(true);
     const [audio] = fakes.callsTo('fetchDraftAudio') as FetchDraftAudioInput[];
     expect(audio.audio_key).toBe(AUDIO_KEY);
-    const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+    const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
     expect(mux.audio_key).toBe(AUDIO_KEY);
   });
 
@@ -176,12 +176,12 @@ describe('makeProductHeroWorkflow — failure refunds every charged child', () =
   const failAt: Array<[string, CannedActivities]> = [
     ['the audio fetch', { fetchDraftAudio: () => { throw ApplicationFailure.nonRetryable('no such object', 'DRAFT_AUDIO_MISSING'); } }],
     ['the second clip', {
-      productHeroClip: (i: ProductHeroClipInput) => {
+      presetClip: (i: PresetClipInput) => {
         if (i.shot_index === 1) throw ApplicationFailure.nonRetryable('provider 500', 'EVOLINK_400');
         return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 1.2 };
       },
     }],
-    ['the mux', { muxProductHero: () => { throw ApplicationFailure.nonRetryable('ffmpeg exploded', 'MUX_FAILED'); } }],
+    ['the mux', { presetMux: () => { throw ApplicationFailure.nonRetryable('ffmpeg exploded', 'MUX_FAILED'); } }],
   ];
 
   it.each(failAt)('a terminal failure at %s refunds every clip it charged and fails the run', async (_where, overrides) => {
@@ -190,7 +190,7 @@ describe('makeProductHeroWorkflow — failure refunds every charged child', () =
     await expect(run).rejects.toBeInstanceOf(WorkflowFailedError);
 
     const refunded = new Set((fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id));
-    for (const clip of fakes.callsTo('productHeroClip') as ProductHeroClipInput[]) {
+    for (const clip of fakes.callsTo('presetClip') as PresetClipInput[]) {
       expect(refunded.has(clip.primitive_run_id)).toBe(true);
     }
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
@@ -198,9 +198,9 @@ describe('makeProductHeroWorkflow — failure refunds every charged child', () =
     // Nothing is rendered after a failure.
     const names = fakes.names();
     expect(names.lastIndexOf('refundCredits')).toBeGreaterThan(Math.max(
-      names.lastIndexOf('productHeroClip'),
+      names.lastIndexOf('presetClip'),
       names.lastIndexOf('fetchDraftAudio'),
-      names.lastIndexOf('muxProductHero'),
+      names.lastIndexOf('presetMux'),
     ));
   });
 
@@ -225,7 +225,7 @@ describe('makeProductHeroWorkflow — failure refunds every charged child', () =
 
   it('still fails with the render’s own error when giving the draft back fails', async () => {
     const fakes = happyFakes({
-      muxProductHero: () => { throw ApplicationFailure.nonRetryable('ffmpeg exploded', 'MUX_FAILED'); },
+      presetMux: () => { throw ApplicationFailure.nonRetryable('ffmpeg exploded', 'MUX_FAILED'); },
       releaseDraftRender: () => { throw ApplicationFailure.nonRetryable('db down', 'DB_DOWN'); },
     });
     const run = harness.execute('makeProductHeroWorkflow', [renderInput(12_000)], fakes);
@@ -241,17 +241,17 @@ describe('makeProductHeroWorkflow — failure refunds every charged child', () =
   });
 
   it.each([-50, 50])('accepts a cut measured %i ms off the audio (within a frame or so)', async (drift) => {
-    const fakes = happyFakes({ muxProductHero: muxMeasuring(drift) });
+    const fakes = happyFakes({ presetMux: muxMeasuring(drift) });
     const result = await harness.execute('makeProductHeroWorkflow', [renderInput(10_000)], fakes);
     expect(result.duration_ms).toBe(10_000 + drift);
     expect(fakes.names()).not.toContain('refundCredits');
   });
 
   it.each([-500, -51, 51, 2_000])('fails a cut measured %i ms off the audio, and refunds', async (drift) => {
-    const fakes = happyFakes({ muxProductHero: muxMeasuring(drift) });
+    const fakes = happyFakes({ presetMux: muxMeasuring(drift) });
     const run = harness.execute('makeProductHeroWorkflow', [renderInput(10_000)], fakes);
     await expect(run).rejects.toBeInstanceOf(WorkflowFailedError);
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     const refunded = (fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id);
     for (const c of clips) expect(refunded).toContain(c.primitive_run_id);
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
@@ -265,7 +265,7 @@ describe('makeProductHeroWorkflow — a blocked product photo', () => {
     const fakes = happyFakes({
       // Even a failure not flagged non-retryable must not be resubmitted: a
       // moderation decision is final, and each retry is another paid render.
-      productHeroClip: () => {
+      presetClip: () => {
         throw ApplicationFailure.create({
           message: 'The generated video was blocked by content moderation.',
           type: 'EVOLINK_CONTENT_POLICY_VIOLATION',
@@ -277,7 +277,7 @@ describe('makeProductHeroWorkflow — a blocked product photo', () => {
     const run = harness.execute('makeProductHeroWorkflow', [renderInput(12_000)], fakes);
     await expect(run).rejects.toBeInstanceOf(WorkflowFailedError);
 
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips).toHaveLength(1);
     expect(fakes.callsTo('refundCredits')).toContainEqual({ primitive_run_id: clips[0].primitive_run_id });
     expect(fakes.callsTo('markPrimitiveRunFailed')).toContainEqual(
@@ -285,6 +285,6 @@ describe('makeProductHeroWorkflow — a blocked product photo', () => {
     );
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
     expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'EVOLINK_CONTENT_POLICY_VIOLATION' });
-    expect(fakes.names()).not.toContain('muxProductHero');
+    expect(fakes.names()).not.toContain('presetMux');
   });
 });

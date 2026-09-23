@@ -16,7 +16,7 @@ import type { TestPresetRenderInput } from './support/test-preset-workflow.js';
 import type { PresetRenderDefinition } from '../presets/index.js';
 import { PRODUCT_HERO_RENDER } from '../presets/index.js';
 import { MODESTY_PROMPTS } from '../presets/modesty.js';
-import type { FetchDraftAudioInput, ProductHeroClipInput, MuxProductHeroInput } from '../activities/product-hero.js';
+import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
 
 const SKILL_RUN_ID = '99999999-2222-4333-8444-555555555555';
 const AUDIO_KEY = 'vnext/drafts/user-1/draft-9.mp3';
@@ -62,13 +62,13 @@ function happyFakes(overrides: CannedActivities = {}) {
     markPrimitiveRunFailed: undefined,
     releaseDraftRender: undefined,
     fetchDraftAudio: (i: FetchDraftAudioInput) => ({ primitive_run_id: i.primitive_run_id, audio_key: i.audio_key, duration_ms: i.duration_ms }),
-    productHeroClip: (i: ProductHeroClipInput) => ({
+    presetClip: (i: PresetClipInput) => ({
       primitive_run_id: i.primitive_run_id,
       video_url: `https://r2.example.test/clips/${i.shot_index}.mp4`,
       duration_seconds: i.duration,
       credits_actual_usd: i.duration === 10 ? 1.2 : 0.6,
     }),
-    muxProductHero: (i: MuxProductHeroInput) => ({
+    presetMux: (i: PresetMuxInput) => ({
       primitive_run_id: i.primitive_run_id,
       video_url: 'https://r2.example.test/shorts/final.mp4',
       duration_ms: i.audio_duration_ms + 11,
@@ -93,7 +93,7 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
     const fakes = happyFakes();
     await harness.execute('renderTestPresetWorkflow', [renderInput(12_000)], fakes);
 
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => [c.shot_kind, c.duration])).toEqual([
       ['person', 10],
       ['product', 5],
@@ -109,9 +109,9 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
   it('never collapses to one clip: ≤10 s is two 5 s clips ending on the declared last kind, cut to half each', async () => {
     const fakes = happyFakes();
     await harness.execute('renderTestPresetWorkflow', [renderInput(8_000)], fakes);
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => [c.shot_kind, c.duration])).toEqual([['person', 5], ['product', 5]]);
-    const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+    const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
     expect(mux.shot_ms).toEqual([4_000, 4_000]);
   });
 
@@ -121,16 +121,16 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
 
     expect(fakes.names().filter((n) => n !== 'composedSkillState')).toEqual([
       'fetchDraftAudio',
-      'productHeroClip',
-      'productHeroClip',
-      'muxProductHero',
+      'presetClip',
+      'presetClip',
+      'presetMux',
     ]);
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     for (const c of clips) {
       expect(c.generate_audio).toBe(false);
-      expect(c.product_image_url).toBe(PHOTO);
+      expect(c.start_image_url).toBe(PHOTO);
     }
-    const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+    const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
     expect(mux.audio_key).toBe(AUDIO_KEY);
     expect(mux.audio_duration_ms).toBe(12_480);
     expect(mux.preset).toBe('test_intercut');
@@ -140,7 +140,7 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
   it('plans exactly what the shared planner quotes for the Preset', async () => {
     const fakes = happyFakes();
     await harness.execute('renderTestPresetWorkflow', [renderInput(14_000)], fakes);
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => ({ kind: c.shot_kind, seconds: c.duration }))).toEqual(planPresetShots(INTERCUT, 14_000));
   });
 
@@ -150,7 +150,7 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
     await expect(harness.execute('renderTestPresetWorkflow', [renderInput(12_000, narrow)], fakes)).rejects.toBeInstanceOf(
       WorkflowFailedError,
     );
-    expect(fakes.names()).not.toContain('productHeroClip');
+    expect(fakes.names()).not.toContain('presetClip');
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
     expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'INVALID_INPUT' });
   });
@@ -160,7 +160,7 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
     const input = { ...renderInput(9_000), product_image_url: '' };
     await expect(harness.execute('renderTestPresetWorkflow', [input], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
     expect(fakes.names()).not.toContain('fetchDraftAudio');
-    expect(fakes.names()).not.toContain('productHeroClip');
+    expect(fakes.names()).not.toContain('presetClip');
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
     expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'INVALID_INPUT' });
     expect(fakes.callsTo('releaseDraftRender')).toEqual([{ skill_run_id: SKILL_RUN_ID, draft_id: 'draft-9' }]);
@@ -168,7 +168,7 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
 
   it('refunds every charged clip and releases the draft when a clip fails', async () => {
     const fakes = happyFakes({
-      productHeroClip: (i: ProductHeroClipInput) => {
+      presetClip: (i: PresetClipInput) => {
         if (i.shot_index === 1) throw ApplicationFailure.nonRetryable('provider refused', 'EVOLINK_400');
         return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 1.2 };
       },
@@ -178,7 +178,7 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
     );
 
     const refunded = new Set((fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id));
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips).toHaveLength(2);
     for (const c of clips) expect(refunded.has(c.primitive_run_id)).toBe(true);
     const names = fakes.names();
@@ -193,10 +193,10 @@ describe('makeProductHeroWorkflow — Product Hero is one definition on that pip
     const { preset: _preset, ...heroInput } = renderInput(12_000);
     await harness.execute('makeProductHeroWorkflow', [heroInput], fakes);
 
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => c.shot_kind)).toEqual(['hero', 'detail']);
     expect(clips.map((c) => c.prompt)).toEqual([PRODUCT_HERO_RENDER.shotPrompts.hero, PRODUCT_HERO_RENDER.shotPrompts.detail]);
-    const [mux] = fakes.callsTo('muxProductHero') as MuxProductHeroInput[];
+    const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
     expect(mux.preset).toBe('product_hero');
   });
 
@@ -204,7 +204,7 @@ describe('makeProductHeroWorkflow — Product Hero is one definition on that pip
     const fakes = happyFakes();
     const smuggled = { ...renderInput(12_000), preset: { ...INTERCUT, id: 'product_hero' } };
     await harness.execute('makeProductHeroWorkflow', [smuggled as never], fakes);
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => c.shot_kind)).toEqual(['hero', 'detail']);
     expect(clips.map((c) => c.prompt)).toEqual([PRODUCT_HERO_RENDER.shotPrompts.hero, PRODUCT_HERO_RENDER.shotPrompts.detail]);
   });

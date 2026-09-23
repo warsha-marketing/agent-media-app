@@ -13,7 +13,7 @@ import { startWorkflowHarness, fakeActivities, type WorkflowHarness } from './su
 import type { TestPresetRenderInput } from './support/test-preset-workflow.js';
 import { PRODUCT_HERO_RENDER, type PresetRenderDefinition } from '../presets/index.js';
 import { MODESTY_PROMPTS } from '../presets/modesty.js';
-import type { FetchDraftAudioInput, ProductHeroClipInput, MuxProductHeroInput } from '../activities/product-hero.js';
+import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
 
 const SKILL_RUN_ID = '99999999-3333-4333-8444-555555555555';
 
@@ -62,13 +62,13 @@ function happyFakes() {
     markPrimitiveRunFailed: undefined,
     releaseDraftRender: undefined,
     fetchDraftAudio: (i: FetchDraftAudioInput) => ({ primitive_run_id: i.primitive_run_id, audio_key: i.audio_key, duration_ms: i.duration_ms }),
-    productHeroClip: (i: ProductHeroClipInput) => ({
+    presetClip: (i: PresetClipInput) => ({
       primitive_run_id: i.primitive_run_id,
       video_url: `https://r2.example.test/clips/${i.shot_index}.mp4`,
       duration_seconds: i.duration,
       credits_actual_usd: i.duration === 10 ? 1.2 : 0.6,
     }),
-    muxProductHero: (i: MuxProductHeroInput) => ({
+    presetMux: (i: PresetMuxInput) => ({
       primitive_run_id: i.primitive_run_id,
       video_url: 'https://r2.example.test/shorts/final.mp4',
       duration_ms: i.audio_duration_ms,
@@ -93,7 +93,7 @@ describe('the Modesty Default in every people and hands prompt', () => {
     // 30 s → [10, 10, 10]: person, hands, product.
     await harness.execute('renderTestPresetWorkflow', [renderInput(30_000, { arms: 'covered', hijab: false })], fakes);
 
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => c.shot_kind)).toEqual(['person', 'hands', 'product']);
     const byKind = Object.fromEntries(clips.map((c) => [c.shot_kind, c.prompt]));
     expect(byKind.person).toBe(`${PEOPLE.shotPrompts.person} ${MODESTY_PROMPTS.person.covered}`);
@@ -105,7 +105,7 @@ describe('the Modesty Default in every people and hands prompt', () => {
     const fakes = happyFakes();
     await harness.execute('renderTestPresetWorkflow', [renderInput(30_000, { arms: 'sleeved', hijab: true })], fakes);
 
-    const byKind = Object.fromEntries((fakes.callsTo('productHeroClip') as ProductHeroClipInput[]).map((c) => [c.shot_kind, c.prompt]));
+    const byKind = Object.fromEntries((fakes.callsTo('presetClip') as PresetClipInput[]).map((c) => [c.shot_kind, c.prompt]));
     expect(byKind.person).toBe(`${PEOPLE.shotPrompts.person} ${MODESTY_PROMPTS.person.sleeved} ${MODESTY_PROMPTS.hijab}`);
     expect(byKind.hands).toBe(`${PEOPLE.shotPrompts.hands} ${MODESTY_PROMPTS.hands.sleeved}`);
     expect(byKind.product).toBe(PEOPLE.shotPrompts.product);
@@ -121,7 +121,7 @@ describe('the Modesty Default in every people and hands prompt', () => {
     };
     const fakes = happyFakes();
     await harness.execute('renderTestPresetWorkflow', [renderInput(12_000, undefined, handsOnly)], fakes);
-    const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => c.prompt)).toEqual([
       `${PEOPLE.shotPrompts.hands} ${MODESTY_PROMPTS.hands.covered}`,
       PEOPLE.shotPrompts.product,
@@ -135,7 +135,7 @@ describe('the Modesty Default in every people and hands prompt', () => {
       harness.execute('renderTestPresetWorkflow', [renderInput(12_000, { arms: 'sleeved', hijab: false }, strict)], fakes),
     ).rejects.toBeInstanceOf(WorkflowFailedError);
     expect(fakes.names()).not.toContain('fetchDraftAudio');
-    expect(fakes.names()).not.toContain('productHeroClip');
+    expect(fakes.names()).not.toContain('presetClip');
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
     expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'INVALID_INPUT' });
     expect(fakes.callsTo('releaseDraftRender')).toEqual([{ skill_run_id: SKILL_RUN_ID, draft_id: 'draft-17' }]);
@@ -146,7 +146,7 @@ describe('the Modesty Default in every people and hands prompt', () => {
     await expect(harness.execute('renderTestPresetWorkflow', [renderInput(12_000, null)], fakes)).rejects.toBeInstanceOf(
       WorkflowFailedError,
     );
-    expect(fakes.names()).not.toContain('productHeroClip');
+    expect(fakes.names()).not.toContain('presetClip');
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
     expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'INVALID_INPUT' });
   });
@@ -155,7 +155,7 @@ describe('the Modesty Default in every people and hands prompt', () => {
     const fakes = happyFakes();
     const { preset: _p, ...heroInput } = renderInput(12_000, { arms: 'covered', hijab: true }, PRODUCT_HERO_RENDER);
     await expect(harness.execute('makeProductHeroWorkflow', [heroInput], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
-    expect(fakes.names()).not.toContain('productHeroClip');
+    expect(fakes.names()).not.toContain('presetClip');
   });
 });
 
@@ -165,7 +165,7 @@ describe('Product Hero (no people, no hands): the Modesty Default is a no-op', (
       const fakes = happyFakes();
       const { preset: _p, ...heroInput } = renderInput(12_000, modesty, PRODUCT_HERO_RENDER);
       await harness.execute('makeProductHeroWorkflow', [heroInput], fakes);
-      const clips = fakes.callsTo('productHeroClip') as ProductHeroClipInput[];
+      const clips = fakes.callsTo('presetClip') as PresetClipInput[];
       expect(clips.map((c) => c.prompt)).toEqual([PRODUCT_HERO_RENDER.shotPrompts.hero, PRODUCT_HERO_RENDER.shotPrompts.detail]);
     }
   });

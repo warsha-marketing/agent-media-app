@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startWorkflowHarness, fakeActivities, type WorkflowHarness } from './support/workflow-harness.js';
 import type { MakeProductHeroWorkflowInput } from '../workflows/make-product-hero.js';
-import type { FetchDraftAudioInput, ProductHeroClipInput, MuxProductHeroInput } from '../activities/product-hero.js';
+import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
 import type { MixMusicBedInput } from '../activities/music-bed.js';
 
 const MUX_URL = 'https://r2.example.test/shorts/voice-only.mp4';
@@ -35,13 +35,13 @@ function fakes() {
     markPrimitiveRunFailed: undefined,
     releaseDraftRender: undefined,
     fetchDraftAudio: (i: FetchDraftAudioInput) => ({ primitive_run_id: i.primitive_run_id, audio_key: i.audio_key, duration_ms: i.duration_ms }),
-    productHeroClip: (i: ProductHeroClipInput) => ({
+    presetClip: (i: PresetClipInput) => ({
       primitive_run_id: i.primitive_run_id,
       video_url: `https://r2.example.test/clips/${i.shot_index}.mp4`,
       duration_seconds: i.duration,
       credits_actual_usd: 0.6,
     }),
-    muxProductHero: (i: MuxProductHeroInput) => ({ primitive_run_id: i.primitive_run_id, video_url: MUX_URL, duration_ms: i.audio_duration_ms + 20, artifact_id: 'a-mux' }),
+    presetMux: (i: PresetMuxInput) => ({ primitive_run_id: i.primitive_run_id, video_url: MUX_URL, duration_ms: i.audio_duration_ms + 20, artifact_id: 'a-mux' }),
     mixMusicBed: (i: MixMusicBedInput) => ({ primitive_run_id: i.primitive_run_id, video_url: MIX_URL, duration_ms: i.audio_duration_ms + 20, artifact_id: 'a-bed' }),
   });
 }

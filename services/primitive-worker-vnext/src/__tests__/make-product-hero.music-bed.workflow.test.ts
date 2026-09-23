@@ -11,7 +11,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { WorkflowFailedError } from '@temporalio/client';
 import { startWorkflowHarness, fakeActivities, type CannedActivities, type WorkflowHarness } from './support/workflow-harness.js';
 import type { MakeProductHeroWorkflowInput } from '../workflows/make-product-hero.js';
-import type { FetchDraftAudioInput, ProductHeroClipInput, MuxProductHeroInput } from '../activities/product-hero.js';
+import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
 import type { MixMusicBedInput } from '../activities/music-bed.js';
 
 const SKILL_RUN_ID = '21111111-2222-4333-8444-555555555555';
@@ -41,13 +41,13 @@ function fakes(overrides: CannedActivities = {}) {
     markPrimitiveRunFailed: undefined,
     releaseDraftRender: undefined,
     fetchDraftAudio: (i: FetchDraftAudioInput) => ({ primitive_run_id: i.primitive_run_id, audio_key: i.audio_key, duration_ms: i.duration_ms }),
-    productHeroClip: (i: ProductHeroClipInput) => ({
+    presetClip: (i: PresetClipInput) => ({
       primitive_run_id: i.primitive_run_id,
       video_url: `https://r2.example.test/clips/${i.shot_index}.mp4`,
       duration_seconds: i.duration,
       credits_actual_usd: 0.6,
     }),
-    muxProductHero: (i: MuxProductHeroInput) => ({
+    presetMux: (i: PresetMuxInput) => ({
       primitive_run_id: i.primitive_run_id,
       video_url: MUX_URL,
       duration_ms: i.audio_duration_ms + 20,
@@ -77,7 +77,7 @@ describe('makeProductHeroWorkflow — Music Bed on', () => {
     const result = await harness.execute('makeProductHeroWorkflow', [renderInput(12_000, TRACK)], f);
 
     const steps = f.names().filter((n) => n !== 'composedSkillState');
-    expect(steps).toEqual(['fetchDraftAudio', 'productHeroClip', 'productHeroClip', 'muxProductHero', 'mixMusicBed']);
+    expect(steps).toEqual(['fetchDraftAudio', 'presetClip', 'presetClip', 'presetMux', 'mixMusicBed']);
     const [mix] = f.callsTo('mixMusicBed') as MixMusicBedInput[];
     expect(mix).toMatchObject({
       skill_run_id: SKILL_RUN_ID,
@@ -112,7 +112,7 @@ describe('makeProductHeroWorkflow — Music Bed on', () => {
     await expect(run).rejects.toBeInstanceOf(WorkflowFailedError);
 
     const refunded = new Set((f.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id));
-    for (const clip of f.callsTo('productHeroClip') as ProductHeroClipInput[]) expect(refunded.has(clip.primitive_run_id)).toBe(true);
+    for (const clip of f.callsTo('presetClip') as PresetClipInput[]) expect(refunded.has(clip.primitive_run_id)).toBe(true);
     const [mix] = f.callsTo('mixMusicBed') as MixMusicBedInput[];
     expect(f.callsTo('markPrimitiveRunFailed')).toEqual([
       expect.objectContaining({ primitive_run_id: mix.primitive_run_id, error_code: 'MIX_FAILED' }),
@@ -130,7 +130,7 @@ describe('makeProductHeroWorkflow — Music Bed off (or no licensed track)', () 
     const result = await harness.execute('makeProductHeroWorkflow', [renderInput(8_000, bed)], f);
 
     expect(f.names()).not.toContain('mixMusicBed');
-    const [mux] = f.callsTo('muxProductHero') as MuxProductHeroInput[];
+    const [mux] = f.callsTo('presetMux') as PresetMuxInput[];
     expect(mux.audio_key).toBe(AUDIO_KEY); // the draft voice, muxed in whole
     expect(result.video_url).toBe(MUX_URL);
     const done = (f.callsTo('composedSkillState') as Array<Record<string, unknown>>).at(-1)!;
