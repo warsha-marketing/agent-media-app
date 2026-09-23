@@ -10,6 +10,7 @@
 
 import { RENDER_REFUSALS, type RenderRefusalCode } from '../../skills/product-hero-render.js';
 import { RUN_CREDITS_OPENAPI } from '../../skills/run-credits.js';
+import { IDEMPOTENCY_KEY_REUSED } from '../../skills/idempotency.js';
 
 const skillError = (description: string) => ({
   description,
@@ -46,7 +47,8 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
           in: 'header',
           required: false,
           schema: { type: 'string', maxLength: 200 },
-          description: 'A replay with the same key returns the original run (202, idempotent_replay: true) instead of starting or refusing a second one.',
+          description:
+            'A replay with the same key and the same body returns the original run (202, idempotent_replay: true) instead of starting or refusing a second one. The same key with a different body is refused (409 idempotency_key_reused).',
         },
       ],
       responses: {
@@ -54,7 +56,7 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
         '400': skillError(sentences('`invalid_input`: the body fails the skill schema', '`image_upload_failed`: the photo could not be re-hosted')),
         '402': skillError('`insufficient_credits`: the balance, minus credits reserved by runs in flight, does not cover the quote'),
         '404': skillError(sentences('`unknown_skill`', ...refusalLines(404))),
-        '409': skillError(sentences(...refusalLines(409))),
+        '409': skillError(sentences(IDEMPOTENCY_KEY_REUSED, ...refusalLines(409))),
         '422': skillError(sentences(...refusalLines(422), PRESET_NOT_QUALIFIED, '`unsafe_content`: the photo failed moderation')),
         '502': skillError('`temporal_dispatch_failed`: the workflow could not be started; nothing was charged and a Product Hero draft stays renderable'),
         '503': skillError('`temporal_unconfigured`'),

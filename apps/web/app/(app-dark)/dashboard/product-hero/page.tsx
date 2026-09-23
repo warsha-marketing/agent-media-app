@@ -56,6 +56,7 @@ import {
   isRunSettled,
   parseQuote,
   PRODUCT_DETAILS_MAX,
+  quoteBody, // #9 Music Bed
   readFlowParams,
   renderBody, // #9 Music Bed
   renderReducer,
@@ -435,12 +436,15 @@ export default function ProductHeroPage() {
 
   // ── Render: quote → Confirm → progress → Short ─────────────────────────
 
-  // Music Bed (#9): on by default; read through a ref when the render starts.
+  // Music Bed (#9): on by default. It is part of the request: the quote is
+  // asked with it (so the line under the toggle is the server's), and a change
+  // withdraws the quote on screen, re-quotes, and makes the next Confirm a new
+  // confirmation with a new Idempotency-Key.
   const [music, setMusic] = useState(true);
-  const musicRef = useRef(true);
   const setMusicOn = (on: boolean) => {
-    musicRef.current = on;
+    if (on === music) return;
     setMusic(on);
+    dispatch({ type: 'invalidate_quote' });
   };
 
   /** The draft is already rendering (or rendered): show that run instead of an error. */
@@ -460,9 +464,13 @@ export default function ProductHeroPage() {
     else dispatch({ type: 'refused', outcome });
   }, [followDraftRun]);
 
-  const requestQuote = useCallback(async (draftId: string, photoUrl: string) => {
+  // Only the latest quote request may land (a toggle can race an answer).
+  const quoteSeq = useRef(0);
+  const requestQuote = useCallback(async (draftId: string, photoUrl: string, musicOn: boolean) => {
+    const seq = ++quoteSeq.current;
     dispatch({ type: 'quote_requested' });
-    const r = await postJson(`/api/v1/skills/${SKILL}/quote`, { draft_id: draftId, product_image_url: photoUrl });
+    const r = await postJson(`/api/v1/skills/${SKILL}/quote`, quoteBody(draftId, photoUrl, musicOn));
+    if (seq !== quoteSeq.current) return;
     const quote = r.status === 200 ? parseQuote(r.body) : null;
     if (quote) dispatch({ type: 'quote_loaded', quote });
     else handleRefusal(draftId, classifyApiError(r.status, r.body));
@@ -474,8 +482,8 @@ export default function ProductHeroPage() {
   const photoUrl = photo?.url ?? null;
   useEffect(() => {
     if (render.phase !== 'idle' || !draftId || !photoUrl || edited) return;
-    void requestQuote(draftId, photoUrl);
-  }, [render.phase, draftId, photoUrl, edited, requestQuote]);
+    void requestQuote(draftId, photoUrl, music);
+  }, [render.phase, draftId, photoUrl, edited, music, requestQuote]);
 
   // An unvoiced edit makes the quote on screen stale: withdraw it (the reducer
   // leaves a starting or running render alone). Undoing the edit re-quotes.
@@ -486,19 +494,20 @@ export default function ProductHeroPage() {
   /** Ask the reducer to confirm; it is the only gate (see renderReducer 'confirm'). */
   function confirmRender() {
     if (!draft || !photo) return;
-    dispatch({ type: 'confirm', draftId: draft.id, photoUrl: photo.url, freshKey: crypto.randomUUID() });
+    dispatch({ type: 'confirm', draftId: draft.id, photoUrl: photo.url, music, freshKey: crypto.randomUUID() });
   }
 
   // Start the render when — and only when — the reducer accepted a Confirm. The
-  // key is the confirmation's: the same (draft, photo) confirmed again after a
-  // network blip sends the same key, so the server replays instead of charging twice.
+  // key is the confirmation's: the same (draft, photo, music) confirmed again after
+  // a network blip sends the same key, so the server replays instead of charging
+  // twice; a changed Music Bed is a new confirmation with a new key.
   const starting = render.phase === 'starting' ? rs.confirmation : null;
   useEffect(() => {
     if (!starting) return;
-    const { draftId: id, photoUrl: url, key } = starting;
+    const { draftId: id, photoUrl: url, music: musicOn, key } = starting;
     void (async () => {
       // aspect_ratio is left to the server's default: Product Hero is always 9:16.
-      const r = await postJson(`/api/v1/skills/${SKILL}/run`, renderBody(id, url, musicRef.current), { 'Idempotency-Key': key });
+      const r = await postJson(`/api/v1/skills/${SKILL}/run`, renderBody(id, url, musicOn), { 'Idempotency-Key': key });
       const runId = r.status === 202 ? startedRunId(r.body) : null;
       if (runId) {
         dispatch({ type: 'run_started', runId });

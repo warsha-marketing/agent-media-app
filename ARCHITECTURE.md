@@ -178,7 +178,7 @@ protect spend:
 1. **Quote before spend** — `POST /v1/skills/:slug/quote` returns the exact price.
 2. **In-flight reservation** — concurrent runs cannot overdraw a balance.
 3. **Hard 402 gate** — dispatch is blocked before any provider call, not advised after.
-4. **Idempotency** — `Idempotency-Key` replay returns the original run instead of double-charging.
+4. **Idempotency** — `Idempotency-Key` replay returns the original run instead of double-charging. The key is bound to the request body (a sha256 fingerprint of the validated input, `request_fingerprint`): the same key with a different body is refused with 409 `idempotency_key_reused`.
 
 Failures trigger a compensating refund inside the workflow, so a failed render
 does not silently consume credits.

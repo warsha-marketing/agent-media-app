@@ -21,6 +21,7 @@ import {
 } from '../../skills/product-hero-render.js';
 import { musicBedView, musicBedWorkflowInput, presetMusicBed } from '../../skills/preset-music-bed.js'; // #9
 import { summarizeRunCredits, type RunCredits } from '../../skills/run-credits.js';
+import { replayMatches, requestFingerprint, sendIdempotencyKeyReused } from '../../skills/idempotency.js';
 import type { PresetDefinition } from '@agentmedia/schema';
 import { PresetError, assertPresetAvailable } from '../../presets/qualification.js';
 import { supabasePresetAccess } from '../../presets/providers.js';
@@ -420,6 +421,10 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
     return;
   }
 
+  // The Idempotency-Key names THIS request: fingerprint the validated body
+  // (defaults applied) before anything below re-hosts or rewrites it.
+  const fingerprint = requestFingerprint(slug, parsed.data);
+
   // Per-skill normalization: if the skill accepts a base64 image input,
   // upload it to R2 first so the downstream primitive workflow sees a
   // plain R2 URL (its SSRF guard requires R2-hosted URLs).
@@ -438,7 +443,7 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
   // the draft, re-host the photo, preflight, claim the draft for a new run, and
   // start the Preset's workflow.
   if (skill.preset) {
-    await dispatchPresetRender(res, userId, slug, skill.preset, activityInputBody, readIdempotencyKey(req));
+    await dispatchPresetRender(res, userId, slug, skill.preset, activityInputBody, readIdempotencyKey(req), fingerprint);
     return;
   }
 
@@ -572,7 +577,7 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
   if (idempotencyKey) {
     const { data: existing, error: existingErr } = await supabase
       .from('primitive_runs')
-      .select('id, status')
+      .select('id, status, request_fingerprint')
       .eq('user_id', userId)
       .eq('primitive_id', skill.primitive)
       .eq('idempotency_key', idempotencyKey)
@@ -582,6 +587,10 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
       return;
     }
     if (existing) {
+      if (!replayMatches(existing.request_fingerprint, fingerprint)) {
+        sendIdempotencyKeyReused(res, slug, String(existing.id));
+        return;
+      }
       res.status(202).json({
         run_id: existing.id,
         workflow_id: `${skill.primitive}-${existing.id}`,
@@ -619,17 +628,22 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
       status: 'submitted',
       input: activityInputBody,
       idempotency_key: idempotencyKey ?? null,
+      request_fingerprint: idempotencyKey ? fingerprint : null,
     });
     if (preErr) {
       if (preErr.code === '23505' && idempotencyKey) {
         const { data: dup } = await supabase
           .from('primitive_runs')
-          .select('id, status')
+          .select('id, status, request_fingerprint')
           .eq('user_id', userId)
           .eq('primitive_id', skill.primitive)
           .eq('idempotency_key', idempotencyKey)
           .maybeSingle();
         if (dup) {
+          if (!replayMatches(dup.request_fingerprint, fingerprint)) {
+            sendIdempotencyKeyReused(res, slug, String(dup.id));
+            return;
+          }
           res.status(202).json({
             run_id: dup.id,
             workflow_id: `${skill.primitive}-${dup.id}`,
@@ -748,7 +762,9 @@ async function resolveDraftOrRespond(
  * runs, it releases the claim itself if the render fails (after its refunds).
  *
  * Idempotency-Key (ARCHITECTURE.md, Credits & spend safety #4): a replay
- * returns the original run — looked up before the draft, which that run holds.
+ * returns the original run — looked up before the draft, which that run holds —
+ * but only for the same request body (skills/idempotency.ts); a different body
+ * under the same key is refused with 409 idempotency_key_reused.
  */
 async function dispatchPresetRender(
   res: Response,
@@ -757,10 +773,16 @@ async function dispatchPresetRender(
   preset: PresetDefinition,
   body: Record<string, unknown>,
   idempotencyKey: string | null,
+  fingerprint: string,
 ): Promise<void> {
   const store = supabaseProductHeroDraftStore(supabase);
 
-  const sendReplay = (run: { id: string; status: string; input: unknown }) =>
+  type StoredRun = { id: string; status: string; input: unknown; request_fingerprint?: string | null };
+  const sendReplay = (run: StoredRun) => {
+    if (!replayMatches(run.request_fingerprint, fingerprint)) {
+      sendIdempotencyKeyReused(res, slug, run.id);
+      return;
+    }
     res.status(202).json({
       skill_run_id: run.id,
       workflow_id: `${slug}-${run.id}`,
@@ -769,10 +791,11 @@ async function dispatchPresetRender(
       status: run.status,
       idempotent_replay: true,
     });
+  };
   const findReplay = async () =>
     supabase
       .from('skill_runs')
-      .select('id, status, input')
+      .select('id, status, input, request_fingerprint')
       .eq('user_id', userId)
       .eq('skill_slug', slug)
       .eq('idempotency_key', idempotencyKey)
@@ -785,7 +808,7 @@ async function dispatchPresetRender(
       return;
     }
     if (existing) {
-      sendReplay(existing as { id: string; status: string; input: unknown });
+      sendReplay(existing as StoredRun);
       return;
     }
   }
@@ -842,6 +865,7 @@ async function dispatchPresetRender(
       input: runInput,
       current_step: 'pending',
       idempotency_key: idempotencyKey,
+      request_fingerprint: idempotencyKey ? fingerprint : null,
     })
     .select('id')
     .single();
@@ -850,7 +874,7 @@ async function dispatchPresetRender(
     if (insertErr?.code === '23505' && idempotencyKey) {
       const { data: dup } = await findReplay();
       if (dup) {
-        sendReplay(dup as { id: string; status: string; input: unknown });
+        sendReplay(dup as StoredRun);
         return;
       }
     }

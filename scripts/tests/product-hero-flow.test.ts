@@ -26,7 +26,7 @@ const QUOTE = { credits: 30, available: 100, sufficient: true };
 
 const run = (state: RenderState, ...events: RenderEvent[]) => events.reduce(renderReducer, state);
 const quoted = () => run(initialRenderState, { type: 'quote_requested' }, { type: 'quote_loaded', quote: QUOTE });
-const confirm = (freshKey: string, photoUrl = PHOTO): RenderEvent => ({ type: 'confirm', draftId: DRAFT, photoUrl, freshKey });
+const confirm = (freshKey: string, photoUrl = PHOTO, music = true): RenderEvent => ({ type: 'confirm', draftId: DRAFT, photoUrl, music, freshKey });
 
 describe('API error → UI state', () => {
   it('draft_render_in_flight resumes the running render instead of erroring', () => {
@@ -164,8 +164,26 @@ describe('render phase and Idempotency-Key lifecycle', () => {
     assert.equal(s.render.phase, 'refused');
   });
   it('a different photo is a new confirmation with a new key', () => {
-    assert.equal(confirmationFor({ draftId: DRAFT, photoUrl: PHOTO, key: 'k1' }, DRAFT, `${PHOTO}?2`, 'k2').key, 'k2');
-    assert.equal(confirmationFor({ draftId: DRAFT, photoUrl: PHOTO, key: 'k1' }, DRAFT, PHOTO, 'k2').key, 'k1');
+    const prev = { draftId: DRAFT, photoUrl: PHOTO, music: true, key: 'k1' };
+    assert.equal(confirmationFor(prev, { draftId: DRAFT, photoUrl: `${PHOTO}?2`, music: true }, 'k2').key, 'k2');
+    assert.equal(confirmationFor(prev, { draftId: DRAFT, photoUrl: PHOTO, music: true }, 'k2').key, 'k1');
+  });
+  it('a different Music Bed setting is a new confirmation with a new key', () => {
+    const prev = { draftId: DRAFT, photoUrl: PHOTO, music: true, key: 'k1' };
+    const next = confirmationFor(prev, { draftId: DRAFT, photoUrl: PHOTO, music: false }, 'k2');
+    assert.equal(next.key, 'k2');
+    assert.equal(next.music, false);
+  });
+  it('toggling music after a network failure retires the key: Confirm again sends a new one', () => {
+    // Confirm with music on; the request fails in transit (the server may have started it).
+    const failed = run(quoted(), confirm('k1', PHOTO, true), { type: 'refused', outcome: { kind: 'retryable', message: 'x' } });
+    // The user turns music off, the page re-quotes, and Confirm is pressed again.
+    const s = run(failed, { type: 'invalidate_quote' }, { type: 'quote_requested' }, { type: 'quote_loaded', quote: QUOTE }, confirm('k2', PHOTO, false));
+    assert.equal(s.render.phase, 'starting');
+    assert.equal(s.confirmation?.key, 'k2');
+    assert.equal(s.confirmation?.music, false);
+    // Unchanged music after the same failure still replays the same key.
+    assert.equal(run(failed, confirm('k3', PHOTO, true)).confirmation?.key, 'k1');
   });
   it('progress, then the Short', () => {
     const s = run(

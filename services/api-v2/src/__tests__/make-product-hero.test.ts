@@ -397,6 +397,54 @@ describe('make_product_hero dispatch', () => {
     expect(other.status).toBe(409);
   });
 
+  it('refuses an Idempotency-Key replayed with a different body (409 idempotency_key_reused)', async () => {
+    const id = seedDraft();
+    const headers = { 'Idempotency-Key': 'render-music-toggle' };
+    const first = await call(runSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO, music: true }, { headers });
+    expect(first.status).toBe(202);
+    // The music toggle flipped, then "Confirm again" reused the key: never the old setting.
+    const changed = await call(runSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO, music: false }, { headers });
+    expect(changed.status).toBe(409);
+    expect(changed.body).toMatchObject({ error: 'idempotency_key_reused', skill: 'make_product_hero' });
+    expect(started).toHaveLength(1);
+    // The same body still replays the original run.
+    const same = await call(runSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO, music: true }, { headers });
+    expect(same.status).toBe(202);
+    expect(same.body).toMatchObject({ skill_run_id: first.body.skill_run_id, idempotent_replay: true });
+  });
+
+  it('a default the schema fills in fingerprints like the explicit value', async () => {
+    const id = seedDraft();
+    const headers = { 'Idempotency-Key': 'render-default-music' };
+    const first = await call(runSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO }, { headers });
+    const explicit = await call(runSkillRoute, OWNER, { product_image_url: PHOTO, music: true, draft_id: id }, { headers });
+    expect(explicit.status).toBe(202);
+    expect(explicit.body).toMatchObject({ skill_run_id: first.body.skill_run_id, idempotent_replay: true });
+  });
+
+  it('a run stored before fingerprints (NULL) still replays on its key', async () => {
+    const id = seedDraft();
+    const headers = { 'Idempotency-Key': 'legacy-key' };
+    const first = await call(runSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO }, { headers });
+    TABLES.skill_runs[0].request_fingerprint = null;
+    const replay = await call(runSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO, music: false }, { headers });
+    expect(replay.status).toBe(202);
+    expect(replay.body).toMatchObject({ skill_run_id: first.body.skill_run_id, idempotent_replay: true });
+  });
+
+  it('the generic primitive path checks the same fingerprint', async () => {
+    const headers = { 'Idempotency-Key': 'portrait-once' };
+    const first = await call(runSkillRoute, OWNER, { description: 'a woman in a cafe' }, { slug: 'make_portrait', headers });
+    expect(first.status).toBe(202);
+    const same = await call(runSkillRoute, OWNER, { description: 'a woman in a cafe' }, { slug: 'make_portrait', headers });
+    expect(same.status).toBe(202);
+    expect(same.body).toMatchObject({ run_id: first.body.run_id, idempotent_replay: true });
+    const changed = await call(runSkillRoute, OWNER, { description: 'a man in a cafe' }, { slug: 'make_portrait', headers });
+    expect(changed.status).toBe(409);
+    expect(changed.body).toMatchObject({ error: 'idempotency_key_reused', skill: 'make_portrait' });
+    expect(started).toHaveLength(1);
+  });
+
   it('canceling a render releases the draft', async () => {
     const id = seedDraft();
     const r = await call(runSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO });
@@ -593,6 +641,7 @@ describe('make_product_hero in the OpenAPI spec', () => {
       }
     }
     expect(paths['/v1/skills/{slug}/run'].post.parameters.map((p) => p.name)).toContain('Idempotency-Key');
+    expect(paths['/v1/skills/{slug}/run'].post.responses['409'].description).toContain('`idempotency_key_reused`');
     expect(paths['/v1/skills/{slug}/quote'].post.responses['422'].description).toContain('`unpriceable_input`');
     for (const path of ['/v1/skills/{slug}/run', '/v1/skills/{slug}/quote']) {
       expect(paths[path].post.responses['422'].description).toContain('`preset_not_qualified`');

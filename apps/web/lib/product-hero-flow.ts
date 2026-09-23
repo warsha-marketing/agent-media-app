@@ -12,7 +12,8 @@
  *   - reading the API's (mixed-shape) error bodies into one outcome per UI state;
  *   - reading a skill run into what the progress / result / failure panels show;
  *   - the render-phase reducer, including the Idempotency-Key lifecycle: one key
- *     per confirmation of a (draft, photo) pair, reused by a double-click or a
+ *     per confirmation of a (draft, photo, Music Bed) request, reused by a
+ *     double-click or a
  *     retried request, retired once the run it started has failed, so a retry of
  *     the SAME draft is a new run rather than a replay of the failed one;
  *   - the URL state (?draft=…&run=…) and which run to resume after a reload.
@@ -64,8 +65,12 @@ export function parseQuote(body: unknown): Quote | null {
 
 // ── Music Bed (#9) ──────────────────────────────────────────────────────────
 
-/** The one-line explanation next to the Music Bed toggle when it is off. */
+/**
+ * Fallback lines under the Music Bed toggle, used only until a quote for the
+ * current setting says otherwise: the server's `music_bed.detail` is the copy.
+ */
 export const NO_MUSIC_LINE = 'No music: the Short is voice only, so you can add a sound in TikTok.';
+const MUSIC_ON_LINE = 'A licensed Music Bed plays quietly under the voice.';
 
 function parseMusicBed(v: unknown): MusicBedQuote | null {
   if (!v || typeof v !== 'object') return null;
@@ -76,20 +81,26 @@ function parseMusicBed(v: unknown): MusicBedQuote | null {
 }
 
 /**
- * The line under the Music Bed toggle. The quote is always asked with the bed on
- * (the default), so with the toggle on it says whether a licensed track exists;
- * off never needs the server.
+ * The line under the Music Bed toggle: the server's own `detail` from a quote
+ * asked with this setting (the quote body carries `music`). A local fallback
+ * only while no such quote is on screen (not answered yet, or it was for the
+ * other setting).
  */
 export function musicBedLine(music: boolean, quote: Quote): string {
-  if (!music) return NO_MUSIC_LINE;
   const m = quote.musicBed;
-  if (m && !m.on) return m.detail || NO_MUSIC_LINE;
-  return 'A licensed Music Bed plays quietly under the voice.';
+  const forThisSetting = m && (music ? m.reason !== 'off' : m.reason === 'off');
+  if (m && forThisSetting && m.detail) return m.detail;
+  return music ? MUSIC_ON_LINE : NO_MUSIC_LINE;
 }
 
 /** The make_product_hero run body. aspect_ratio is left to the server (always 9:16). */
 export function renderBody(draftId: string, photoUrl: string, music: boolean) {
   return { draft_id: draftId, product_image_url: photoUrl, music };
+}
+
+/** The make_product_hero quote body: the same request the run would send. */
+export function quoteBody(draftId: string, photoUrl: string, music: boolean) {
+  return renderBody(draftId, photoUrl, music);
 }
 
 /** The run id of a 202 from POST /v1/skills/make_product_hero/run (fresh or replayed). */
@@ -258,10 +269,20 @@ export function viewOfRun(run: SkillRunBody): RunView {
 
 // ── Render phase + Idempotency-Key lifecycle ───────────────────────────────
 
-/** One confirmation of a (draft, photo) pair, and the key it sends. */
-export interface Confirmation {
+/**
+ * What one confirmation asks the server for. Everything in the run body is here:
+ * the Idempotency-Key names exactly this request (the server refuses the same
+ * key with a different body, 409 idempotency_key_reused).
+ */
+export interface ConfirmationRequest {
   draftId: string;
   photoUrl: string;
+  /** Music Bed on/off (#9). */
+  music: boolean;
+}
+
+/** One confirmation of a request, and the key it sends. */
+export interface Confirmation extends ConfirmationRequest {
   key: string;
 }
 
@@ -292,8 +313,8 @@ export type RenderEvent =
   | { type: 'quote_requested' }
   | { type: 'quote_loaded'; quote: Quote }
   | { type: 'refused'; outcome: ApiOutcome }
-  /** `freshKey` is used only if this is a new (draft, photo) confirmation. */
-  | { type: 'confirm'; draftId: string; photoUrl: string; freshKey: string }
+  /** `freshKey` is used only if this is a new (draft, photo, music) confirmation. */
+  | ({ type: 'confirm'; freshKey: string } & ConfirmationRequest)
   | { type: 'run_started'; runId: string }
   /** Show an existing run (reload, or a render already in flight). */
   | { type: 'resume'; runId: string }
@@ -303,10 +324,10 @@ export type RenderEvent =
 
 export const initialRenderState: RenderState = { render: { phase: 'idle' }, confirmation: null };
 
-/** The key for confirming this (draft, photo): the pending one if it is the same pair. */
-export function confirmationFor(prev: Confirmation | null, draftId: string, photoUrl: string, freshKey: string): Confirmation {
-  if (prev && prev.draftId === draftId && prev.photoUrl === photoUrl) return prev;
-  return { draftId, photoUrl, key: freshKey };
+/** The key for confirming this request: the pending one only if it is the same request. */
+export function confirmationFor(prev: Confirmation | null, req: ConfirmationRequest, freshKey: string): Confirmation {
+  if (prev && prev.draftId === req.draftId && prev.photoUrl === req.photoUrl && prev.music === req.music) return prev;
+  return { draftId: req.draftId, photoUrl: req.photoUrl, music: req.music, key: freshKey };
 }
 
 function quoteOf(p: RenderPhase): Quote | null {
@@ -341,7 +362,7 @@ export function renderReducer(state: RenderState, event: RenderEvent): RenderSta
       if (!quote) return state;
       return {
         render: { phase: 'starting', quote },
-        confirmation: confirmationFor(state.confirmation, event.draftId, event.photoUrl, event.freshKey),
+        confirmation: confirmationFor(state.confirmation, { draftId: event.draftId, photoUrl: event.photoUrl, music: event.music }, event.freshKey),
       };
     }
     case 'run_started':
