@@ -63,7 +63,7 @@ A bracketed direction inside a Script that shapes how the next words are spoken 
 _Avoid_: audio tag, emotion tag
 
 **Captions**:
-Right-to-left Arabic text burned into a Short, timed from the voiced Script, without its Delivery Tags. Opt-in.
+Right-to-left Arabic text burned into a Short, timed from the voiced Script, line by line, shown without Targeted Diacritics (the Script's letters unchanged) and without its Delivery Tags. Opt-in.
 _Avoid_: subtitles
 
 **Qualified Preset**:
