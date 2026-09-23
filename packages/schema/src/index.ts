@@ -19,5 +19,9 @@ export * from './video-pricing.js';
 // Product Hero shot plan + cost budget — quote (api-v2) and render
 // (primitive-worker-vnext) plan identically. See src/product-hero.ts.
 export * from './product-hero.js';
+// Presets as data (#16): the definition type, the shared shot planner and
+// pricing, and the registry of every Preset. See src/preset-definition.ts.
+export * from './preset-definition.js';
+export * from './preset-registry.js';
 // Delivery Tags — the allowed list and the strip helpers (Captions, viewer display).
 export * from './delivery-tags.js';

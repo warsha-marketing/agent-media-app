@@ -1,13 +1,15 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * Product Hero render — which drafts may be rendered, and the render claim (#5).
+ * Preset render — which drafts may be rendered, and the render claim (#5).
+ * Product Hero was the first Preset; every Preset render resolves its draft
+ * here, against its own definition (#16).
  *
  * The render phase ships exactly the audio the user approved, so it only
  * accepts a draft that:
  *   - belongs to the caller (someone else's draft is indistinguishable from none),
  *   - is not being rendered and was never rendered successfully,
- *   - speaks for 5–15 s (the Preset's duration contract), and
+ *   - speaks within the Preset's speech band (5–15 s for Product Hero), and
  *   - was spoken by a Voice that is an Approved Voice of its Dialect NOW: only
  *     Approved Voices may appear in a Short (CONTEXT.md), so a Voice revoked
  *     since drafting, or a legacy draft with no catalog Voice, is refused.
@@ -24,7 +26,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { PRODUCT_HERO } from '@agentmedia/schema';
+import type { PresetDefinition } from '@agentmedia/schema';
 
 /** Where the run holding a draft's claim is. */
 export type RenderRunStatus = 'submitted' | 'running' | 'succeeded' | 'failed' | 'canceled';
@@ -133,21 +135,22 @@ function assertClaimFree(draft: RenderableDraft): void {
   }
 }
 
-/** Resolve a draft the caller may render, or throw the RenderRefusal to send. */
+/** Resolve a draft the caller may render as `preset`, or throw the RenderRefusal to send. */
 export async function resolveRenderableDraft(
   store: ProductHeroDraftStore,
   userId: string,
   draftId: string,
+  preset: PresetDefinition,
 ): Promise<RenderableDraft> {
   const draft = await store.getOwned(draftId, userId);
   if (!draft) throw draftNotFound();
   assertClaimFree(draft);
   const ms = Number(draft.duration_ms);
-  if (!Number.isFinite(ms) || ms < PRODUCT_HERO.minSpeechMs || ms > PRODUCT_HERO.maxSpeechMs) {
+  if (!Number.isFinite(ms) || ms < preset.minSpeechMs || ms > preset.maxSpeechMs) {
     throw refusal(
       'draft_out_of_band',
-      `This draft speaks for ${(ms / 1000).toFixed(1)} s; a Product Hero Short needs ` +
-        `${PRODUCT_HERO.minSpeechMs / 1000}–${PRODUCT_HERO.maxSpeechMs / 1000} s. Edit the Script and re-voice it.`,
+      `This draft speaks for ${(ms / 1000).toFixed(1)} s; a ${preset.name} Short needs ` +
+        `${preset.minSpeechMs / 1000}–${preset.maxSpeechMs / 1000} s. Edit the Script and re-voice it.`,
     );
   }
   if (!draft.voice_catalog_id) throw voiceNotApproved(true);

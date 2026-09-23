@@ -23,6 +23,7 @@ import {
   LipSyncToolInputSchema,
   BrollTalkingHeadToolInputSchema,
   PRODUCT_HERO,
+  type PresetDefinition,
 } from '@agentmedia/schema';
 
 /**
@@ -335,6 +336,12 @@ export interface SkillEntry {
   /** When true, this is the curated agent surface (make_ugc). The MCP tools/list
    *  and public-skill pack filter to these once MAKE_UGC_ENABLED is on. */
   agentFacing?: boolean;
+  /**
+   * Set on a Preset render skill: the Preset's definition (#16). Quote and run
+   * read it — speech band, shot plan, budget — and never branch on the slug;
+   * the worker renders from the same definition.
+   */
+  preset?: PresetDefinition;
 }
 
 export const SKILLS: Record<string, SkillEntry> = {
@@ -452,6 +459,7 @@ export const SKILLS: Record<string, SkillEntry> = {
     workflowType: 'makeProductHeroWorkflow',
     inputSchema: MakeProductHeroSkillInputSchema,
     agentFacing: true,
+    preset: PRODUCT_HERO,
   },
   make_ugc: {
     slug: 'make_ugc',

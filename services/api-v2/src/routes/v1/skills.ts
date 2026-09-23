@@ -20,6 +20,7 @@ import {
   type RenderableDraft,
 } from '../../skills/product-hero-render.js';
 import { summarizeRunCredits, type RunCredits } from '../../skills/run-credits.js';
+import type { PresetDefinition } from '@agentmedia/schema';
 
 /**
  * Credits already COMMITTED to the user's in-flight (submitted/running) jobs.
@@ -185,11 +186,12 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     return;
   }
   let input = parsed.data as Record<string, unknown>;
-  // make_product_hero is priced from its draft: refuse a draft the run would
-  // refuse (not the caller's, already rendered, outside 5–15 s), then quote the
-  // planned render from the draft's measured duration.
-  if (slug === 'make_product_hero') {
-    const draft = await resolveDraftOrRespond(res, userId, input);
+  // A Preset render (make_product_hero, …) is priced from its draft: refuse a
+  // draft the run would refuse (not the caller's, already rendered, outside the
+  // Preset's speech band), then quote the planned render from the draft's
+  // measured duration.
+  if (skill.preset) {
+    const draft = await resolveDraftOrRespond(res, userId, slug, skill.preset, input);
     if (!draft) return;
     input = { ...input, duration_ms: draft.duration_ms };
   }
@@ -425,10 +427,11 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
     return;
   }
 
-  // make_product_hero renders an approved draft: resolve the draft, re-host the
-  // photo, preflight, claim the draft for a new run, and start its own workflow.
-  if (slug === 'make_product_hero') {
-    await dispatchProductHero(res, userId, activityInputBody, readIdempotencyKey(req));
+  // A Preset render (make_product_hero, …) renders an approved draft: resolve
+  // the draft, re-host the photo, preflight, claim the draft for a new run, and
+  // start the Preset's workflow.
+  if (skill.preset) {
+    await dispatchPresetRender(res, userId, slug, skill.preset, activityInputBody, readIdempotencyKey(req));
     return;
   }
 
@@ -698,28 +701,31 @@ function sendInsufficientCredits(
   });
 }
 
-function sendRenderRefusal(res: Response, refusal: RenderRefusal): void {
-  res.status(refusal.status).json({ error: refusal.code, skill: 'make_product_hero', detail: refusal.message });
+function sendRenderRefusal(res: Response, slug: string, refusal: RenderRefusal): void {
+  res.status(refusal.status).json({ error: refusal.code, skill: slug, detail: refusal.message });
 }
 
-/** The draft a make_product_hero call names, if the caller may render it; else
- *  the refusal is sent and null returned. Shared by quote and run. */
+/** The draft a Preset render call names, if the caller may render it as that
+ *  Preset; else the refusal is sent and null returned. Shared by quote and run. */
 async function resolveDraftOrRespond(
   res: Response,
   userId: string,
+  slug: string,
+  preset: PresetDefinition,
   body: Record<string, unknown>,
 ): Promise<RenderableDraft | null> {
   try {
-    return await resolveRenderableDraft(supabaseProductHeroDraftStore(supabase), userId, String(body.draft_id ?? ''));
+    return await resolveRenderableDraft(supabaseProductHeroDraftStore(supabase), userId, String(body.draft_id ?? ''), preset);
   } catch (err) {
-    if (err instanceof RenderRefusal) sendRenderRefusal(res, err);
-    else res.status(500).json({ error: 'draft_lookup_failed', skill: 'make_product_hero', detail: errorMessage(err) });
+    if (err instanceof RenderRefusal) sendRenderRefusal(res, slug, err);
+    else res.status(500).json({ error: 'draft_lookup_failed', skill: slug, detail: errorMessage(err) });
     return null;
   }
 }
 
 /**
- * make_product_hero: render an approved draft into a Product Hero Short.
+ * A Preset render (make_product_hero, …): render an approved draft into a Short
+ * of that Preset. Reads the Preset's definition; never branches on its name.
  *
  * Every refusal (draft, photo moderation, credits) comes BEFORE the draft is
  * claimed. The skill run is inserted first, then the draft is claimed FOR that
@@ -732,13 +738,14 @@ async function resolveDraftOrRespond(
  * Idempotency-Key (ARCHITECTURE.md, Credits & spend safety #4): a replay
  * returns the original run — looked up before the draft, which that run holds.
  */
-async function dispatchProductHero(
+async function dispatchPresetRender(
   res: Response,
   userId: string,
+  slug: string,
+  preset: PresetDefinition,
   body: Record<string, unknown>,
   idempotencyKey: string | null,
 ): Promise<void> {
-  const slug = 'make_product_hero';
   const store = supabaseProductHeroDraftStore(supabase);
 
   const sendReplay = (run: { id: string; status: string; input: unknown }) =>
@@ -771,7 +778,7 @@ async function dispatchProductHero(
     }
   }
 
-  const draft = await resolveDraftOrRespond(res, userId, body);
+  const draft = await resolveDraftOrRespond(res, userId, slug, preset, body);
   if (!draft) return;
 
   let productImageUrl: string;
@@ -791,7 +798,7 @@ async function dispatchProductHero(
   const runInput: Record<string, unknown> = {
     draft_id: draft.id,
     product_image_url: productImageUrl,
-    aspect_ratio: '9:16',
+    aspect_ratio: preset.aspectRatio,
     duration_ms: draft.duration_ms,
   };
 
@@ -843,7 +850,7 @@ async function dispatchProductHero(
       .from('skill_runs')
       .update({ status: 'failed', error_code: code, error_message: message.slice(0, 500), finished_at: new Date().toISOString() })
       .eq('id', skillRunId);
-    if (error) console.warn(`[make_product_hero] could not fail skill_run ${skillRunId}: ${error.message}`);
+    if (error) console.warn(`[${slug}] could not fail skill_run ${skillRunId}: ${error.message}`);
   };
 
   // Claim the draft for this run.
@@ -859,7 +866,7 @@ async function dispatchProductHero(
     // Another render took the draft between resolve and claim. This run never
     // started and holds nothing: remove it rather than list a phantom failure.
     await supabase.from('skill_runs').delete().eq('id', skillRunId);
-    sendRenderRefusal(res, draftRenderInFlight());
+    sendRenderRefusal(res, slug, draftRenderInFlight());
     return;
   }
 
@@ -870,7 +877,7 @@ async function dispatchProductHero(
     audio_key: draft.audio_key,
     duration_ms: draft.duration_ms,
     product_image_url: productImageUrl,
-    aspect_ratio: '9:16' as const,
+    aspect_ratio: preset.aspectRatio,
   };
 
   try {
@@ -906,7 +913,7 @@ async function dispatchProductHero(
 }
 
 /**
- * Give back the draft a failed or canceled Product Hero run holds. Best effort:
+ * Give back the draft a failed or canceled Preset render holds. Best effort:
  * a claim left on a failed/canceled run is treated as free by the next render
  * (resolveRenderableDraft), so a failure here only delays the cleanup.
  */
@@ -914,7 +921,7 @@ async function releaseDraftClaim(skillRunId: string): Promise<void> {
   try {
     await supabaseProductHeroDraftStore(supabase).releaseRender(skillRunId);
   } catch (err) {
-    console.warn(`[make_product_hero] could not release the draft held by ${skillRunId}: ${errorMessage(err)}`);
+    console.warn(`[preset render] could not release the draft held by ${skillRunId}: ${errorMessage(err)}`);
   }
 }
 
@@ -1422,7 +1429,7 @@ export async function cancelSkillRunRoute(req: Request, res: Response): Promise<
   }
   // A canceled render is refunded like a failed one, so its draft can be
   // rendered again (terminate() skipped the workflow's own release).
-  if (run.skill_slug === 'make_product_hero') await releaseDraftClaim(run.id);
+  if (getSkill(String(run.skill_slug))?.preset) await releaseDraftClaim(run.id);
   res.status(200).json({ skill_run_id: run.id, status: 'canceled' });
 }
 

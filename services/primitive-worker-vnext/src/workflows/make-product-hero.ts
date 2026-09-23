@@ -1,7 +1,13 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * Composed skill workflow: make_product_hero — the Product Hero render phase.
+ * The shared Preset render pipeline (renderPresetWorkflow), and make_product_hero
+ * — the Product Hero render phase — as one Preset definition on it (#16).
+ *
+ * A Preset is data (../presets, @agentmedia/schema PresetDefinition): its shot
+ * plan, shot prompts, required inputs and cost budget. This pipeline reads the
+ * definition it is given and never branches on the Preset's name; a new Preset
+ * is a new definition (and a thin workflow naming it), not a copied workflow.
  *
  * ADR 0001: a Short is audio-first and the video model never speaks. The render
  * takes an APPROVED draft (its audio is exactly what the user heard) and:
@@ -9,9 +15,9 @@
  *   1. fetchDraftAudio — reads the draft's private audio by key and measures it.
  *                        Nothing visual is requested until the audio is in hand.
  *   2. productHeroClip — one silent clip per planned shot (generate_audio: false),
- *                        from the product photo. Shots come from the SAME plan the
- *                        quote priced (planProductHeroShots over the draft's
- *                        duration), so the charge is the quote.
+ *                        from the product photo, prompted for its shot kind. Shots
+ *                        come from the SAME plan the quote priced (planPresetShots
+ *                        over the draft's duration), so the charge is the quote.
  *   3. muxProductHero  — hard-cuts the clips on the 9:16 canvas, trims (or, if a
  *                        clip ran a few ms short, holds) the visuals to the audio's
  *                        exact length, and muxes the draft audio in whole. Audio is
@@ -23,14 +29,17 @@
  * releases the draft's render claim so the same draft can be rendered again. A
  * content-policy verdict on the product photo is never retried.
  *
- * Extension points (later tickets): the Music Bed and Captions join at step 3.
+ * Before step 1 the render refuses to start without every input its Preset
+ * requires. Extension points (later tickets): the Music Bed and Captions join at
+ * step 3 (the mix), declared per Preset on its definition.
  */
 
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
-import { planProductHeroShots } from '@agentmedia/schema';
+import { planPresetShots, type PlannedShot, type PresetInput } from '@agentmedia/schema';
 import type { PrimitiveActivities } from '../activities/index.js';
 import { makeChildRunId } from './child-run-id.js';
 import { failureInfo } from './failure-info.js';
+import { PRODUCT_HERO_RENDER, type PresetRenderDefinition } from '../presets/index.js';
 
 export interface MakeProductHeroWorkflowInput {
   skill_run_id: string;
@@ -46,6 +55,11 @@ export interface MakeProductHeroWorkflowInput {
   aspect_ratio: '9:16';
 }
 
+/** The shared pipeline's input: a render input plus the Preset to render it as. */
+export interface RenderPresetWorkflowInput extends MakeProductHeroWorkflowInput {
+  preset: PresetRenderDefinition;
+}
+
 export interface MakeProductHeroWorkflowResult {
   skill_run_id: string;
   draft_id: string;
@@ -54,6 +68,11 @@ export interface MakeProductHeroWorkflowResult {
   duration_ms: number;
   credits_actual_usd: number;
 }
+
+/** Where each input a Preset can require is carried on the render input. */
+const PRESET_INPUT_FIELDS: Record<PresetInput, keyof MakeProductHeroWorkflowInput> = {
+  product_image: 'product_image_url',
+};
 
 /** A finished cut may differ from the audio by at most about one frame. */
 const MAX_CUT_DRIFT_MS = 50;
@@ -87,9 +106,18 @@ const { refundCredits, markPrimitiveRunFailed, releaseDraftRender } = proxyActiv
   retry: { initialInterval: '2s', maximumInterval: '20s', backoffCoefficient: 2, maximumAttempts: 5 },
 });
 
+/** make_product_hero: the Product Hero definition on the shared pipeline. */
 export async function makeProductHeroWorkflow(
   input: MakeProductHeroWorkflowInput,
 ): Promise<MakeProductHeroWorkflowResult> {
+  return renderPresetWorkflow({ ...input, preset: PRODUCT_HERO_RENDER });
+}
+
+/** Render an approved draft as `input.preset`. Every Preset runs exactly this. */
+export async function renderPresetWorkflow(
+  input: RenderPresetWorkflowInput,
+): Promise<MakeProductHeroWorkflowResult> {
+  const { preset } = input;
   const skillRunId = input.skill_run_id;
   // Every child id minted, so the catch refunds exactly what could have been
   // charged (refund is idempotent and a no-op on the free steps).
@@ -105,6 +133,13 @@ export async function makeProductHeroWorkflow(
   await composedSkillState({ skill_run_id: skillRunId, status: 'running', current_step: 'audio', started_at_now: true });
 
   try {
+    for (const need of preset.requiredInputs) {
+      const value = input[PRESET_INPUT_FIELDS[need]];
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw ApplicationFailure.nonRetryable(`${preset.name} needs ${need}`, 'INVALID_INPUT');
+      }
+    }
+
     // ── 1. The draft's audio, first ─────────────────────────────────────────
     const audio = await fetchDraftAudio({
       primitive_run_id: mint('audio'),
@@ -116,9 +151,9 @@ export async function makeProductHeroWorkflow(
     });
 
     // ── 2. Silent clips covering the speech ─────────────────────────────────
-    let shots: Array<5 | 10>;
+    let shots: PlannedShot[];
     try {
-      shots = planProductHeroShots(input.duration_ms);
+      shots = planPresetShots(preset, input.duration_ms);
     } catch (err) {
       throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
     }
@@ -131,9 +166,12 @@ export async function makeProductHeroWorkflow(
         user_id: input.user_id,
         skill_run_id: skillRunId,
         product_image_url: input.product_image_url,
-        duration: shots[i],
+        duration: shots[i].seconds,
         shot_index: i,
         shot_count: shots.length,
+        preset: preset.id,
+        shot_kind: shots[i].kind,
+        prompt: preset.shotPrompts[shots[i].kind],
         generate_audio: false,
       });
       clipUrls.push(clip.video_url);
@@ -149,7 +187,8 @@ export async function makeProductHeroWorkflow(
       clip_urls: clipUrls,
       audio_key: audio.audio_key,
       audio_duration_ms: audio.duration_ms,
-      aspect_ratio: '9:16',
+      aspect_ratio: preset.aspectRatio,
+      preset: preset.id,
     });
     if (Math.abs(short.duration_ms - audio.duration_ms) > MAX_CUT_DRIFT_MS) {
       throw ApplicationFailure.nonRetryable(
@@ -166,7 +205,7 @@ export async function makeProductHeroWorkflow(
       duration_ms: short.duration_ms,
       audio_duration_ms: audio.duration_ms,
       draft_id: input.draft_id,
-      aspect_ratio: '9:16',
+      aspect_ratio: preset.aspectRatio,
       credits_actual_usd: totalUsd,
     };
     await composedSkillState({

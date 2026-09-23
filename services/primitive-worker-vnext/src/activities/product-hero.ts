@@ -1,11 +1,14 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * Product Hero render activities (ADR 0001: audio first, the video model never
- * speaks). The workflow (workflows/make-product-hero.ts) runs them in order:
+ * The Preset render activities (ADR 0001: audio first, the video model never
+ * speaks). Every Preset's render (workflows/make-product-hero.ts,
+ * renderPresetWorkflow) runs them in order; the names date from Product Hero,
+ * the first Preset, and stay stable for in-flight runs:
  *
  *   fetchDraftAudio  — read the approved draft's PRIVATE audio by key and measure it
- *   productHeroClip  — one silent Seedance clip of the product (generate_audio: false)
+ *   productHeroClip  — one silent Seedance clip from the product photo, prompted by
+ *                      its Preset for its shot kind (generate_audio: false)
  *   muxProductHero   — hard-cut the clips, trim/hold the visuals to the audio's exact
  *                      length, and mux the draft audio in untouched (never trimmed,
  *                      never stretched)
@@ -13,8 +16,8 @@
  * Each writes its own primitive_runs row under the parent skill run. Only the
  * clips are charged, at the shared per-clip price. They are exempt from the
  * per-primitive cap (a 10 s clip alone exceeds it): the Preset's declared budget
- * (PRODUCT_HERO.budget in @agentmedia/schema) governs the whole render, and the
- * shot plan is held to it by tests. The day cap still applies.
+ * (PresetDefinition.budget in @agentmedia/schema) governs the whole render, and
+ * the shot plan is held to it by tests. The day cap still applies.
  *
  * Extension points (later tickets, deliberately not built here): the Music Bed
  * and Captions attach at the mux — a ducked bed as one more audio input, and
@@ -137,7 +140,12 @@ export interface ProductHeroClipInput {
   /** 0-based position of this shot in the Short, and how many shots it has. */
   shot_index: number;
   shot_count: number;
-  /** Product Hero visuals are always silent: the draft audio is the only voice. */
+  /** The Preset rendering this shot, the shot's kind in its plan, and the
+   *  Preset's prompt for that kind (server-side; see ../presets). */
+  preset: string;
+  shot_kind: string;
+  prompt: string;
+  /** Preset visuals are always silent: the draft audio is the only voice. */
   generate_audio: false;
 }
 
@@ -146,20 +154,6 @@ export interface ProductHeroClipResult {
   video_url: string;
   duration_seconds: 5 | 10;
   credits_actual_usd: number;
-}
-
-/**
- * The shot list (quality authority stays server-side). Shot 1 is the hero; a
- * second shot is a closer on a different move so the hard cut reads as an edit.
- * Every prompt says "silent": nobody on screen, nothing that implies speech.
- */
-const SHOT_PROMPTS = [
-  'Premium product commercial, hero shot of the exact product in @image1: the product stands centered on a clean, softly lit surface, the camera slowly pushes in and orbits a few degrees, gentle rim light glides across its surfaces. The product keeps its exact shape, colours, logo and label text. No people, no hands, no text overlays, no captions. Vertical 9:16, shallow depth of field, smooth cinematic motion.',
-  'Premium product commercial, closing detail shot of the exact product in @image1: a slow macro slide along the product revealing texture, materials and finish, then settling on a clean three-quarter view of the whole product. The product keeps its exact shape, colours, logo and label text. No people, no hands, no text overlays, no captions. Vertical 9:16, soft studio light, smooth cinematic motion.',
-];
-
-export function productHeroShotPrompt(shotIndex: number): string {
-  return SHOT_PROMPTS[Math.min(Math.max(shotIndex, 0), SHOT_PROMPTS.length - 1)];
 }
 
 export function makeProductHeroClipActivity(cfg: WorkerConfig) {
@@ -171,6 +165,9 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
     }
     if (input.duration !== 5 && input.duration !== 10) {
       throw ApplicationFailure.nonRetryable(`invalid Product Hero clip length ${input.duration}`, 'INVALID_INPUT');
+    }
+    if (typeof input.prompt !== 'string' || input.prompt.trim() === '') {
+      throw ApplicationFailure.nonRetryable(`no prompt for ${input.preset} shot ${input.shot_kind}`, 'INVALID_INPUT');
     }
 
     // Retry-safety: a clip that already rendered is returned, not re-rendered.
@@ -220,7 +217,7 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
       );
     }
 
-    const prompt = productHeroShotPrompt(input.shot_index);
+    const prompt = input.prompt;
     const { error: upsertErr } = await db.from('primitive_runs').upsert(
       {
         id: input.primitive_run_id,
@@ -233,6 +230,7 @@ export function makeProductHeroClipActivity(cfg: WorkerConfig) {
           duration: input.duration,
           shot_index: input.shot_index,
           shot_count: input.shot_count,
+          shot_kind: input.shot_kind,
           generate_audio: false,
           prompt,
         },
@@ -371,6 +369,8 @@ export interface MuxProductHeroInput {
   /** The audio's measured length; the visuals are cut to exactly this. */
   audio_duration_ms: number;
   aspect_ratio: '9:16';
+  /** The Preset this Short was rendered as (recorded on the Short). */
+  preset: string;
 }
 
 export interface MuxProductHeroResult {
@@ -483,7 +483,7 @@ export function makeMuxProductHeroActivity(cfg: WorkerConfig) {
         bytes: videoBytes.byteLength,
         mime: 'video/mp4',
         metadata: {
-          preset: 'product_hero',
+          preset: input.preset,
           aspect_ratio: '9:16',
           duration_ms: durationMs,
           audio_duration_ms: input.audio_duration_ms,
