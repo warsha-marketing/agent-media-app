@@ -41,6 +41,15 @@ export interface Quote {
   /** Spendable balance (balance minus in-flight reservations); null = unknown. */
   available: number | null;
   sufficient: boolean;
+  /** What the quote says about the Music Bed (#9), when it says anything. */
+  musicBed?: MusicBedQuote;
+}
+
+/** The quote's Music Bed (#9): a bed will play, or why the Short is voice only. */
+export interface MusicBedQuote {
+  on: boolean;
+  reason: 'off' | 'no_tracks' | null;
+  detail: string;
 }
 
 /** A 200 quote body, or null if it is not one. */
@@ -49,7 +58,38 @@ export function parseQuote(body: unknown): Quote | null {
   const b = body as Record<string, unknown>;
   if (typeof b.credits !== 'number' || !Number.isFinite(b.credits)) return null;
   const available = typeof b.available === 'number' ? b.available : null;
-  return { credits: b.credits, available, sufficient: b.sufficient !== false };
+  const musicBed = parseMusicBed(b.music_bed);
+  return { credits: b.credits, available, sufficient: b.sufficient !== false, ...(musicBed ? { musicBed } : {}) };
+}
+
+// ── Music Bed (#9) ──────────────────────────────────────────────────────────
+
+/** The one-line explanation next to the Music Bed toggle when it is off. */
+export const NO_MUSIC_LINE = 'No music: the Short is voice only, so you can add a sound in TikTok.';
+
+function parseMusicBed(v: unknown): MusicBedQuote | null {
+  if (!v || typeof v !== 'object') return null;
+  const m = v as Record<string, unknown>;
+  if (typeof m.on !== 'boolean') return null;
+  const reason = m.reason === 'off' || m.reason === 'no_tracks' ? m.reason : null;
+  return { on: m.on, reason, detail: typeof m.detail === 'string' ? m.detail : '' };
+}
+
+/**
+ * The line under the Music Bed toggle. The quote is always asked with the bed on
+ * (the default), so with the toggle on it says whether a licensed track exists;
+ * off never needs the server.
+ */
+export function musicBedLine(music: boolean, quote: Quote): string {
+  if (!music) return NO_MUSIC_LINE;
+  const m = quote.musicBed;
+  if (m && !m.on) return m.detail || NO_MUSIC_LINE;
+  return 'A licensed Music Bed plays quietly under the voice.';
+}
+
+/** The make_product_hero run body. aspect_ratio is left to the server (always 9:16). */
+export function renderBody(draftId: string, photoUrl: string, music: boolean) {
+  return { draft_id: draftId, product_image_url: photoUrl, music };
 }
 
 /** The run id of a 202 from POST /v1/skills/make_product_hero/run (fresh or replayed). */
@@ -191,7 +231,7 @@ export function stageOf(currentStep: string | null | undefined): { stage: Render
   const clip = /^clip_(\d+)$/.exec(step);
   if (clip) return { stage: 'visuals', shot: Number(clip[1]) };
   if (step === 'audio') return { stage: 'voice', shot: null };
-  if (step === 'mux' || step === 'done') return { stage: 'cut', shot: null };
+  if (step === 'mux' || step === 'music_bed' || step === 'done') return { stage: 'cut', shot: null };
   return { stage: 'queued', shot: null };
 }
 

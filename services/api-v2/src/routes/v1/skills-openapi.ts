@@ -69,7 +69,7 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
       security: [{ bearerAuth: [] }],
       parameters: [SLUG],
       responses: {
-        '200': { description: 'The quote: credits, available (after reservations), committed, sufficient' },
+        '200': { description: 'The quote: credits, available (after reservations), committed, sufficient; for a Preset render also music_bed (on, track_id, mood, reason off|no_tracks, detail)' },
         '400': skillError('`invalid_input`: the body fails the skill schema'),
         '404': skillError(sentences('`unknown_skill`', ...refusalLines(404))),
         '409': skillError(sentences(...refusalLines(409))),

@@ -11,7 +11,7 @@
 import Link from 'next/link';
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { AlertTriangle, Check, Clapperboard, Download, ImageOff, Loader2, RotateCcw } from 'lucide-react';
-import { FLOW_STEPS, RENDER_STAGES, type ApiOutcome, type FlowStep, type RefundView, type RenderPhase } from '@/lib/product-hero-flow';
+import { FLOW_STEPS, RENDER_STAGES, musicBedLine, type ApiOutcome, type FlowStep, type Quote, type RefundView, type RenderPhase } from '@/lib/product-hero-flow';
 
 const card = { border: '1px solid rgba(255,255,255,0.08)', backgroundColor: '#14151F' } as const;
 const muted = { color: 'rgba(255,255,255,0.45)' } as const;
@@ -63,6 +63,9 @@ interface RenderPanelProps {
   onRequote: () => void;
   onRetry: () => void;
   onNewPhoto: () => void;
+  /** Music Bed (#9): on by default; off = voice only, add a sound in TikTok. */
+  music?: boolean;
+  onMusicChange?: (on: boolean) => void;
 }
 
 export function RenderPanel(p: RenderPanelProps) {
@@ -77,7 +80,7 @@ export function RenderPanel(p: RenderPanelProps) {
         </p>
       ) : null}
       {r.phase === 'quoted' || r.phase === 'starting' ? (
-        <Confirmation quote={r.quote} starting={r.phase === 'starting'} blocked={p.edited} onConfirm={p.onConfirm} />
+        <Confirmation quote={r.quote} starting={r.phase === 'starting'} blocked={p.edited} onConfirm={p.onConfirm} music={p.music} onMusicChange={p.onMusicChange} />
       ) : null}
       {r.phase === 'refused' ? <Refusal outcome={r.outcome} quoted={!!r.quote} {...p} /> : null}
       {r.phase === 'rendering' ? <Progress view={r.view} /> : null}
@@ -101,7 +104,7 @@ function Waiting({ hasDraft, hasPhoto, edited }: RenderPanelProps) {
   );
 }
 
-function Confirmation({ quote, starting, blocked, onConfirm }: { quote: { credits: number; available: number | null; sufficient: boolean }; starting: boolean; blocked: boolean; onConfirm: () => void }) {
+function Confirmation({ quote, starting, blocked, onConfirm, music, onMusicChange }: { quote: Quote; starting: boolean; blocked: boolean; onConfirm: () => void; music?: boolean; onMusicChange?: (on: boolean) => void }) {
   return (
     <>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -112,6 +115,7 @@ function Confirmation({ quote, starting, blocked, onConfirm }: { quote: { credit
         Your Short is rendered from this photo and the voice you approved, cut to its exact length. Nothing is charged
         until you confirm, and if the render fails the credits are refunded.
       </p>
+      {onMusicChange ? <MusicBedToggle music={music !== false} quote={quote} disabled={starting} onChange={onMusicChange} /> : null}
       {!quote.sufficient ? (
         <p className="rounded-xl px-3 py-2 text-sm" style={danger}>
           You don&apos;t have enough credits for this render.{' '}
@@ -134,6 +138,19 @@ function Confirmation({ quote, starting, blocked, onConfirm }: { quote: { credit
         </button>
       </div>
     </>
+  );
+}
+
+/** Music Bed on/off (#9), with its one-line explanation. It never changes the price. */
+function MusicBedToggle({ music, quote, disabled, onChange }: { music: boolean; quote: Quote; disabled: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="inline-flex items-center gap-2 text-sm" style={text}>
+        <input type="checkbox" checked={music} disabled={disabled} onChange={(e) => onChange(e.target.checked)} className="h-4 w-4 accent-[#A78BFA]" />
+        Music Bed under the voice
+      </label>
+      <p className="text-xs" style={muted}>{musicBedLine(music, quote)}</p>
+    </div>
   );
 }
 

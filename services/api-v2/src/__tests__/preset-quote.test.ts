@@ -19,6 +19,7 @@ const NARROW: PresetDefinition<'person' | 'product'> = {
   maxSpeechMs: 10_000,
   shotPlan: { order: ['person', 'product'], last: 'product' },
   requiredInputs: ['product_image'],
+  musicBed: [],
   budget: { maxCredits: 280, maxProviderUsd: 1.2 },
 };
 

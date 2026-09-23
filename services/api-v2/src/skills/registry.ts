@@ -316,6 +316,13 @@ export const MakeProductHeroSkillInputSchema = z
       .optional(),
     product_image_base64: z.string().min(64).describe('The product photo as base64 (prefer product_image_url).').optional(),
     aspect_ratio: z.literal(PRODUCT_HERO.aspectRatio).default(PRODUCT_HERO.aspectRatio),
+    // Music Bed (#9): a licensed track ducked under the voice. Free either way.
+    music: z
+      .boolean()
+      .default(true)
+      .describe(
+        'Music Bed under the voice, on by default. Set false for a voice-only Short, e.g. when the user will add a sound in TikTok (trending sounds are licensed only inside TikTok, so they can never be baked in). The quote says whether a bed will be mixed.',
+      ),
   })
   .refine((d) => Boolean(d.product_image_url) !== Boolean(d.product_image_base64), {
     message: 'provide exactly one of product_image_url (any https URL) or product_image_base64 (data URL or raw base64)',

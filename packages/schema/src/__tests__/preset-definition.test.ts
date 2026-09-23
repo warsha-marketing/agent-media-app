@@ -26,6 +26,7 @@ const INTERCUT: PresetDefinition<'product' | 'person'> = {
   maxSpeechMs: 15_000,
   shotPlan: { order: ['person', 'product'], last: 'product' },
   requiredInputs: ['product_image'],
+  musicBed: [],
   budget: { maxCredits: 420, maxProviderUsd: 1.8 },
 };
 

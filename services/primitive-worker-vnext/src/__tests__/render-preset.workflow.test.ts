@@ -30,6 +30,7 @@ const INTERCUT: PresetRenderDefinition<'person' | 'product'> = {
   maxSpeechMs: 15_000,
   shotPlan: { order: ['person', 'product'], last: 'product' },
   requiredInputs: ['product_image'],
+  musicBed: [],
   budget: { maxCredits: 420, maxProviderUsd: 1.8 },
   shotPrompts: {
     person: 'TEST person reacting silently to the product in @image1, mouth closed.',
