@@ -21,6 +21,7 @@ import {
   makeFetchDraftAudioActivity,
   makeProductHeroClipActivity,
   makeMuxProductHeroActivity,
+  makeReleaseDraftRenderActivity,
 } from './product-hero.js';
 
 export function createActivities(cfg: WorkerConfig) {
@@ -44,6 +45,7 @@ export function createActivities(cfg: WorkerConfig) {
     fetchDraftAudio: makeFetchDraftAudioActivity(cfg),
     productHeroClip: makeProductHeroClipActivity(cfg),
     muxProductHero: makeMuxProductHeroActivity(cfg),
+    releaseDraftRender: makeReleaseDraftRenderActivity(cfg),
   };
 }
 

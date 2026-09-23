@@ -107,10 +107,13 @@ export interface DraftRow {
   duration_ms: number;
   alignment: Alignment;
   created_at: string;
-  rendered_at: string | null;
+  /** When a render of this draft first started (then it can never be deleted). */
+  render_started_at: string | null;
+  /** The skill run rendering it, or that rendered it; null = free to render. */
+  render_run_id: string | null;
 }
 
-export type NewDraftRow = Omit<DraftRow, 'created_at' | 'rendered_at'>;
+export type NewDraftRow = Omit<DraftRow, 'created_at' | 'render_started_at' | 'render_run_id'>;
 
 // ── Provider seam ────────────────────────────────────────────────────────────
 
@@ -433,7 +436,8 @@ export function toDraftView(row: DraftRow, audio: SignedAudioUrl) {
     duration_ms: row.duration_ms,
     alignment: row.alignment,
     created_at: row.created_at,
-    rendered_at: row.rendered_at,
+    render_started_at: row.render_started_at ?? null,
+    render_run_id: row.render_run_id ?? null,
   };
 }
 export type DraftView = ReturnType<typeof toDraftView>;

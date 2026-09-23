@@ -40,6 +40,7 @@ function happyFakes(overrides: CannedActivities = {}) {
     composedSkillState: undefined,
     refundCredits: undefined,
     markPrimitiveRunFailed: undefined,
+    releaseDraftRender: undefined,
     fetchDraftAudio: (i: FetchDraftAudioInput) => ({
       primitive_run_id: i.primitive_run_id,
       audio_key: i.audio_key,
@@ -181,6 +182,42 @@ describe('makeProductHeroWorkflow — failure refunds every charged child', () =
       names.lastIndexOf('fetchDraftAudio'),
       names.lastIndexOf('muxProductHero'),
     ));
+  });
+
+  it.each(failAt)('a terminal failure at %s gives the draft back after the refunds', async (_where, overrides) => {
+    const fakes = happyFakes(overrides);
+    await expect(harness.execute('makeProductHeroWorkflow', [renderInput(12_000)], fakes)).rejects.toBeInstanceOf(
+      WorkflowFailedError,
+    );
+
+    expect(fakes.callsTo('releaseDraftRender')).toEqual([{ skill_run_id: SKILL_RUN_ID, draft_id: 'draft-1' }]);
+    const names = fakes.names();
+    const released = names.indexOf('releaseDraftRender');
+    // After every refund, and after the run is recorded failed (the claim may
+    // only be released once its run failed).
+    expect(released).toBeGreaterThan(names.lastIndexOf('refundCredits'));
+    const failedAt = fakes.calls.findIndex(
+      (c) => c.name === 'composedSkillState' && (c.input as { status?: string }).status === 'failed',
+    );
+    expect(failedAt).toBeGreaterThan(-1);
+    expect(released).toBeGreaterThan(failedAt);
+  });
+
+  it('still fails with the render’s own error when giving the draft back fails', async () => {
+    const fakes = happyFakes({
+      muxProductHero: () => { throw ApplicationFailure.nonRetryable('ffmpeg exploded', 'MUX_FAILED'); },
+      releaseDraftRender: () => { throw ApplicationFailure.nonRetryable('db down', 'DB_DOWN'); },
+    });
+    const run = harness.execute('makeProductHeroWorkflow', [renderInput(12_000)], fakes);
+    await expect(run).rejects.toBeInstanceOf(WorkflowFailedError);
+    const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
+    expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'MUX_FAILED' });
+  });
+
+  it('keeps the draft claimed when the render succeeds', async () => {
+    const fakes = happyFakes();
+    await harness.execute('makeProductHeroWorkflow', [renderInput(9_000)], fakes);
+    expect(fakes.names()).not.toContain('releaseDraftRender');
   });
 
   it('fails when the cut does not match the audio length, and refunds', async () => {

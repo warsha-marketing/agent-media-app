@@ -19,7 +19,8 @@
  *
  * Each step writes its own primitive_runs row under the skill run; the Short is
  * the skill run's final output. A terminal failure anywhere refunds every
- * charged child (idempotent), marks the failing step and the run failed. A
+ * charged child (idempotent), marks the failing step and the run failed, then
+ * releases the draft's render claim so the same draft can be rendered again. A
  * content-policy verdict on the product photo is never retried.
  *
  * Extension points (later tickets): the Music Bed and Captions join at step 3.
@@ -34,7 +35,7 @@ import { failureInfo } from './failure-info.js';
 export interface MakeProductHeroWorkflowInput {
   skill_run_id: string;
   user_id: string;
-  /** The approved draft being rendered (already stamped rendered_at by api-v2). */
+  /** The approved draft being rendered (api-v2 claimed it for this run). */
   draft_id: string;
   /** Private storage key of the draft's audio. Server-side only. */
   audio_key: string;
@@ -80,7 +81,7 @@ const { composedSkillState } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '30 seconds',
   retry: { maximumAttempts: 3 },
 });
-const { refundCredits, markPrimitiveRunFailed } = proxyActivities<PrimitiveActivities>({
+const { refundCredits, markPrimitiveRunFailed, releaseDraftRender } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '30 seconds',
   retry: { initialInterval: '2s', maximumInterval: '20s', backoffCoefficient: 2, maximumAttempts: 5 },
 });
@@ -194,6 +195,14 @@ export async function makeProductHeroWorkflow(
       error_code: code,
       error_message: message,
     });
+    // Refunded and recorded failed: give the draft back so the user can render
+    // the same approved audio again. Best effort — api-v2 also treats a claim
+    // still held by a failed run as free — so it never masks the real failure.
+    try {
+      await releaseDraftRender({ skill_run_id: skillRunId, draft_id: input.draft_id });
+    } catch {
+      // keep the render's own error
+    }
     throw err;
   }
 }

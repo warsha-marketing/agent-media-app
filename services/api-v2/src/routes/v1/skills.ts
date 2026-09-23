@@ -14,7 +14,7 @@ import { quoteSkillCredits, quoteInFlightPrimitiveRun } from '../../skills/credi
 import { decideMakeUgcRoute, type MakeUgcProps } from '../../skills/make-ugc-router.js';
 import {
   RenderRefusal,
-  draftAlreadyRendered,
+  draftRenderInFlight,
   resolveRenderableDraft,
   supabaseProductHeroDraftStore,
   type RenderableDraft,
@@ -417,10 +417,10 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
     return;
   }
 
-  // make_product_hero renders an approved draft: resolve + claim the draft,
-  // re-host the photo, preflight, and start its own workflow.
+  // make_product_hero renders an approved draft: resolve the draft, re-host the
+  // photo, preflight, claim the draft for a new run, and start its own workflow.
   if (slug === 'make_product_hero') {
-    await dispatchProductHero(res, userId, activityInputBody);
+    await dispatchProductHero(res, userId, activityInputBody, readIdempotencyKey(req));
     return;
   }
 
@@ -713,17 +713,56 @@ async function resolveDraftOrRespond(
 /**
  * make_product_hero: render an approved draft into a Product Hero Short.
  *
- * Order matters: every refusal (draft, photo moderation, credits) comes
- * BEFORE the draft is claimed, because a claim is final — rendered_at is
- * set-once, and a claimed draft never renders again. The claim is conditional
- * on rendered_at still being NULL, so two concurrent calls cannot both start.
+ * Every refusal (draft, photo moderation, credits) comes BEFORE the draft is
+ * claimed. The skill run is inserted first, then the draft is claimed FOR that
+ * run (short_drafts.render_run_id, conditional on the claim the resolve saw), so
+ * two concurrent calls cannot both start and a claim always names a real run.
+ * If anything after the claim fails before the workflow is running, the run is
+ * failed and the claim released: the draft stays renderable. Once the workflow
+ * runs, it releases the claim itself if the render fails (after its refunds).
+ *
+ * Idempotency-Key (ARCHITECTURE.md, Credits & spend safety #4): a replay
+ * returns the original run — looked up before the draft, which that run holds.
  */
 async function dispatchProductHero(
   res: Response,
   userId: string,
   body: Record<string, unknown>,
+  idempotencyKey: string | null,
 ): Promise<void> {
   const slug = 'make_product_hero';
+  const store = supabaseProductHeroDraftStore(supabase);
+
+  const sendReplay = (run: { id: string; status: string; input: unknown }) =>
+    res.status(202).json({
+      skill_run_id: run.id,
+      workflow_id: `${slug}-${run.id}`,
+      skill: slug,
+      draft_id: (run.input as { draft_id?: string } | null)?.draft_id ?? null,
+      status: run.status,
+      idempotent_replay: true,
+    });
+  const findReplay = async () =>
+    supabase
+      .from('skill_runs')
+      .select('id, status, input')
+      .eq('user_id', userId)
+      .eq('skill_slug', slug)
+      .eq('idempotency_key', idempotencyKey)
+      .maybeSingle();
+
+  if (idempotencyKey) {
+    const { data: existing, error } = await findReplay();
+    if (error) {
+      res.status(500).json({ error: 'idempotency_lookup_failed', detail: error.message });
+      return;
+    }
+    if (existing) {
+      sendReplay(existing as { id: string; status: string; input: unknown });
+      return;
+    }
+  }
+
   const draft = await resolveDraftOrRespond(res, userId, body);
   if (!draft) return;
 
@@ -762,19 +801,6 @@ async function dispatchProductHero(
     return;
   }
 
-  // Claim the draft: from here on it is rendered (set-once).
-  let claimed: boolean;
-  try {
-    claimed = await supabaseProductHeroDraftStore(supabase).claimForRender(draft.id, userId);
-  } catch (err) {
-    res.status(500).json({ error: 'draft_claim_failed', skill: slug, detail: errorMessage(err) });
-    return;
-  }
-  if (!claimed) {
-    sendRenderRefusal(res, draftAlreadyRendered());
-    return;
-  }
-
   const { data: skillRunRow, error: insertErr } = await supabase
     .from('skill_runs')
     .insert({
@@ -784,15 +810,50 @@ async function dispatchProductHero(
       status: 'submitted',
       input: runInput,
       current_step: 'pending',
+      idempotency_key: idempotencyKey,
     })
     .select('id')
     .single();
   if (insertErr || !skillRunRow) {
+    // A concurrent same-key submit won the unique index: that run is the answer.
+    if (insertErr?.code === '23505' && idempotencyKey) {
+      const { data: dup } = await findReplay();
+      if (dup) {
+        sendReplay(dup as { id: string; status: string; input: unknown });
+        return;
+      }
+    }
+    // Nothing is claimed yet, so the draft is untouched.
     res.status(500).json({ error: 'skill_run_insert_failed', detail: insertErr?.message ?? 'no row' });
     return;
   }
   const skillRunId = skillRunRow.id as string;
   const workflowId = `${slug}-${skillRunId}`;
+
+  const failRun = async (code: string, message: string) => {
+    const { error } = await supabase
+      .from('skill_runs')
+      .update({ status: 'failed', error_code: code, error_message: message.slice(0, 500), finished_at: new Date().toISOString() })
+      .eq('id', skillRunId);
+    if (error) console.warn(`[make_product_hero] could not fail skill_run ${skillRunId}: ${error.message}`);
+  };
+
+  // Claim the draft for this run.
+  let claimed: boolean;
+  try {
+    claimed = await store.claimForRender(draft.id, userId, skillRunId, draft.render_run_id);
+  } catch (err) {
+    await failRun('draft_claim_failed', errorMessage(err));
+    res.status(500).json({ error: 'draft_claim_failed', skill: slug, detail: errorMessage(err) });
+    return;
+  }
+  if (!claimed) {
+    // Another render took the draft between resolve and claim. This run never
+    // started and holds nothing: remove it rather than list a phantom failure.
+    await supabase.from('skill_runs').delete().eq('id', skillRunId);
+    sendRenderRefusal(res, draftRenderInFlight());
+    return;
+  }
 
   const workflowInput = {
     skill_run_id: skillRunId,
@@ -819,16 +880,10 @@ async function dispatchProductHero(
     );
   } catch (err) {
     // Nothing was charged (the worker charges per clip). Fail the run so it does
-    // not sit in 'submitted' holding an in-flight credit reservation.
-    await supabase
-      .from('skill_runs')
-      .update({
-        status: 'failed',
-        error_code: 'temporal_dispatch_failed',
-        error_message: errorMessage(err).slice(0, 500),
-        finished_at: new Date().toISOString(),
-      })
-      .eq('id', skillRunId);
+    // not sit in 'submitted' holding an in-flight credit reservation, then give
+    // the draft back (the claim may only be released once its run failed).
+    await failRun('temporal_dispatch_failed', errorMessage(err));
+    await releaseDraftClaim(skillRunId);
     res.status(502).json({ error: 'temporal_dispatch_failed', detail: errorMessage(err) });
     return;
   }
@@ -840,6 +895,19 @@ async function dispatchProductHero(
     draft_id: draft.id,
     status: 'submitted',
   });
+}
+
+/**
+ * Give back the draft a failed or canceled Product Hero run holds. Best effort:
+ * a claim left on a failed/canceled run is treated as free by the next render
+ * (resolveRenderableDraft), so a failure here only delays the cleanup.
+ */
+async function releaseDraftClaim(skillRunId: string): Promise<void> {
+  try {
+    await supabaseProductHeroDraftStore(supabase).releaseRender(skillRunId);
+  } catch (err) {
+    console.warn(`[make_product_hero] could not release the draft held by ${skillRunId}: ${errorMessage(err)}`);
+  }
 }
 
 async function dispatchMakeUgcVideo(
@@ -1323,6 +1391,9 @@ export async function cancelSkillRunRoute(req: Request, res: Response): Promise<
     res.status(500).json({ error: 'cancel_update_failed', detail: updErr.message });
     return;
   }
+  // A canceled render is refunded like a failed one, so its draft can be
+  // rendered again (terminate() skipped the workflow's own release).
+  if (run.skill_slug === 'make_product_hero') await releaseDraftClaim(run.id);
   res.status(200).json({ skill_run_id: run.id, status: 'canceled' });
 }
 

@@ -496,3 +496,29 @@ export function makeMuxProductHeroActivity(cfg: WorkerConfig) {
     return { primitive_run_id: input.primitive_run_id, video_url: publicUrl, duration_ms: durationMs, artifact_id: artifact.id as string };
   };
 }
+
+// ── releaseDraftRender ───────────────────────────────────────────────────────
+
+export interface ReleaseDraftRenderInput {
+  skill_run_id: string;
+  draft_id: string;
+}
+
+/**
+ * Give the draft back after this render terminally failed (and was refunded),
+ * so the user can render the same approved audio again. Runs only after the
+ * skill run is recorded failed: the short_drafts guard releases a claim only
+ * once its run failed. Conditional on this run still holding the claim, so it
+ * is idempotent and never frees a claim another run holds.
+ */
+export function makeReleaseDraftRenderActivity(cfg: WorkerConfig) {
+  return async function releaseDraftRender(input: ReleaseDraftRenderInput): Promise<void> {
+    const db = getDb(cfg.supabase.url, cfg.supabase.serviceRoleKey);
+    const { error } = await db
+      .from('short_drafts')
+      .update({ render_run_id: null })
+      .eq('id', input.draft_id)
+      .eq('render_run_id', input.skill_run_id);
+    if (error) throw new Error(`short_drafts release failed: ${error.message}`);
+  };
+}

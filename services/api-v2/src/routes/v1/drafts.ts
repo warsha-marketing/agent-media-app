@@ -212,7 +212,12 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
             required: ['characters', 'character_start_times_seconds', 'character_end_times_seconds'],
           },
           created_at: { type: 'string', format: 'date-time' },
-          rendered_at: { type: ['string', 'null'], format: 'date-time' },
+          render_started_at: { type: ['string', 'null'], format: 'date-time', description: 'When a render of this draft first started.' },
+          render_run_id: {
+            type: ['string', 'null'],
+            format: 'uuid',
+            description: 'The make_product_hero run rendering (or that rendered) this draft; null when it is free to render. Released if that run fails or is canceled.',
+          },
         },
         required: ['id', 'preset', 'dialect', 'script', 'script_source', 'voice', 'audio_url', 'audio_url_expires_at', 'audio_mime', 'duration_ms', 'alignment', 'created_at'],
       },

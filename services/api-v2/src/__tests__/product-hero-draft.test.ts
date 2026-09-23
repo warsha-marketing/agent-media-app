@@ -111,7 +111,7 @@ async function start(opts: { durations: number[]; scripts?: string[] }): Promise
     },
     repo: {
       insert: async (row) => {
-        const saved = { ...row, created_at: new Date(Date.now() + rows.length).toISOString(), rendered_at: null };
+        const saved = { ...row, created_at: new Date(Date.now() + rows.length).toISOString(), render_started_at: null, render_run_id: null };
         rows.push(saved);
         return saved;
       },
@@ -251,7 +251,8 @@ describe('POST /v1/drafts/product-hero', () => {
     expect(d.alignment.characters.join('')).toBe(SCRIPT_A);
     // The provider is whatever voiced it, not a name the draft core assumes.
     expect(d.voice).toEqual({ id: VOICE, provider: 'fake-voice', provider_voice_id: 'voice-test', model: 'eleven_test' });
-    expect(d.rendered_at).toBeNull();
+    expect(d.render_started_at).toBeNull();
+    expect(d.render_run_id).toBeNull();
     // The Brief went to the writer with its Dialect; the writer's Script is what got voiced.
     expect(h.calls.write[0]).toMatchObject({ brief: 'Cold brew promo', dialect: 'levantine' });
     expect(h.calls.voice).toEqual([SCRIPT_A]);

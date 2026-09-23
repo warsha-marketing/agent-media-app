@@ -150,7 +150,7 @@ async function start(opts: { seed?: Record<string, Seed>; candidates?: VoiceCand
     signAudioUrl: async (key) => ({ url: `https://signed.r2.test/${key}`, expires_at: new Date(Date.now() + 900_000).toISOString() }),
     repo: {
       insert: async (row) => {
-        const saved = { ...row, created_at: new Date().toISOString(), rendered_at: null };
+        const saved = { ...row, created_at: new Date().toISOString(), render_started_at: null, render_run_id: null };
         drafts.push(saved);
         return saved;
       },
