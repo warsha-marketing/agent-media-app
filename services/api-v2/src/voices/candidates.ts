@@ -59,6 +59,10 @@ export function suggestedDialect(accent: string): VoiceDialect | null {
 
 export function normalizeCandidate(voice: ProviderVoice): VoiceCandidate | null {
   if (!voice.voice_id || !/^[a-zA-Z0-9_-]{10,80}$/.test(voice.voice_id)) return null;
+  // Native Arabic voices only. A use_cases filter makes the shared library also
+  // return voices whose primary language is English, Hindi, … that are merely
+  // verified to read Modern Standard Arabic; they are never dialect speakers.
+  if (voice.language !== undefined && voice.language !== 'ar') return null;
   const labels = voice.labels ?? {};
   const verified = voice.verified_languages?.find((v) => v.language === 'ar');
   const accent = voice.accent || labels.accent || verified?.accent || '';
@@ -83,7 +87,8 @@ export function normalizeCandidate(voice: ProviderVoice): VoiceCandidate | null 
  * exactly one accent per request, so a Dialect filter asks for every label here.
  */
 export const DIALECT_ACCENTS: Record<VoiceDialect, readonly string[]> = {
-  levantine: ['levantine', 'lebanese', 'syrian', 'palestinian', 'jordanian'],
+  // Lebanese voices are labelled 'levantine' by the provider; 'lebanese' matches none.
+  levantine: ['levantine', 'syrian', 'palestinian', 'jordanian'],
   gulf: ['gulf', 'saudi', 'emirati', 'kuwaiti', 'qatari', 'bahraini', 'omani'],
   egyptian: ['egyptian'],
   maghrebi: ['moroccan', 'algerian', 'tunisian', 'libyan'],

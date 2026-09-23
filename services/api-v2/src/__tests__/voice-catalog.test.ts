@@ -450,6 +450,9 @@ describe('candidate normalisation', () => {
     });
     expect(c).toMatchObject({ suggested_dialect: 'levantine', gender: 'female', style: 'calm', sample_url: 'https://storage.googleapis.com/arabic.mp3' });
     expect(normalizeCandidate({ voice_id: 'unknownvoice123' })).toMatchObject({ suggested_dialect: null, gender: null, style: null });
+    // Native Arabic voices only: an English voice merely verified for MSA is dropped.
+    expect(normalizeCandidate({ voice_id: 'englishvoice1234', language: 'en', accent: 'american', verified_languages: [{ language: 'ar', accent: 'ar-modern-standard' }] })).toBeNull();
+    expect(normalizeCandidate({ voice_id: 'arabicvoice12345', language: 'ar', accent: 'jordanian' })).toMatchObject({ suggested_dialect: 'levantine' });
     expect(normalizeCandidate({ voice_id: '../invalid' })).toBeNull();
   });
 
@@ -495,7 +498,7 @@ describe('candidate search query mapping', () => {
   });
 
   it('covers the accents the ask named for each Dialect', () => {
-    expect(DIALECT_ACCENTS.levantine).toEqual(['levantine', 'lebanese', 'syrian', 'palestinian', 'jordanian']);
+    expect(DIALECT_ACCENTS.levantine).toEqual(['levantine', 'syrian', 'palestinian', 'jordanian']);
     expect(DIALECT_ACCENTS.gulf).toEqual(['gulf', 'saudi', 'emirati', 'kuwaiti', 'qatari', 'bahraini', 'omani']);
     expect(DIALECT_ACCENTS.maghrebi).toEqual(['moroccan', 'algerian', 'tunisian', 'libyan']);
     expect(DIALECT_ACCENTS.msa).toEqual(['modern standard', 'standard']);
@@ -524,7 +527,7 @@ describe('the ElevenLabs candidate finder (fetch faked)', () => {
     });
     const find = elevenLabsCandidateFinder({ apiKey: 'k', fetch: f.impl });
     const r = await find({ page: 1, dialect: 'levantine' });
-    expect(f.urls).toHaveLength(5);
+    expect(f.urls).toHaveLength(4);
     expect(f.urls.every((u) => u.origin + u.pathname === 'https://api.elevenlabs.io/v1/shared-voices')).toBe(true);
     expect(f.urls.every((u) => u.searchParams.get('page') === '1' && u.searchParams.get('language') === 'ar')).toBe(true);
     expect(r.candidates.map((c) => c.display_name)).toEqual(['lev1', 'syr1', 'both', 'lev2']);
@@ -552,8 +555,8 @@ describe('the ElevenLabs candidate finder (fetch faked)', () => {
 
   it('mergeCandidatePages keeps the first sighting of a voice', () => {
     const c = (id: string, accent: string) => ({ ...normalizeCandidate(voice(id, { accent }))! });
-    const merged = mergeCandidatePages([[c('a', 'lebanese')], [c('a', 'syrian'), c('b', 'syrian')]]);
-    expect(merged.map((m) => [m.display_name, m.accent])).toEqual([['a', 'lebanese'], ['b', 'syrian']]);
+    const merged = mergeCandidatePages([[c('a', 'levantine')], [c('a', 'syrian'), c('b', 'syrian')]]);
+    expect(merged.map((m) => [m.display_name, m.accent])).toEqual([['a', 'levantine'], ['b', 'syrian']]);
   });
 });
 
