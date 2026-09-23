@@ -39,7 +39,7 @@ import { getDb } from '../client/db.js';
 import { r2UploadVnext } from '../client/r2.js';
 import { DRAFT_AUDIO, probeSeconds, readPrivateObject } from '../lib/media-io.js';
 import { generateSimpleSelfieEvolink } from '../client/evolink.js';
-import { deductPrimitiveCredits, refundPrimitiveCredits } from '../client/credits.js';
+import { runChargedStep } from './charged-step.js';
 import { VIDEO_CLIP_USD } from '@agentmedia/schema';
 
 const execFileP = promisify(execFile);
@@ -158,199 +158,145 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
       throw ApplicationFailure.nonRetryable(`no prompt for ${input.preset} shot ${input.shot_kind}`, 'INVALID_INPUT');
     }
 
-    // Retry-safety: a clip that already rendered is returned, not re-rendered.
-    const { data: existing, error: existingErr } = await db
-      .from('primitive_runs')
-      .select('status, actual_credits_usd, primitive_artifacts(id, url)')
-      .eq('id', input.primitive_run_id)
-      .maybeSingle();
-    if (existingErr) throw new Error(`primitive_runs lookup failed: ${existingErr.message}`);
-    if (existing && existing.status === 'succeeded') {
-      const art = (existing.primitive_artifacts as Array<{ id: string; url: string }> | null)?.[0];
-      if (!art) throw new Error(`inconsistent state: primitive_run ${input.primitive_run_id} succeeded without an artifact`);
-      return {
-        primitive_run_id: input.primitive_run_id,
-        video_url: art.url,
-        duration_seconds: input.duration,
-        credits_actual_usd: Number(existing.actual_credits_usd ?? 0),
-      };
-    }
-
-    // SSRF guard — the start image must be on our R2.
-    const allowedPrefix = cfg.r2.publicUrl.replace(/\/+$/, '') + '/';
-    if (!input.start_image_url.startsWith(allowedPrefix)) {
-      throw ApplicationFailure.nonRetryable(
-        `start_image_url must be hosted on the configured R2 public URL (${allowedPrefix})`,
-        'REFERENCE_URL_NOT_ALLOWED',
-      );
-    }
     const characterImageUrl = input.character_image_url;
-    if (characterImageUrl !== undefined && !characterImageUrl.startsWith(allowedPrefix)) {
-      throw ApplicationFailure.nonRetryable(
-        `character_image_url must be hosted on the configured R2 public URL (${allowedPrefix})`,
-        'REFERENCE_URL_NOT_ALLOWED',
-      );
-    }
-
-    // Spend: the per-primitive cap does not apply (the Preset's budget governs
-    // the whole render; see the header). The day cap still does.
-    const estimatedUsd = VIDEO_CLIP_USD[input.duration];
-    const since = new Date();
-    since.setUTCHours(0, 0, 0, 0);
-    const { data: dayRows, error: dayErr } = await db
-      .from('primitive_runs')
-      .select('actual_credits_usd')
-      .eq('user_id', input.user_id)
-      .gte('created_at', since.toISOString())
-      .not('actual_credits_usd', 'is', null);
-    if (dayErr) throw new Error(`day-cap query failed: ${dayErr.message}`);
-    const dayUsed = (dayRows ?? []).reduce((s, r) => s + Number(r.actual_credits_usd ?? 0), 0);
-    if (dayUsed + estimatedUsd > cfg.caps.dayUsd) {
-      throw ApplicationFailure.nonRetryable(
-        `day budget exceeded: used $${dayUsed.toFixed(2)} + estimate $${estimatedUsd} > cap $${cfg.caps.dayUsd}`,
-        'BUDGET_CAP_DAY',
-      );
-    }
-
     const prompt = input.prompt;
-    const { error: upsertErr } = await db.from('primitive_runs').upsert(
-      {
-        id: input.primitive_run_id,
-        user_id: input.user_id,
-        skill_run_id: input.skill_run_id,
-        primitive_id: 'product_hero_clip',
-        status: 'submitted',
-        input: {
-          start_image_url: input.start_image_url,
-          duration: input.duration,
-          shot_index: input.shot_index,
-          shot_count: input.shot_count,
-          shot_kind: input.shot_kind,
-          generate_audio: false,
-          prompt,
-          ...(characterImageUrl ? { character_image_url: characterImageUrl } : {}),
-        },
-        estimated_credits_usd: estimatedUsd,
-        started_at: new Date().toISOString(),
-      },
-      { onConflict: 'id' },
-    );
-    if (upsertErr) throw new Error(`primitive_runs upsert failed: ${upsertErr.message}`);
-
-    await deductPrimitiveCredits({
+    // Spend: the per-primitive cap does not apply (the Preset's budget governs
+    // the whole render; see the header). The day cap still does (runChargedStep).
+    const estimatedUsd = VIDEO_CLIP_USD[input.duration];
+    return runChargedStep({
+      cfg,
       db,
-      userId: input.user_id,
       primitiveRunId: input.primitive_run_id,
-      primitive: 'product_hero_clip',
-      duration: input.duration,
-      description: `vNext product_hero clip ${input.shot_index + 1}/${input.shot_count} ${input.duration}s`,
-    });
-
-    try {
-      let videoBytes: Buffer;
-      let providerTaskId: string | null = null;
-      let providerVideoUrl: string | null = null;
-      if (cfg.openai.simulate) {
-        videoBytes = Buffer.from('SIMULATED', 'utf8');
-      } else {
-        const evolinkKey = process.env.EVOLINK_API_KEY?.trim() || process.env.EVOLINK_API_KEYS?.trim();
-        if (!evolinkKey) {
-          throw ApplicationFailure.nonRetryable('EVOLINK_API_KEY not configured on primitive-worker-vnext', 'PROVIDER_UNCONFIGURED');
-        }
-        try {
-          const result = await generateSimpleSelfieEvolink({
-            prompt,
-            // @image1 the start image; @image2 the person, on a shot that shows one.
-            imageUrls: characterImageUrl ? [input.start_image_url, characterImageUrl] : [input.start_image_url],
-            duration: input.duration,
-            aspectRatio: '9:16',
-            // ADR 0001: the video model never speaks.
-            generateAudio: false,
-            quality: '720p',
-          });
-          providerTaskId = result.taskId;
-          providerVideoUrl = result.videoUrl;
-        } catch (err) {
-          // A moderation verdict arrives from the poll as a non-retryable
-          // EVOLINK_CONTENT_POLICY_VIOLATION — pass it through untouched.
-          if (err instanceof ApplicationFailure) throw err;
-          const msg = err instanceof Error ? err.message : String(err);
-          const status = (err as { status?: number })?.status;
-          // 429 / 402 are transient; other 4xx are caller faults (incl. a photo
-          // refused at submit) and must not be resubmitted.
-          if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429 && status !== 402) {
-            throw ApplicationFailure.nonRetryable(`evolink ${status}: ${msg}`, `EVOLINK_${status}`);
-          }
-          throw err instanceof Error ? err : new Error(msg);
-        }
-        Context.current().heartbeat({ stage: 'provider_done', taskId: providerTaskId });
-        const dl = await fetch(providerVideoUrl, { redirect: 'follow', signal: AbortSignal.timeout(120_000) });
-        if (!dl.ok) throw new Error(`clip download ${dl.status}`);
-        videoBytes = Buffer.from(await dl.arrayBuffer());
-      }
-      Context.current().heartbeat({ stage: 'video_downloaded', bytes: videoBytes.byteLength });
-
-      const { publicUrl } = await r2UploadVnext(
-        cfg.r2,
-        input.primitive_run_id,
-        `product-hero-shot-${input.shot_index + 1}.mp4`,
-        videoBytes,
-        'video/mp4',
-      );
-
-      if (providerTaskId) {
-        await db.from('provider_tasks').insert({
-          primitive_run_id: input.primitive_run_id,
-          provider: 'seedance-2-0',
-          external_task_id: providerTaskId,
-          status: 'succeeded',
-          raw_response: { provider_video_url: providerVideoUrl },
-        });
-      }
-
-      const { error: artErr } = await db.from('primitive_artifacts').insert({
+      userId: input.user_id,
+      skillRunId: input.skill_run_id,
+      primitiveId: 'product_hero_clip',
+      r2Refs: [
+        ['start_image_url', input.start_image_url],
+        ...(characterImageUrl !== undefined ? ([['character_image_url', characterImageUrl]] as const) : []),
+      ],
+      estimatedUsd,
+      rowInput: {
+        start_image_url: input.start_image_url,
+        duration: input.duration,
+        shot_index: input.shot_index,
+        shot_count: input.shot_count,
+        shot_kind: input.shot_kind,
+        generate_audio: false,
+        prompt,
+        ...(characterImageUrl ? { character_image_url: characterImageUrl } : {}),
+      },
+      charge: {
+        primitive: 'product_hero_clip',
+        duration: input.duration,
+        description: `vNext product_hero clip ${input.shot_index + 1}/${input.shot_count} ${input.duration}s`,
+      },
+      replay: (prior) => ({
         primitive_run_id: input.primitive_run_id,
-        kind: 'product_hero_clip',
-        url: publicUrl,
-        bytes: videoBytes.byteLength,
-        mime: 'video/mp4',
-        metadata: {
-          provider: 'seedance-2-0',
-          model: process.env.EVOLINK_SEEDANCE_MODEL || 'seedance-2.0-mini-reference-to-video',
-          simulated: cfg.openai.simulate,
-          aspect_ratio: '9:16',
-          duration_seconds: input.duration,
-          generate_audio: false,
-          shot_index: input.shot_index,
-          source_start_image_url: input.start_image_url,
-          ...(characterImageUrl ? { source_character_image_url: characterImageUrl } : {}),
-        },
-      });
-      if (artErr) throw new Error(`primitive_artifacts insert failed: ${artErr.message}`);
-
-      const { error: finErr } = await db
-        .from('primitive_runs')
-        .update({
-          status: 'succeeded',
-          actual_credits_usd: estimatedUsd,
-          finished_at: new Date().toISOString(),
-          provider_task_id: providerTaskId,
-        })
-        .eq('id', input.primitive_run_id);
-      if (finErr) throw new Error(`primitive_runs finalize failed: ${finErr.message}`);
-
-      return {
-        primitive_run_id: input.primitive_run_id,
-        video_url: publicUrl,
+        video_url: prior.url,
         duration_seconds: input.duration,
-        credits_actual_usd: estimatedUsd,
-      };
-    } catch (err) {
-      if (err instanceof ApplicationFailure && err.nonRetryable) {
-        await refundPrimitiveCredits(db, input.primitive_run_id);
-      }
-      throw err;
-    }
+        credits_actual_usd: prior.actualUsd,
+      }),
+      work: async () => {
+        let videoBytes: Buffer;
+        let providerTaskId: string | null = null;
+        let providerVideoUrl: string | null = null;
+        if (cfg.openai.simulate) {
+          videoBytes = Buffer.from('SIMULATED', 'utf8');
+        } else {
+          const evolinkKey = process.env.EVOLINK_API_KEY?.trim() || process.env.EVOLINK_API_KEYS?.trim();
+          if (!evolinkKey) {
+            throw ApplicationFailure.nonRetryable('EVOLINK_API_KEY not configured on primitive-worker-vnext', 'PROVIDER_UNCONFIGURED');
+          }
+          try {
+            const result = await generateSimpleSelfieEvolink({
+              prompt,
+              // @image1 the start image; @image2 the person, on a shot that shows one.
+              imageUrls: characterImageUrl ? [input.start_image_url, characterImageUrl] : [input.start_image_url],
+              duration: input.duration,
+              aspectRatio: '9:16',
+              // ADR 0001: the video model never speaks.
+              generateAudio: false,
+              quality: '720p',
+            });
+            providerTaskId = result.taskId;
+            providerVideoUrl = result.videoUrl;
+          } catch (err) {
+            // A moderation verdict arrives from the poll as a non-retryable
+            // EVOLINK_CONTENT_POLICY_VIOLATION — pass it through untouched.
+            if (err instanceof ApplicationFailure) throw err;
+            const msg = err instanceof Error ? err.message : String(err);
+            const status = (err as { status?: number })?.status;
+            // 429 / 402 are transient; other 4xx are caller faults (incl. a photo
+            // refused at submit) and must not be resubmitted.
+            if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429 && status !== 402) {
+              throw ApplicationFailure.nonRetryable(`evolink ${status}: ${msg}`, `EVOLINK_${status}`);
+            }
+            throw err instanceof Error ? err : new Error(msg);
+          }
+          Context.current().heartbeat({ stage: 'provider_done', taskId: providerTaskId });
+          const dl = await fetch(providerVideoUrl, { redirect: 'follow', signal: AbortSignal.timeout(120_000) });
+          if (!dl.ok) throw new Error(`clip download ${dl.status}`);
+          videoBytes = Buffer.from(await dl.arrayBuffer());
+        }
+        Context.current().heartbeat({ stage: 'video_downloaded', bytes: videoBytes.byteLength });
+
+        const { publicUrl } = await r2UploadVnext(
+          cfg.r2,
+          input.primitive_run_id,
+          `product-hero-shot-${input.shot_index + 1}.mp4`,
+          videoBytes,
+          'video/mp4',
+        );
+
+        if (providerTaskId) {
+          await db.from('provider_tasks').insert({
+            primitive_run_id: input.primitive_run_id,
+            provider: 'seedance-2-0',
+            external_task_id: providerTaskId,
+            status: 'succeeded',
+            raw_response: { provider_video_url: providerVideoUrl },
+          });
+        }
+
+        const { error: artErr } = await db.from('primitive_artifacts').insert({
+          primitive_run_id: input.primitive_run_id,
+          kind: 'product_hero_clip',
+          url: publicUrl,
+          bytes: videoBytes.byteLength,
+          mime: 'video/mp4',
+          metadata: {
+            provider: 'seedance-2-0',
+            model: process.env.EVOLINK_SEEDANCE_MODEL || 'seedance-2.0-mini-reference-to-video',
+            simulated: cfg.openai.simulate,
+            aspect_ratio: '9:16',
+            duration_seconds: input.duration,
+            generate_audio: false,
+            shot_index: input.shot_index,
+            source_start_image_url: input.start_image_url,
+            ...(characterImageUrl ? { source_character_image_url: characterImageUrl } : {}),
+          },
+        });
+        if (artErr) throw new Error(`primitive_artifacts insert failed: ${artErr.message}`);
+
+        const { error: finErr } = await db
+          .from('primitive_runs')
+          .update({
+            status: 'succeeded',
+            actual_credits_usd: estimatedUsd,
+            finished_at: new Date().toISOString(),
+            provider_task_id: providerTaskId,
+          })
+          .eq('id', input.primitive_run_id);
+        if (finErr) throw new Error(`primitive_runs finalize failed: ${finErr.message}`);
+
+        return {
+          primitive_run_id: input.primitive_run_id,
+          video_url: publicUrl,
+          duration_seconds: input.duration,
+          credits_actual_usd: estimatedUsd,
+        };
+      },
+    });
   };
 }
 
