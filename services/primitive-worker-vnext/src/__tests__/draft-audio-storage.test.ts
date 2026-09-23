@@ -8,6 +8,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { WorkerConfig } from '../config.js';
 import { makeFetchDraftAudioActivity } from '../activities/product-hero.js';
 import { r2GetPrivateObject } from '../client/r2.js';
+import { MUSIC_BED_TRACK, readPrivateObject } from '../lib/media-io.js';
 
 function cfgWithout(): WorkerConfig {
   return {
@@ -40,6 +41,13 @@ describe('draft audio storage (worker)', () => {
         duration_ms: 9_000,
       }),
     ).rejects.toMatchObject({ type: 'DRAFT_STORAGE_UNCONFIGURED', nonRetryable: true });
+  });
+
+  it('a Music Bed track read without a private bucket carries its own code, not the draft one', async () => {
+    await expect(readPrivateObject(cfgWithout(), 'music-bed/product_hero/a.mp3', MUSIC_BED_TRACK)).rejects.toMatchObject({
+      type: 'MUSIC_BED_STORAGE_UNCONFIGURED',
+      nonRetryable: true,
+    });
   });
 
   it('never reads a private object from the public bucket', async () => {

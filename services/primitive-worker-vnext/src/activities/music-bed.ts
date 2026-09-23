@@ -27,10 +27,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MUSIC_BED_STORAGE_PREFIX, isMusicBedStorageKey } from '@agentmedia/schema';
+import { MUSIC_BED_STORAGE_PREFIX, isMusicBedStorageKey, type PresetDefinition } from '@agentmedia/schema';
 import type { WorkerConfig } from '../config.js';
 import { getDb } from '../client/db.js';
-import { r2GetPrivateObject, r2UploadVnext } from '../client/r2.js';
+import { r2UploadVnext } from '../client/r2.js';
+import { DRAFT_AUDIO, MUSIC_BED_TRACK, probeSeconds, readPrivateObject } from '../lib/media-io.js';
 
 const execFileP = promisify(execFile);
 
@@ -56,6 +57,8 @@ export interface MixMusicBedInput {
   audio_duration_ms: number;
   /** The Preset id, recorded on the Short. */
   preset: string;
+  /** The Preset's aspect ratio, recorded on the Short. Absent on mixes scheduled before it was passed. */
+  aspect_ratio?: PresetDefinition['aspectRatio'];
   track_id: string;
   /** Private-bucket key of the track (under music-bed/). */
   track_storage_key: string;
@@ -106,29 +109,6 @@ export function musicBedMixArgs(p: { shortPath: string; voicePath: string; bedPa
   ];
 }
 
-async function probeSeconds(path: string, stream?: 'a:0' | 'v:0'): Promise<number> {
-  const args = ['-v', 'error'];
-  if (stream) args.push('-select_streams', stream, '-show_entries', 'stream=duration');
-  else args.push('-show_entries', 'format=duration');
-  args.push('-of', 'default=noprint_wrappers=1:nokey=1', path);
-  const { stdout } = await execFileP('ffprobe', args);
-  const secs = parseFloat(stdout.trim().split('\n')[0] ?? '');
-  if (!Number.isFinite(secs) || secs <= 0) throw new Error(`ffprobe could not measure ${path}: ${stdout.trim()}`);
-  return secs;
-}
-
-async function readPrivate(cfg: WorkerConfig, key: string, what: string, missingCode: string): Promise<Buffer> {
-  if (!cfg.r2.privateBucket) {
-    throw ApplicationFailure.nonRetryable(
-      'private storage is not configured on this worker: set R2_PRIVATE_BUCKET (the same bucket as api-v2)',
-      'DRAFT_STORAGE_UNCONFIGURED',
-    );
-  }
-  const bytes = await r2GetPrivateObject(cfg.r2, key);
-  if (!bytes || bytes.byteLength < 256) throw ApplicationFailure.nonRetryable(`${what} ${key} is missing or empty`, missingCode);
-  return bytes;
-}
-
 export function makeMixMusicBedActivity(cfg: WorkerConfig) {
   return async function mixMusicBed(input: MixMusicBedInput): Promise<MixMusicBedResult> {
     // Only an object under music-bed/ (no `..`, no absolute path): a forged key
@@ -152,9 +132,9 @@ export function makeMixMusicBedActivity(cfg: WorkerConfig) {
       const shortPath = join(workDir, 'short.mp4');
       await writeFile(shortPath, Buffer.from(await resp.arrayBuffer()));
       const voicePath = join(workDir, 'voice.mp3');
-      await writeFile(voicePath, await readPrivate(cfg, input.audio_key, 'draft audio', 'DRAFT_AUDIO_MISSING'));
+      await writeFile(voicePath, await readPrivateObject(cfg, input.audio_key, DRAFT_AUDIO));
       const bedPath = join(workDir, 'bed.audio');
-      await writeFile(bedPath, await readPrivate(cfg, input.track_storage_key, 'Music Bed track', 'MUSIC_BED_TRACK_MISSING'));
+      await writeFile(bedPath, await readPrivateObject(cfg, input.track_storage_key, MUSIC_BED_TRACK));
       Context.current().heartbeat({ stage: 'inputs_ready' });
 
       const outPath = join(workDir, 'short-bed.mp4');
@@ -194,7 +174,7 @@ export function makeMixMusicBedActivity(cfg: WorkerConfig) {
         mime: 'video/mp4',
         metadata: {
           preset: input.preset,
-          aspect_ratio: '9:16',
+          ...(input.aspect_ratio ? { aspect_ratio: input.aspect_ratio } : {}),
           duration_ms: durationMs,
           audio_duration_ms: input.audio_duration_ms,
           music_bed: input.track_id,

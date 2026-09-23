@@ -97,7 +97,7 @@ const MAX_CUT_DRIFT_MS = 50;
 const NON_RETRYABLE = [
   'INVALID_INPUT', 'BUDGET_CAP_DAY',
   'REFERENCE_URL_NOT_ALLOWED', 'PROVIDER_UNCONFIGURED', 'INSUFFICIENT_CREDITS',
-  'DRAFT_AUDIO_MISSING', 'DRAFT_STORAGE_UNCONFIGURED',
+  'DRAFT_AUDIO_MISSING', 'DRAFT_STORAGE_UNCONFIGURED', 'MUSIC_BED_TRACK_MISSING', 'MUSIC_BED_STORAGE_UNCONFIGURED',
   // A moderation verdict is final; resubmitting is another paid render of a
   // photo that will be refused again.
   'EVOLINK_CONTENT_POLICY_VIOLATION',
@@ -217,6 +217,7 @@ export async function renderPreset(
         audio_key: audio.audio_key,
         audio_duration_ms: audio.duration_ms,
         preset: preset.id,
+        aspect_ratio: preset.aspectRatio,
         track_id: musicBed.track_id,
         track_storage_key: musicBed.storage_key,
       });

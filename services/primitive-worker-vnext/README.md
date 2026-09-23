@@ -63,7 +63,10 @@ other activity keeps the per-primitive cap.
 `R2_PRIVATE_BUCKET` is required for Product Hero and must match api-v2's: the
 render reads the draft's private audio from it by key. It never falls back to
 `R2_BUCKET`; unset, a render fails with `DRAFT_STORAGE_UNCONFIGURED`
-(non-retryable, refunded).
+(non-retryable, refunded). The Music Bed tracks (`music-bed/…`) live in the same
+private bucket; a track read without it fails with
+`MUSIC_BED_STORAGE_UNCONFIGURED`, a missing track with `MUSIC_BED_TRACK_MISSING`
+(both non-retryable, refunded).
 
 ## Simulate mode
 

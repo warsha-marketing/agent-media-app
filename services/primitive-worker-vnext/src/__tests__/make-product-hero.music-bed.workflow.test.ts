@@ -85,6 +85,7 @@ describe('makeProductHeroWorkflow — Music Bed on', () => {
       audio_key: AUDIO_KEY, // the draft voice, not a re-voicing
       audio_duration_ms: 12_000,
       preset: 'product_hero',
+      aspect_ratio: '9:16', // the Preset's, recorded on the Short
       track_id: TRACK.track_id,
       track_storage_key: TRACK.storage_key,
     });

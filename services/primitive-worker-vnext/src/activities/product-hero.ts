@@ -32,7 +32,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkerConfig } from '../config.js';
 import { getDb } from '../client/db.js';
-import { r2GetPrivateObject, r2UploadVnext } from '../client/r2.js';
+import { r2UploadVnext } from '../client/r2.js';
+import { DRAFT_AUDIO, probeSeconds, readPrivateObject } from '../lib/media-io.js';
 import { generateSimpleSelfieEvolink } from '../client/evolink.js';
 import { deductPrimitiveCredits, refundPrimitiveCredits } from '../client/credits.js';
 import { VIDEO_CLIP_USD } from '@agentmedia/schema';
@@ -63,37 +64,11 @@ export interface FetchDraftAudioResult {
   duration_ms: number;
 }
 
-async function probeSeconds(path: string, stream?: 'a:0' | 'v:0'): Promise<number> {
-  const args = ['-v', 'error'];
-  if (stream) args.push('-select_streams', stream, '-show_entries', 'stream=duration');
-  else args.push('-show_entries', 'format=duration');
-  args.push('-of', 'default=noprint_wrappers=1:nokey=1', path);
-  const { stdout } = await execFileP('ffprobe', args);
-  const secs = parseFloat(stdout.trim().split('\n')[0] ?? '');
-  if (!Number.isFinite(secs) || secs <= 0) throw new Error(`ffprobe could not measure ${path}: ${stdout.trim()}`);
-  return secs;
-}
-
-async function readDraftAudio(cfg: WorkerConfig, key: string): Promise<Buffer> {
-  if (!cfg.r2.privateBucket) {
-    // Retrying cannot configure a bucket; fail the render (and refund) now.
-    throw ApplicationFailure.nonRetryable(
-      'draft audio storage is not configured on this worker: set R2_PRIVATE_BUCKET (the same bucket as api-v2)',
-      'DRAFT_STORAGE_UNCONFIGURED',
-    );
-  }
-  const bytes = await r2GetPrivateObject(cfg.r2, key);
-  if (!bytes || bytes.byteLength < 256) {
-    throw ApplicationFailure.nonRetryable(`draft audio ${key} is missing or empty`, 'DRAFT_AUDIO_MISSING');
-  }
-  return bytes;
-}
-
 export function makeFetchDraftAudioActivity(cfg: WorkerConfig) {
   return async function fetchDraftAudio(input: FetchDraftAudioInput): Promise<FetchDraftAudioResult> {
     const db = getDb(cfg.supabase.url, cfg.supabase.serviceRoleKey);
     const startedAt = new Date().toISOString();
-    const bytes = await readDraftAudio(cfg, input.audio_key);
+    const bytes = await readPrivateObject(cfg, input.audio_key, DRAFT_AUDIO);
 
     const workDir = await mkdtemp(join(tmpdir(), `vnext-hero-audio-${input.primitive_run_id}-`));
     let durationMs: number;
@@ -427,7 +402,7 @@ export function makeMuxProductHeroActivity(cfg: WorkerConfig) {
         Context.current().heartbeat({ stage: 'clip_downloaded', index: i });
       }
       const audioPath = join(workDir, 'draft.mp3');
-      await writeFile(audioPath, await readDraftAudio(cfg, input.audio_key));
+      await writeFile(audioPath, await readPrivateObject(cfg, input.audio_key, DRAFT_AUDIO));
 
       // Cut to the audio as it is on disk, so the visuals match the exact bytes
       // being muxed even if the stored measurement differs by a few ms.
