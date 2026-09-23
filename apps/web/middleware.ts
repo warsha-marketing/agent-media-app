@@ -93,15 +93,34 @@ const ENFORCE_SUBSCRIPTION_WALL = true;
 const ENFORCE_ONBOARDING = process.env.ENFORCE_ONBOARDING !== 'false';
 const SUBSCRIPTION_REDIRECT = process.env.SUBSCRIPTION_REDIRECT ?? '/onboarding/plan';
 
+// Self-hosted storage: the public media origin (R2_PUBLIC_URL) and the endpoint
+// presigned URLs are signed for (S3_PUBLIC_ENDPOINT). Admit only their parsed
+// http(s) origins, never raw CSP text from config.
+const STORAGE_SOURCES = [process.env.R2_PUBLIC_URL, process.env.S3_PUBLIC_ENDPOINT]
+  .map((value) => {
+    try {
+      const url = new URL(value ?? '');
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.origin : null;
+    } catch {
+      return null;
+    }
+  })
+  .filter((origin): origin is string => origin !== null)
+  .map((origin) => ` ${origin}`)
+  .join('');
+
+// Approved Voice samples are provider-hosted previews.
+const VOICE_SAMPLE_SOURCES = ' https://storage.googleapis.com https://cdn.elevenlabs.io';
+
 /** Security headers applied to every response. */
 const SECURITY_HEADERS: Record<string, string> = {
   'Content-Security-Policy': [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://plausible.io https://www.dubcdn.com",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: *.supabase.co *.fal.media fal.media *.r2.dev *.postiz.com uploads.postiz.com platform.postiz.com *.licdn.com *.pbs.twimg.com *.cdninstagram.com *.fbcdn.net *.googleusercontent.com *.ytimg.com *.tiktokcdn.com *.tiktokcdn-us.com *.bsky.social",
-    "media-src 'self' blob: *.supabase.co *.fal.media fal.media *.r2.dev",
-    "connect-src 'self' *.supabase.co *.supabase.in wss://*.supabase.co https://api.stripe.com https://plausible.io https://api.dub.co",
+    "img-src 'self' data: blob: *.supabase.co *.fal.media fal.media *.r2.dev *.postiz.com uploads.postiz.com platform.postiz.com *.licdn.com *.pbs.twimg.com *.cdninstagram.com *.fbcdn.net *.googleusercontent.com *.ytimg.com *.tiktokcdn.com *.tiktokcdn-us.com *.bsky.social" + STORAGE_SOURCES,
+    "media-src 'self' blob: *.supabase.co *.fal.media fal.media *.r2.dev" + STORAGE_SOURCES + VOICE_SAMPLE_SOURCES,
+    "connect-src 'self' *.supabase.co *.supabase.in wss://*.supabase.co https://api.stripe.com https://plausible.io https://api.dub.co" + STORAGE_SOURCES,
     "frame-src 'self' https://js.stripe.com https://hooks.stripe.com",
     "frame-ancestors 'none'",
   ].join('; '),

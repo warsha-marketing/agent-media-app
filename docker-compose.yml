@@ -340,6 +340,10 @@ services:
       # Server-side proxies (lib/api-v2-proxy.ts) call api-v2 over the compose
       # network. Unset, they would fall back to the hosted API.
       API_V2_URL: http://api-v2:3001
+      # The CSP admits these storage origins for media, downloads and the
+      # presigned photo PUT (see middleware.ts).
+      R2_PUBLIC_URL: http://localhost:9000/${R2_BUCKET:-agent-media-outputs}
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
     # Port 3000 is the most contested port on any dev machine. Override with
     # WEB_PORT=3005 in .env rather than editing this file.
     ports: ["${WEB_PORT:-3000}:3000"]
