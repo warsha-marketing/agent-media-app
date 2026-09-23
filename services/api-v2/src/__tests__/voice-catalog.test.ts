@@ -173,6 +173,8 @@ async function start(opts: { seed?: Record<string, Seed>; candidates?: VoiceCand
       getOwned: async (id, userId) => drafts.find((d) => d.id === id && d.user_id === userId) ?? null,
     },
     voices: { get: repo.get },
+    // Every Dialect qualified: this suite is about the Voice gate (qualified-presets.test.ts covers the Preset gate).
+    presets: { qualifiedDialects: async () => ['levantine', 'gulf'], isOperator: async () => false },
     newId: () => uuid('30000000'),
   };
 

@@ -21,6 +21,8 @@ import {
 } from '../../skills/product-hero-render.js';
 import { summarizeRunCredits, type RunCredits } from '../../skills/run-credits.js';
 import type { PresetDefinition } from '@agentmedia/schema';
+import { PresetError, assertPresetAvailable } from '../../presets/qualification.js';
+import { supabasePresetAccess } from '../../presets/providers.js';
 
 /**
  * Credits already COMMITTED to the user's in-flight (submitted/running) jobs.
@@ -715,10 +717,15 @@ async function resolveDraftOrRespond(
   body: Record<string, unknown>,
 ): Promise<RenderableDraft | null> {
   try {
-    return await resolveRenderableDraft(supabaseProductHeroDraftStore(supabase), userId, String(body.draft_id ?? ''), preset);
+    const draft = await resolveRenderableDraft(supabaseProductHeroDraftStore(supabase), userId, String(body.draft_id ?? ''), preset);
+    // Only a Qualified Preset renders (#8); operators pass, to make reviewer samples.
+    await assertPresetAvailable(supabasePresetAccess(supabase), userId, preset.id, draft.dialect);
+    return draft;
   } catch (err) {
     if (err instanceof RenderRefusal) sendRenderRefusal(res, slug, err);
-    else res.status(500).json({ error: 'draft_lookup_failed', skill: slug, detail: errorMessage(err) });
+    else if (err instanceof PresetError) {
+      res.status(err.status).json({ error: 'preset_not_qualified', skill: slug, detail: err.message, ...err.details });
+    } else res.status(500).json({ error: 'draft_lookup_failed', skill: slug, detail: errorMessage(err) });
     return null;
   }
 }

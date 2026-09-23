@@ -45,6 +45,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { formatDeliveryTags } from '@agentmedia/schema';
 import { supabaseVoiceRepo } from '../voices/providers.js';
+import { supabasePresetAccess } from '../presets/providers.js';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -328,6 +329,7 @@ export function productionDraftDeps(supabase: SupabaseClient): { deps: DraftDeps
       signAudioUrl: r2DraftAudioSigner,
       repo: supabaseDraftRepo(supabase),
       voices: supabaseVoiceRepo(supabase),
+      presets: supabasePresetAccess(supabase),
       newId: () => randomUUID(),
     },
   };

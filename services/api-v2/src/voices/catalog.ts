@@ -25,7 +25,7 @@ import { z } from 'zod';
 // ── Vocabulary ───────────────────────────────────────────────────────────────
 
 /** Every Dialect a Voice can be tagged with (CONTEXT.md). Which Dialects can be
- *  drafted is a separate question (drafts/ LIVE_DIALECTS). */
+ *  drafted is a separate question (Qualified Presets, presets/qualification.ts). */
 export const VOICE_DIALECTS = ['levantine', 'gulf', 'egyptian', 'maghrebi', 'msa'] as const;
 export type VoiceDialect = (typeof VOICE_DIALECTS)[number];
 export const VoiceDialectSchema = z.enum(VOICE_DIALECTS);

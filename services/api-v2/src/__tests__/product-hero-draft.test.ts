@@ -143,6 +143,8 @@ async function start(opts: { durations: number[]; scripts?: Written[]; ttsModel?
             }
           : null,
     },
+    // Product Hero is qualified for Levantine only, as the migration seeds it (see qualified-presets.test.ts).
+    presets: { qualifiedDialects: async () => ['levantine'], isOperator: async () => false },
     newId: () => `00000000-0000-4000-8000-${String(++seq).padStart(12, '0')}`,
     ...opts.override,
   };
@@ -245,11 +247,11 @@ describe('POST /v1/drafts/product-hero', () => {
     expect(h.calls.voice).toHaveLength(0);
   });
 
-  it('refuses a Dialect that is not live yet with a distinct code', async () => {
+  it('refuses a Dialect Product Hero is not qualified for with a distinct code', async () => {
     const h = await start({ durations: [8000] });
     const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'gulf', voice_id: VOICE });
     expect(r.status).toBe(422);
-    expect(r.body.error.code).toBe('DIALECT_NOT_AVAILABLE');
+    expect(r.body.error.code).toBe('PRESET_NOT_QUALIFIED');
     expect(h.calls.write).toHaveLength(0);
   });
 
