@@ -68,6 +68,8 @@ interface RenderPanelProps {
   /** Music Bed (#9): on by default; off = voice only, add a sound in TikTok. */
   music?: boolean;
   onMusicChange?: (on: boolean) => void;
+  /** What the picked Preset still needs before it can be priced (e.g. Reaction: "pick a saved character"). */
+  presetTodo?: string[];
 }
 
 export function RenderPanel(p: RenderPanelProps) {
@@ -94,9 +96,10 @@ export function RenderPanel(p: RenderPanelProps) {
   );
 }
 
-function Waiting({ hasDraft, hasPhoto, edited }: RenderPanelProps) {
+function Waiting({ hasDraft, hasPhoto, edited, presetTodo }: RenderPanelProps) {
   const todo = [
     !hasPhoto ? 'add a product photo' : null,
+    ...(presetTodo ?? []),
     !hasDraft ? 'write and voice a Script' : edited ? 're-voice your edited Script' : null,
   ].filter(Boolean);
   return (

@@ -110,6 +110,15 @@ export interface RenderChoice {
   photoUrl: string;
   /** Music Bed on/off (#9). */
   music: boolean;
+  /** The skill that renders the picked Preset (GET /v1/presets `skill`); absent = make_product_hero. */
+  skill?: string;
+  /** The Preset's own request fields (Reaction #19: character, gender, hijab; lib/reaction-flow.ts). */
+  presetInputs?: Readonly<Record<string, unknown>> | null;
+}
+
+/** The skill a choice is quoted and run with. */
+export function skillOf(choice: RenderChoice): string {
+  return choice.skill || 'make_product_hero';
 }
 
 /**
@@ -122,6 +131,7 @@ export function renderBody(choice: RenderChoice) {
     draft_id: choice.draftId,
     product_image_url: choice.photoUrl,
     music: choice.music,
+    ...(choice.presetInputs ?? {}),
   };
 }
 
@@ -248,7 +258,7 @@ export type RunView =
 export const RENDER_STAGES: ReadonlyArray<{ stage: RenderStage; label: string }> = [
   { stage: 'queued', label: 'Queued' },
   { stage: 'voice', label: 'Loading your approved voice' },
-  { stage: 'visuals', label: 'Generating silent product shots' },
+  { stage: 'visuals', label: 'Generating the silent shots' },
   { stage: 'cut', label: 'Cutting the shots to the voice' },
 ];
 
@@ -297,7 +307,7 @@ export function viewOfRun(run: SkillRunBody): RunView {
     return { kind: 'failed', canceled: status !== 'failed', moderation: isModerationBlock(code, message), code, message, refund: refundOf(run) };
   }
   const { stage, shot } = stageOf(run.current_step);
-  const label = stage === 'visuals' && shot ? `Generating product shot ${shot}` : RENDER_STAGES.find((s) => s.stage === stage)!.label;
+  const label = stage === 'visuals' && shot ? `Generating shot ${shot}` : RENDER_STAGES.find((s) => s.stage === stage)!.label;
   return { kind: 'rendering', stage, shot, label };
 }
 
@@ -349,7 +359,13 @@ export const initialRenderState: RenderState = { render: { phase: 'idle' }, conf
 
 /** Two choices are the same request. */
 export function sameChoice(a: RenderChoice, b: RenderChoice): boolean {
-  return a.draftId === b.draftId && a.photoUrl === b.photoUrl && a.music === b.music;
+  return (
+    a.draftId === b.draftId &&
+    a.photoUrl === b.photoUrl &&
+    a.music === b.music &&
+    skillOf(a) === skillOf(b) &&
+    JSON.stringify(a.presetInputs ?? {}) === JSON.stringify(b.presetInputs ?? {})
+  );
 }
 
 /** The key for confirming this choice: the pending one only if it is the same request. */

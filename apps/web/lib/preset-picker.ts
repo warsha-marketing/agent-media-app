@@ -44,7 +44,7 @@ export interface PresetPicker {
  * has, which the server cannot know. scripts/tests/preset-picker.test.ts holds
  * it to the Preset registry (@agentmedia/schema PRESETS).
  */
-export const WEB_FLOWS: ReadonlySet<string> = new Set(['product_hero']);
+export const WEB_FLOWS: ReadonlySet<string> = new Set(['product_hero', 'reaction']);
 
 const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
