@@ -8,7 +8,7 @@ import { getSkill, listSkills, SKILLS } from '../../skills/registry.js';
 import { getTemporalClient } from '../../orchestrator/temporal/client.js';
 import { getTemporalConfig } from '../../orchestrator/temporal/config.js';
 import { withTimeout } from '../../orchestrator/temporal/timeout.js';
-import { uploadUserImageBase64, uploadUserImageFromUrl, uploadUserVideoFromUrl } from '../../lib/r2-upload.js';
+import { publicStorageMessage, uploadUserImageBase64, uploadUserImageFromUrl, uploadUserVideoFromUrl } from '../../lib/r2-upload.js';
 import { ModerationError } from '../../lib/image-moderation.js';
 import { quoteSkillCredits, quoteInFlightPrimitiveRun } from '../../skills/credit-quotes.js';
 import { decideMakeUgcRoute, type MakeUgcProps } from '../../skills/make-ugc-router.js';
@@ -447,7 +447,7 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
         res.status(400).json({
           error: 'image_upload_failed',
           skill: slug,
-          detail: errorMessage(err),
+          detail: publicStorageMessage(err),
         });
         return;
       }
@@ -475,7 +475,7 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
       res.status(400).json({
         error: 'image_upload_failed',
         skill: slug,
-        detail: errorMessage(err),
+        detail: publicStorageMessage(err),
       });
       return;
     }
@@ -492,7 +492,7 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
       body.actor_image_url = up.url;
     } catch (err) {
       if (respondIfModerationBlocked(res, err, slug)) return;
-      res.status(400).json({ error: 'actor_image_rehost_failed', skill: slug, detail: errorMessage(err) });
+      res.status(400).json({ error: 'actor_image_rehost_failed', skill: slug, detail: publicStorageMessage(err) });
       return;
     }
     // b-roll is optional: omit it for a plain multi-take talking head (no overlay).
@@ -501,7 +501,7 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
         const upv = await uploadUserVideoFromUrl(userId, String(body.broll_video_url));
         body.broll_video_url = upv.url;
       } catch (err) {
-        res.status(400).json({ error: 'broll_video_rehost_failed', skill: slug, detail: errorMessage(err) });
+        res.status(400).json({ error: 'broll_video_rehost_failed', skill: slug, detail: publicStorageMessage(err) });
         return;
       }
     }
@@ -523,7 +523,7 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
         const upv = await uploadUserVideoFromUrl(userId, String(body.video_url));
         body.video_url = upv.url;
       } catch (err) {
-        res.status(400).json({ error: 'video_rehost_failed', skill: slug, detail: errorMessage(err) });
+        res.status(400).json({ error: 'video_rehost_failed', skill: slug, detail: publicStorageMessage(err) });
         return;
       }
     }
@@ -782,7 +782,7 @@ async function dispatchProductHero(
     productImageUrl = up.url;
   } catch (err) {
     if (respondIfModerationBlocked(res, err, slug)) return;
-    res.status(400).json({ error: 'image_upload_failed', skill: slug, detail: errorMessage(err) });
+    res.status(400).json({ error: 'image_upload_failed', skill: slug, detail: publicStorageMessage(err) });
     return;
   }
 
@@ -934,7 +934,7 @@ async function dispatchMakeUgcVideo(
       portraitUrl = uploaded.url;
     } catch (err) {
       if (respondIfModerationBlocked(res, err, 'make_ugc_video')) return;
-      res.status(400).json({ error: 'image_upload_failed', detail: errorMessage(err) });
+      res.status(400).json({ error: 'image_upload_failed', detail: publicStorageMessage(err) });
       return;
     }
   }

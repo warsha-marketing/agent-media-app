@@ -30,7 +30,7 @@ import {
   quoteV2Credits,
 } from '@agentmedia/schema/v2';
 import { supabase } from '../../server.js';
-import { uploadUserVideoFromUrl } from '../../lib/r2-upload.js';
+import { publicStorageMessage, uploadUserVideoFromUrl } from '../../lib/r2-upload.js';
 
 const WORKER_V2_URL = process.env.WORKER_V2_URL;
 const WORKER_SECRET = process.env.WORKER_SECRET;
@@ -88,7 +88,7 @@ export async function subtitleRoute(req: Request, res: Response): Promise<void> 
     res.status(400).json({
       error: {
         code: 'VIDEO_REHOST_FAILED',
-        message: `Could not fetch that video: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Could not fetch that video: ${publicStorageMessage(err)}`,
       },
     });
     return;

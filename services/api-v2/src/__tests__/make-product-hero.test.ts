@@ -80,8 +80,14 @@ function query(table: string) {
 vi.mock('../server.js', () => ({ supabase: { from: (t: string) => query(t) } }));
 
 const uploads: string[] = [];
-vi.mock('../lib/r2-upload.js', () => ({
-  uploadUserImageFromUrl: async (_u: string, url: string) => (uploads.push(url), { url: 'https://r2.test/u/product.png' }),
+const UPLOAD: { fails?: string } = {};
+vi.mock('../lib/r2-upload.js', async (orig) => ({
+  publicStorageMessage: (await orig<typeof import('../lib/r2-upload.js')>()).publicStorageMessage,
+  uploadUserImageFromUrl: async (_u: string, url: string) => {
+    if (UPLOAD.fails) throw new Error(UPLOAD.fails);
+    uploads.push(url);
+    return { url: 'https://r2.test/u/product.png' };
+  },
   uploadUserImageBase64: async () => (uploads.push('base64'), { url: 'https://r2.test/u/product.png' }),
   uploadUserVideoFromUrl: async () => ({ url: 'https://r2.test/u/v.mp4' }),
 }));
@@ -178,6 +184,7 @@ const PHOTO = 'https://cdn.example.com/bottle.jpg';
 
 beforeEach(() => {
   for (const k of Object.keys(TABLES)) delete TABLES[k];
+  delete UPLOAD.fails;
   delete HOOKS.failInsert;
   delete HOOKS.beforeUpdate;
   delete TEMPORAL.startFails;
@@ -388,6 +395,15 @@ describe('make_product_hero dispatch', () => {
     expect(canceled.status).toBe(200);
     expect(canceled.body.status).toBe('canceled');
     expect(terminated).toEqual([`make_product_hero-${runId}`]);
+    expect(draft(id).render_run_id).toBeNull();
+  });
+
+  it('a photo that cannot be fetched is refused without the storage layer’s internal tag', async () => {
+    UPLOAD.fails = 'r2: fetch failed (404)';
+    const id = seedDraft();
+    const r = await call(runSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO });
+    expect(r.status).toBe(400);
+    expect(r.body).toMatchObject({ error: 'image_upload_failed', detail: 'fetch failed (404)' });
     expect(draft(id).render_run_id).toBeNull();
   });
 

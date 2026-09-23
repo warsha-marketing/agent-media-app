@@ -30,6 +30,7 @@ import {
   MAX_PRESIGNED_BYTES,
   confirmUpload,
   presignUpload,
+  publicStorageMessage,
   uploadUserImageBase64,
   uploadUserImageFromUrl,
 } from '../../lib/r2-upload.js';
@@ -68,7 +69,7 @@ export async function uploadImageRoute(req: Request, res: Response): Promise<voi
       bytes: uploaded.bytes,
     });
   } catch (err) {
-    const message = (err as Error)?.message ?? 'Upload failed';
+    const message = publicStorageMessage(err);
     // The helper throws for user-fixable reasons (not an image, over 10 MB,
     // blocked host, moderation) far more often than for infrastructure ones.
     // Those must reach the agent as a 400 it can act on, not a 500 it retries.
@@ -99,7 +100,7 @@ export async function uploadImageRoute(req: Request, res: Response): Promise<voi
 // any URL is handed to a model.
 
 function failure(res: Response, err: unknown, tag: string): void {
-  const message = (err as Error)?.message ?? 'Upload failed';
+  const message = publicStorageMessage(err);
   const userFixable =
     /not a PNG or JPEG|too large|exceeds|moderation|blocked|private|https|empty|nothing was uploaded|does not belong|bytes must be|incomplete or corrupt/i.test(
       message,

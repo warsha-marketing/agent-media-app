@@ -37,6 +37,19 @@ interface R2Env {
 let _client: S3Client | null = null;
 let _env: R2Env | null = null;
 
+/**
+ * An error from this module as a user may see it. Every message thrown here
+ * starts with an internal "r2:" tag, kept for logs; routes that answer with the
+ * message pass it through this, so the tag (a storage vendor detail) never
+ * reaches a user or an agent.
+ */
+export function publicStorageMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return raw.replace(/^r2:\s*/i, '');
+}
+
+const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
 function readEnv(): R2Env {
   if (_env) return _env;
   const missing: string[] = [];
@@ -345,7 +358,7 @@ export async function presignUpload(
     throw new Error('r2: bytes must be the exact size of the file, in bytes');
   }
   if (bytes > MAX_PRESIGNED_BYTES) {
-    throw new Error(`r2: file too large (${bytes} bytes, max ${MAX_PRESIGNED_BYTES})`);
+    throw new Error(`r2: file too large (${mb(bytes)}; the limit is ${MAX_PRESIGNED_BYTES / (1024 * 1024)} MB)`);
   }
   const mime = /jpe?g/i.test(contentType) ? 'image/jpeg' : 'image/png';
   const env = readEnv();
