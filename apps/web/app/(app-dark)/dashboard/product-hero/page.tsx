@@ -446,6 +446,15 @@ export default function ProductHeroPage() {
     setMusic(on);
     dispatch({ type: 'invalidate_quote' });
   };
+  // Captions (#10): off by default, free. Like the Music Bed, the choice is part
+  // of the request: a toggle withdraws the quote, re-quotes, and makes the next
+  // Confirm a new confirmation with a new Idempotency-Key.
+  const [captions, setCaptions] = useState(false);
+  const setCaptionsOn = (on: boolean) => {
+    if (on === captions) return;
+    setCaptions(on);
+    dispatch({ type: 'invalidate_quote' });
+  };
 
   /** The draft is already rendering (or rendered): show that run instead of an error. */
   const followDraftRun = useCallback(async (draftId: string, outcome: ApiOutcome) => {
@@ -466,10 +475,10 @@ export default function ProductHeroPage() {
 
   // Only the latest quote request may land (a toggle can race an answer).
   const quoteSeq = useRef(0);
-  const requestQuote = useCallback(async (draftId: string, photoUrl: string, musicOn: boolean) => {
+  const requestQuote = useCallback(async (draftId: string, photoUrl: string, musicOn: boolean, captionsOn: boolean) => {
     const seq = ++quoteSeq.current;
     dispatch({ type: 'quote_requested' });
-    const r = await postJson(`/api/v1/skills/${SKILL}/quote`, quoteBody(draftId, photoUrl, musicOn));
+    const r = await postJson(`/api/v1/skills/${SKILL}/quote`, quoteBody(draftId, photoUrl, musicOn, captionsOn));
     if (seq !== quoteSeq.current) return;
     const quote = r.status === 200 ? parseQuote(r.body) : null;
     if (quote) dispatch({ type: 'quote_loaded', quote });
@@ -482,8 +491,8 @@ export default function ProductHeroPage() {
   const photoUrl = photo?.url ?? null;
   useEffect(() => {
     if (render.phase !== 'idle' || !draftId || !photoUrl || edited) return;
-    void requestQuote(draftId, photoUrl, music);
-  }, [render.phase, draftId, photoUrl, edited, music, requestQuote]);
+    void requestQuote(draftId, photoUrl, music, captions);
+  }, [render.phase, draftId, photoUrl, edited, music, captions, requestQuote]);
 
   // An unvoiced edit makes the quote on screen stale: withdraw it (the reducer
   // leaves a starting or running render alone). Undoing the edit re-quotes.
@@ -494,20 +503,20 @@ export default function ProductHeroPage() {
   /** Ask the reducer to confirm; it is the only gate (see renderReducer 'confirm'). */
   function confirmRender() {
     if (!draft || !photo) return;
-    dispatch({ type: 'confirm', draftId: draft.id, photoUrl: photo.url, music, freshKey: crypto.randomUUID() });
+    dispatch({ type: 'confirm', draftId: draft.id, photoUrl: photo.url, music, captions, freshKey: crypto.randomUUID() });
   }
 
   // Start the render when — and only when — the reducer accepted a Confirm. The
-  // key is the confirmation's: the same (draft, photo, music) confirmed again after
+  // key is the confirmation's: the same (draft, photo, music, captions) confirmed again after
   // a network blip sends the same key, so the server replays instead of charging
-  // twice; a changed Music Bed is a new confirmation with a new key.
+  // twice; a changed Music Bed or Captions choice is a new confirmation with a new key.
   const starting = render.phase === 'starting' ? rs.confirmation : null;
   useEffect(() => {
     if (!starting) return;
-    const { draftId: id, photoUrl: url, music: musicOn, key } = starting;
+    const { draftId: id, photoUrl: url, music: musicOn, captions: captionsOn, key } = starting;
     void (async () => {
       // aspect_ratio is left to the server's default: Product Hero is always 9:16.
-      const r = await postJson(`/api/v1/skills/${SKILL}/run`, renderBody(id, url, musicOn), { 'Idempotency-Key': key });
+      const r = await postJson(`/api/v1/skills/${SKILL}/run`, renderBody(id, url, musicOn, captionsOn ?? false), { 'Idempotency-Key': key });
       const runId = r.status === 202 ? startedRunId(r.body) : null;
       if (runId) {
         dispatch({ type: 'run_started', runId });
@@ -900,6 +909,8 @@ export default function ProductHeroPage() {
         onNewPhoto={choosePhotoAgain}
         music={music}
         onMusicChange={setMusicOn}
+        captions={captions}
+        onCaptionsChange={setCaptionsOn}
       />
 
       {history.length > 1 ? (

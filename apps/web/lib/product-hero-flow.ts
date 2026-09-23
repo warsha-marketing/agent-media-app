@@ -12,7 +12,7 @@
  *   - reading the API's (mixed-shape) error bodies into one outcome per UI state;
  *   - reading a skill run into what the progress / result / failure panels show;
  *   - the render-phase reducer, including the Idempotency-Key lifecycle: one key
- *     per confirmation of a (draft, photo, Music Bed) request, reused by a
+ *     per confirmation of a (draft, photo, Music Bed, Captions) request, reused by a
  *     double-click or a
  *     retried request, retired once the run it started has failed, so a retry of
  *     the SAME draft is a new run rather than a replay of the failed one;
@@ -44,6 +44,14 @@ export interface Quote {
   sufficient: boolean;
   /** What the quote says about the Music Bed (#9), when it says anything. */
   musicBed?: MusicBedQuote;
+  /** What the quote says about Captions (#10), when it says anything. */
+  captions?: CaptionsQuote;
+}
+
+/** The quote's Captions (#10): whether they will be burned, in the server's words. */
+export interface CaptionsQuote {
+  on: boolean;
+  detail: string;
 }
 
 /** The quote's Music Bed (#9): a bed will play, or why the Short is voice only. */
@@ -60,7 +68,14 @@ export function parseQuote(body: unknown): Quote | null {
   if (typeof b.credits !== 'number' || !Number.isFinite(b.credits)) return null;
   const available = typeof b.available === 'number' ? b.available : null;
   const musicBed = parseMusicBed(b.music_bed);
-  return { credits: b.credits, available, sufficient: b.sufficient !== false, ...(musicBed ? { musicBed } : {}) };
+  const captions = parseCaptions(b.captions);
+  return {
+    credits: b.credits,
+    available,
+    sufficient: b.sufficient !== false,
+    ...(musicBed ? { musicBed } : {}),
+    ...(captions ? { captions } : {}),
+  };
 }
 
 // ── Music Bed (#9) ──────────────────────────────────────────────────────────
@@ -93,14 +108,39 @@ export function musicBedLine(music: boolean, quote: Quote): string {
   return music ? MUSIC_ON_LINE : NO_MUSIC_LINE;
 }
 
-/** The make_product_hero run body. aspect_ratio is left to the server (always 9:16). */
-export function renderBody(draftId: string, photoUrl: string, music: boolean) {
-  return { draft_id: draftId, product_image_url: photoUrl, music };
+// ── Captions (#10) ──────────────────────────────────────────────────────────
+
+/** Fallback lines under the Captions toggle, until a quote for this setting says otherwise. */
+export const CAPTIONS_OFF_LINE = 'No Captions. Turn them on to burn the Script in right-to-left Arabic, timed to the voice.';
+const CAPTIONS_ON_LINE = 'Right-to-left Arabic Captions of the Script, timed to the voice. Free.';
+
+function parseCaptions(v: unknown): CaptionsQuote | null {
+  if (!v || typeof v !== 'object') return null;
+  const c = v as Record<string, unknown>;
+  if (typeof c.on !== 'boolean') return null;
+  return { on: c.on, detail: typeof c.detail === 'string' ? c.detail : '' };
+}
+
+/** The line under the Captions toggle: the server's `detail` from a quote asked with this setting, else a fallback. */
+export function captionsLine(captions: boolean, quote: Quote): string {
+  const c = quote.captions;
+  if (c && c.on === captions && c.detail) return c.detail;
+  return captions ? CAPTIONS_ON_LINE : CAPTIONS_OFF_LINE;
+}
+
+/**
+ * The make_product_hero run body. aspect_ratio is left to the server (always
+ * 9:16). Captions are sent only when on: the server's default is off, and the
+ * Idempotency-Key fingerprint is taken over the parsed body, so an absent flag
+ * and `captions: false` are the same request.
+ */
+export function renderBody(draftId: string, photoUrl: string, music: boolean, captions = false) {
+  return { draft_id: draftId, product_image_url: photoUrl, music, ...(captions ? { captions: true } : {}) };
 }
 
 /** The make_product_hero quote body: the same request the run would send. */
-export function quoteBody(draftId: string, photoUrl: string, music: boolean) {
-  return renderBody(draftId, photoUrl, music);
+export function quoteBody(draftId: string, photoUrl: string, music: boolean, captions = false) {
+  return renderBody(draftId, photoUrl, music, captions);
 }
 
 /** The run id of a 202 from POST /v1/skills/make_product_hero/run (fresh or replayed). */
@@ -242,7 +282,7 @@ export function stageOf(currentStep: string | null | undefined): { stage: Render
   const clip = /^clip_(\d+)$/.exec(step);
   if (clip) return { stage: 'visuals', shot: Number(clip[1]) };
   if (step === 'audio') return { stage: 'voice', shot: null };
-  if (step === 'mux' || step === 'music_bed' || step === 'done') return { stage: 'cut', shot: null };
+  if (step === 'mux' || step === 'music_bed' || step === 'captions' || step === 'done') return { stage: 'cut', shot: null };
   return { stage: 'queued', shot: null };
 }
 
@@ -263,7 +303,12 @@ export function viewOfRun(run: SkillRunBody): RunView {
     return { kind: 'failed', canceled: status !== 'failed', moderation: isModerationBlock(code, message), code, message, refund: refundOf(run) };
   }
   const { stage, shot } = stageOf(run.current_step);
-  const label = stage === 'visuals' && shot ? `Generating product shot ${shot}` : RENDER_STAGES.find((s) => s.stage === stage)!.label;
+  const label =
+    stage === 'visuals' && shot
+      ? `Generating product shot ${shot}`
+      : run.current_step === 'captions'
+        ? 'Adding the Arabic Captions'
+        : RENDER_STAGES.find((s) => s.stage === stage)!.label;
   return { kind: 'rendering', stage, shot, label };
 }
 
@@ -279,6 +324,8 @@ export interface ConfirmationRequest {
   photoUrl: string;
   /** Music Bed on/off (#9). */
   music: boolean;
+  /** Captions on/off (#10); absent = off. */
+  captions?: boolean;
 }
 
 /** One confirmation of a request, and the key it sends. */
@@ -313,7 +360,7 @@ export type RenderEvent =
   | { type: 'quote_requested' }
   | { type: 'quote_loaded'; quote: Quote }
   | { type: 'refused'; outcome: ApiOutcome }
-  /** `freshKey` is used only if this is a new (draft, photo, music) confirmation. */
+  /** `freshKey` is used only if this is a new (draft, photo, music, captions) confirmation. */
   | ({ type: 'confirm'; freshKey: string } & ConfirmationRequest)
   | { type: 'run_started'; runId: string }
   /** Show an existing run (reload, or a render already in flight). */
@@ -326,8 +373,14 @@ export const initialRenderState: RenderState = { render: { phase: 'idle' }, conf
 
 /** The key for confirming this request: the pending one only if it is the same request. */
 export function confirmationFor(prev: Confirmation | null, req: ConfirmationRequest, freshKey: string): Confirmation {
-  if (prev && prev.draftId === req.draftId && prev.photoUrl === req.photoUrl && prev.music === req.music) return prev;
-  return { draftId: req.draftId, photoUrl: req.photoUrl, music: req.music, key: freshKey };
+  const same =
+    prev &&
+    prev.draftId === req.draftId &&
+    prev.photoUrl === req.photoUrl &&
+    prev.music === req.music &&
+    (prev.captions ?? false) === (req.captions ?? false);
+  if (prev && same) return prev;
+  return { draftId: req.draftId, photoUrl: req.photoUrl, music: req.music, captions: req.captions ?? false, key: freshKey };
 }
 
 function quoteOf(p: RenderPhase): Quote | null {
@@ -362,7 +415,11 @@ export function renderReducer(state: RenderState, event: RenderEvent): RenderSta
       if (!quote) return state;
       return {
         render: { phase: 'starting', quote },
-        confirmation: confirmationFor(state.confirmation, { draftId: event.draftId, photoUrl: event.photoUrl, music: event.music }, event.freshKey),
+        confirmation: confirmationFor(
+          state.confirmation,
+          { draftId: event.draftId, photoUrl: event.photoUrl, music: event.music, captions: event.captions ?? false },
+          event.freshKey,
+        ),
       };
     }
     case 'run_started':
