@@ -19,11 +19,17 @@
  * calls, which is why it sits behind a per-user rate limit rather than the
  * credit preflight.
  *
+ * The Voice is the user's pick from the catalog (voices/, #7): it must be an
+ * Approved Voice of the draft's Dialect at the moment of voicing, or the draft
+ * is refused with VOICE_NOT_APPROVED before any provider is paid. The draft
+ * stores which catalog Voice spoke it.
+ *
  * Every provider is injected (DraftDeps) so the route tests run on fakes; the
  * real ones live in ./providers.ts.
  */
 
 import { z } from 'zod';
+import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
 
 // ── Vocabulary (CONTEXT.md) ──────────────────────────────────────────────────
 
@@ -50,6 +56,8 @@ export const CreateDraftInputSchema = z
   .object({
     brief: z.string().trim().min(1, 'brief is required').max(BRIEF_MAX_CHARS),
     dialect: DialectSchema,
+    /** An Approved Voice of `dialect`, from GET /v1/voices. */
+    voice_id: z.string().uuid(),
   })
   .strict();
 export type CreateDraftInput = z.infer<typeof CreateDraftInputSchema>;
@@ -63,8 +71,11 @@ export const RevoiceDraftInputSchema = z
     parent_draft_id: z.string().uuid().optional(),
     /** Only used when there is no parent (a first draft that was refused). */
     brief: z.string().trim().max(BRIEF_MAX_CHARS).optional(),
+    /** An Approved Voice of `dialect`. Optional with a parent: the parent's Voice is reused. */
+    voice_id: z.string().uuid().optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => v.voice_id || v.parent_draft_id, { message: 'voice_id is required without a parent_draft_id', path: ['voice_id'] });
 export type RevoiceDraftInput = z.infer<typeof RevoiceDraftInputSchema>;
 
 /** Character-level alignment of the voiced Script, stored verbatim for Captions (#6). */
@@ -83,7 +94,10 @@ export interface DraftRow {
   script: string;
   script_source: 'generated' | 'edited';
   parent_draft_id: string | null;
+  /** The catalog Voice (voices.id) that spoke it; null only on drafts from before the catalog. */
+  voice_catalog_id: string | null;
   voice_provider: string;
+  /** The provider's own voice id. */
   voice_id: string;
   tts_model: string;
   script_model: string | null;
@@ -100,10 +114,17 @@ export type NewDraftRow = Omit<DraftRow, 'created_at' | 'rendered_at'>;
 
 // ── Provider seam ────────────────────────────────────────────────────────────
 
-/** A Script and the Dialect it is spoken in: what a Voice is asked to say. */
+/** Which provider voice speaks: an Approved Voice's provider and provider id. */
+export interface VoiceRef {
+  provider: string;
+  provider_voice_id: string;
+}
+
+/** A Script, the Dialect it is spoken in, and the Voice asked to say it. */
 export interface SpokenScript {
   script: string;
   dialect: Dialect;
+  voice: VoiceRef;
 }
 
 export interface WriteScriptInput {
@@ -141,6 +162,8 @@ export interface DraftDeps {
     /** The draft only if `userId` owns it; null otherwise (never reveals existence). */
     getOwned(id: string, userId: string): Promise<DraftRow | null>;
   };
+  /** The Voice catalog, read at voicing time so a revoked Voice is refused at once. */
+  voices: Pick<VoiceDeps['repo'], 'get'>;
   newId(): string;
 }
 
@@ -173,6 +196,20 @@ function outOfBand(durationMs: number, script: string): DraftError {
       script,
     },
   );
+}
+
+/** The Approved Voice of `dialect` with this id, or VOICE_NOT_APPROVED. */
+async function approvedVoice(deps: DraftDeps, voiceId: string, dialect: Dialect): Promise<VoiceRow> {
+  try {
+    return await approvedVoiceFor(deps.voices, voiceId, dialect);
+  } catch (err) {
+    if (err instanceof VoiceError) throw new DraftError(err.status, err.code, err.message, err.details);
+    throw err;
+  }
+}
+
+function voiceRef(voice: VoiceRow): VoiceRef {
+  return { provider: voice.provider, provider_voice_id: voice.provider_voice_id };
 }
 
 function assertLive(dialect: Dialect): void {
@@ -251,9 +288,9 @@ export function looksDiacritized(script: string): boolean {
 // ── The two draft operations ─────────────────────────────────────────────────
 
 /** One voicing of a Script, with the duration measured from its audio. */
-interface VoiceTake { spoken: SpokenScript; voiced: VoicedScript; durationMs: number }
+interface VoiceTake { spoken: SpokenScript; voiced: VoicedScript; durationMs: number; catalogVoiceId: string }
 
-async function voiceAndMeasure(deps: DraftDeps, spoken: SpokenScript): Promise<VoiceTake> {
+async function voiceAndMeasure(deps: DraftDeps, spoken: SpokenScript, catalogVoiceId: string): Promise<VoiceTake> {
   const voiced = await deps.voiceScript(spoken);
   let durationMs = mp3DurationMs(voiced.audio);
   if (durationMs === 0) {
@@ -261,7 +298,7 @@ async function voiceAndMeasure(deps: DraftDeps, spoken: SpokenScript): Promise<V
     // alignment's end, which undercounts trailing silence by a few ms at most.
     durationMs = Math.round((voiced.alignment.character_end_times_seconds.at(-1) ?? 0) * 1000);
   }
-  return { spoken, voiced, durationMs };
+  return { spoken, voiced, durationMs, catalogVoiceId };
 }
 
 const inBand = (ms: number) => ms >= MIN_SPEECH_MS && ms <= MAX_SPEECH_MS;
@@ -286,6 +323,7 @@ async function persist(
     ...fields,
     dialect: take.spoken.dialect,
     script: take.spoken.script,
+    voice_catalog_id: take.catalogVoiceId,
     voice_provider: voiced.provider,
     voice_id: voiced.voiceId,
     tts_model: voiced.ttsModel,
@@ -297,13 +335,13 @@ async function persist(
 }
 
 /** Ask the writer for a Script, check its تشكيل, then voice and measure it. */
-async function writeAndVoice(deps: DraftDeps, request: WriteScriptInput): Promise<VoiceTake & { model: string }> {
+async function writeAndVoice(deps: DraftDeps, request: WriteScriptInput, voice: VoiceRow): Promise<VoiceTake & { model: string }> {
   const written = await deps.writeScript(request);
   const script = written.script.trim();
   if (!script || script.length > SCRIPT_MAX_CHARS || !looksDiacritized(script)) {
     throw new DraftError(502, 'SCRIPT_GENERATION_FAILED', 'Could not write a diacritized Script for this Brief. Try again or rephrase the Brief.');
   }
-  const take = await voiceAndMeasure(deps, { script, dialect: request.dialect });
+  const take = await voiceAndMeasure(deps, { script, dialect: request.dialect, voice: voiceRef(voice) }, voice.id);
   return { ...take, model: written.model };
 }
 
@@ -314,8 +352,9 @@ async function writeAndVoice(deps: DraftDeps, request: WriteScriptInput): Promis
  */
 export async function createDraftFromBrief(deps: DraftDeps, userId: string, input: CreateDraftInput): Promise<DraftRow> {
   assertLive(input.dialect);
+  const voice = await approvedVoice(deps, input.voice_id, input.dialect);
   const request: WriteScriptInput = { brief: input.brief, dialect: input.dialect };
-  let take = await writeAndVoice(deps, request);
+  let take = await writeAndVoice(deps, request, voice);
   if (!inBand(take.durationMs)) {
     take = await writeAndVoice(deps, {
       ...request,
@@ -324,7 +363,7 @@ export async function createDraftFromBrief(deps: DraftDeps, userId: string, inpu
         duration_ms: take.durationMs,
         direction: take.durationMs > MAX_SPEECH_MS ? 'shorten' : 'lengthen',
       },
-    });
+    }, voice);
   }
   assertInBand(take);
   return persist(deps, userId, {
@@ -338,10 +377,12 @@ export async function createDraftFromBrief(deps: DraftDeps, userId: string, inpu
 /**
  * The user's (edited) Script, voiced verbatim, as a new draft. With a parent,
  * the Brief and Dialect are the parent's: a request naming another Dialect is
- * refused rather than silently voiced in the wrong one.
+ * refused rather than silently voiced in the wrong one. Without a voice_id the
+ * parent's Voice speaks again, provided it is still an Approved Voice.
  */
 export async function revoiceDraft(deps: DraftDeps, userId: string, input: RevoiceDraftInput): Promise<DraftRow> {
   let brief = input.brief?.trim() || null;
+  let voiceId = input.voice_id ?? null;
   if (input.parent_draft_id) {
     const parent = await deps.repo.getOwned(input.parent_draft_id, userId);
     if (!parent) throw new DraftError(404, 'NOT_FOUND', 'Draft not found.');
@@ -355,9 +396,14 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
       );
     }
     brief = parent.brief;
+    voiceId ??= parent.voice_catalog_id;
   }
   assertLive(input.dialect);
-  const take = await voiceAndMeasure(deps, { script: input.script, dialect: input.dialect });
+  if (!voiceId) {
+    throw new DraftError(400, 'VOICE_REQUIRED', 'Pick an Approved Voice for this Dialect (voice_id) and re-voice.');
+  }
+  const voice = await approvedVoice(deps, voiceId, input.dialect);
+  const take = await voiceAndMeasure(deps, { script: input.script, dialect: input.dialect, voice: voiceRef(voice) }, voice.id);
   assertInBand(take);
   return persist(deps, userId, {
     brief,
@@ -380,7 +426,7 @@ export function toDraftView(row: DraftRow, audio: SignedAudioUrl) {
     script: row.script,
     script_source: row.script_source,
     parent_draft_id: row.parent_draft_id,
-    voice: { provider: row.voice_provider, voice_id: row.voice_id, model: row.tts_model },
+    voice: { id: row.voice_catalog_id, provider: row.voice_provider, provider_voice_id: row.voice_id, model: row.tts_model },
     audio_url: audio.url,
     audio_url_expires_at: audio.expires_at,
     audio_mime: row.audio_mime,

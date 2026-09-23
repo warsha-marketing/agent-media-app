@@ -4,9 +4,12 @@
  * Product Hero draft routes (#4). The logic lives in drafts/product-hero-draft.ts;
  * this file is only HTTP: validate, call, map DraftError to a status.
  *
- *   POST /v1/drafts/product-hero          { brief, dialect }             → 201 { draft }
- *   POST /v1/drafts/product-hero/revoice  { script, dialect,
+ *   POST /v1/drafts/product-hero          { brief, dialect, voice_id }   → 201 { draft }
+ *   POST /v1/drafts/product-hero/revoice  { script, dialect, voice_id?,
  *                                           parent_draft_id?, brief? }   → 201 { draft }
+ *
+ * voice_id is an Approved Voice of the Dialect (GET /v1/voices, #7); anything
+ * else is refused with 422 VOICE_NOT_APPROVED before a provider is called.
  *   GET  /v1/drafts/:id                                                   → 200 { draft } | 404
  *
  * Free (no credits) — see the module header. `draftLimiter` runs AFTER auth so
@@ -141,12 +144,13 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
       requestBody: { required: true, content: { 'application/json': { schema: body } } },
       responses: {
         '201': { description: 'A new draft', ...json('DraftResponse') },
-        '400': draftError('INVALID_INPUT'),
+        '400': draftError('INVALID_INPUT; VOICE_REQUIRED (re-voice of a draft that has no catalog Voice, without voice_id)'),
         '422': draftError(unprocessable),
         ...DRAFT_ERRORS,
       },
     },
   });
+  const voiceRefused = 'VOICE_NOT_APPROVED: voice_id is not an Approved Voice of the Dialect (unknown, pending, revoked or another Dialect)';
   const outOfBand = `SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG: voiced speech outside ${MIN_SPEECH_MS / 1000}–${MAX_SPEECH_MS / 1000} s (carries action, duration_ms and the Script)`;
   return {
     paths: {
@@ -154,13 +158,13 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
         'createProductHeroDraft',
         'Product Hero draft: write a diacritized Script for a Brief in a Dialect and voice it. Free (no credits).',
         bodySchema(CreateDraftInputSchema, 'create_draft_input'),
-        `${outOfBand}; DIALECT_NOT_AVAILABLE; BRIEF_REFUSED`,
+        `${outOfBand}; DIALECT_NOT_AVAILABLE; BRIEF_REFUSED; ${voiceRefused}`,
       ),
       '/v1/drafts/product-hero/revoice': post(
         'revoiceProductHeroDraft',
         "Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief and Dialect carry over.",
         bodySchema(RevoiceDraftInputSchema, 'revoice_draft_input'),
-        `${outOfBand}; DIALECT_MISMATCH (dialect differs from the parent's); DIALECT_NOT_AVAILABLE`,
+        `${outOfBand}; DIALECT_MISMATCH (dialect differs from the parent's); DIALECT_NOT_AVAILABLE; ${voiceRefused}`,
       ),
       '/v1/drafts/{id}': {
         get: {
@@ -186,8 +190,14 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
           parent_draft_id: { type: ['string', 'null'], format: 'uuid' },
           voice: {
             type: 'object',
-            properties: { provider: { type: 'string' }, voice_id: { type: 'string' }, model: { type: 'string' } },
-            required: ['provider', 'voice_id', 'model'],
+            description: 'The Voice that spoke the Script.',
+            properties: {
+              id: { type: ['string', 'null'], format: 'uuid', description: 'The catalog Voice (GET /v1/voices); null on drafts made before the catalog.' },
+              provider: { type: 'string' },
+              provider_voice_id: { type: 'string' },
+              model: { type: 'string' },
+            },
+            required: ['id', 'provider', 'provider_voice_id', 'model'],
           },
           audio_url: { type: 'string', format: 'uri', description: 'Short-lived signed URL for the private audio; re-read the draft for a fresh one.' },
           audio_url_expires_at: { type: 'string', format: 'date-time' },
@@ -223,6 +233,7 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
               script: { type: 'string', description: 'On SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG: the Script, to edit and re-voice.' },
               dialect: { type: 'string' },
               parent_dialect: { type: 'string' },
+              voice_id: { type: 'string', description: 'On VOICE_NOT_APPROVED: the refused Voice.' },
               available: { type: 'array', items: { type: 'string' } },
               issues: { type: 'array', items: { type: 'object' } },
             },
