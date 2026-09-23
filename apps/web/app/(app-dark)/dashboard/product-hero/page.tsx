@@ -3,30 +3,52 @@
 'use client';
 
 /**
- * /dashboard/product-hero — the draft phase of a Product Hero Short (#4).
+ * /dashboard/product-hero — a Product Hero Short, end to end (#4, #6, #7).
  *
- * Brief + Dialect + Approved Voice → the server writes a fully diacritized
- * Script and voices it with that Voice.
- * The user reads the Script, hears it, edits it, and re-voices; every voicing
- * is a new draft, so what they finally approve is exactly what renders later.
- * Nothing here costs credits: the cost gate comes after the draft (#5).
+ *   Photo → Brief → Script review + voice preview → cost confirmation → render → Short
  *
- * When the voiced Script falls outside 5–15 s the server refuses the draft
- * (SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG) and returns the Script, which lands in
- * the editor so the user can lengthen or shorten it and re-voice.
+ * Draft phase (free): Brief + Dialect + Approved Voice → the server writes a
+ * fully diacritized Script and voices it with that Voice. The user reads the
+ * Script, hears it, edits it, and re-voices; every voicing is a new draft, so
+ * what they finally approve is exactly what renders. When the voiced Script
+ * falls outside 5–15 s the server refuses the draft (SCRIPT_TOO_SHORT /
+ * SCRIPT_TOO_LONG) and returns the Script, which lands in the editor.
  *
- * The Voice picker (#7) lists only Approved Voices of the chosen Dialect, each
- * with a sample to play, filterable by gender and delivery style. It is re-read
- * whenever the Dialect or a filter changes, and after a VOICE_NOT_APPROVED
- * refusal, so a revoked Voice drops out instead of lingering.
+ * The Voice picker lists only Approved Voices of the chosen Dialect, re-read
+ * whenever the Dialect or a filter changes and after a VOICE_NOT_APPROVED
+ * refusal, so a revoked Voice drops out instead of lingering. Draft audio is
+ * private: each response carries a short-lived signed `audio_url`; an expired
+ * one is refreshed by re-reading the draft.
  *
- * Draft audio is private: each response carries a short-lived signed
- * `audio_url`. When a player's URL has lapsed it fails to load, and the page
- * re-reads that draft (GET /v1/drafts/:id) for a fresh one.
+ * Render phase (#6): the product photo goes straight from the browser to
+ * storage and is moderated on upload (lib/product-hero-upload.ts). With a
+ * voiced draft and a photo the page shows the make_product_hero quote; nothing
+ * is charged until Confirm, which sends one Idempotency-Key per confirmation so
+ * a double-click or a retried request replays instead of charging twice. The
+ * draft and run ids live in the URL (?draft=…&run=…): a reload re-reads the
+ * draft and resumes whichever run holds its render claim. The state machine,
+ * the error mapping and the key lifecycle are in lib/product-hero-flow.ts.
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Sparkles, Mic } from 'lucide-react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { ImagePlus, Loader2, Mic, Sparkles, X } from 'lucide-react';
+import {
+  classifyApiError,
+  confirmationFor,
+  currentStep,
+  initialRenderState,
+  isTerminalRun,
+  parseQuote,
+  readFlowParams,
+  renderReducer,
+  runToResume,
+  startedRunId,
+  writeFlowParams,
+  type ApiOutcome,
+  type SkillRunBody,
+} from '@/lib/product-hero-flow';
+import { PHOTO_TYPES, uploadProductPhoto } from '@/lib/product-hero-upload';
+import { RenderPanel, Stepper, cleanMessage } from './_render';
 
 type Dialect = 'levantine' | 'gulf';
 
@@ -41,6 +63,62 @@ interface Draft {
   duration_ms: number;
   voice: { id: string | null };
   created_at: string;
+  /** The make_product_hero run holding this draft's render claim; null = free. */
+  render_run_id?: string | null;
+}
+
+/** The product photo: a moderated, hosted URL (never bytes in page state). */
+interface Photo {
+  url: string;
+  name: string;
+}
+
+const PHOTO_KEY = 'product-hero:photo';
+const POLL_MS = 4000;
+const SKILL = 'make_product_hero';
+
+function savedPhoto(): Photo | null {
+  try {
+    const p = JSON.parse(sessionStorage.getItem(PHOTO_KEY) ?? 'null') as Photo | null;
+    return p && typeof p.url === 'string' && /^https:\/\//.test(p.url) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePhoto(p: Photo | null) {
+  try {
+    if (p) sessionStorage.setItem(PHOTO_KEY, JSON.stringify(p));
+    else sessionStorage.removeItem(PHOTO_KEY);
+  } catch {
+    // Private mode: the photo just won't survive a reload.
+  }
+}
+
+/** Keep ?draft / ?run in the address bar so a reload lands in the same place. */
+function syncUrl(draftId: string | null, runId: string | null) {
+  const search = writeFlowParams(window.location.search, { draftId, runId });
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}`);
+}
+
+async function readDraft(id: string): Promise<Draft | null> {
+  const r = await fetch(`/api/v1/drafts/${encodeURIComponent(id)}`, { credentials: 'include', cache: 'no-store' }).catch(() => null);
+  if (!r?.ok) return null;
+  return ((await r.json().catch(() => ({}))) as { draft?: Draft }).draft ?? null;
+}
+
+async function postSkill(path: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: unknown }> {
+  try {
+    const r = await fetch(path, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+    return { status: r.status, body: await r.json().catch(() => null) };
+  } catch (e) {
+    return { status: 0, body: { error: { code: 'network', message: (e as Error).message } } };
+  }
 }
 
 type Gender = 'female' | 'male' | 'neutral';
@@ -105,6 +183,13 @@ export default function ProductHeroPage() {
   const [history, setHistory] = useState<Draft[]>([]);
   const [busy, setBusy] = useState<'write' | 'voice' | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  const [photo, setPhoto] = useState<Photo | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState<ApiOutcome | null>(null);
+  const [rs, dispatch] = useReducer(renderReducer, initialRenderState);
+  const photoInput = useRef<HTMLInputElement>(null);
+  /** Guards Confirm within one tick, before the reducer's 'starting' renders. */
+  const startingRef = useRef(false);
 
   /** Approved Voices of the Dialect under the current filters. Never cached. */
   const loadVoices = useCallback(async () => {
@@ -135,7 +220,43 @@ export default function ProductHeroPage() {
     setDraft(d);
     setScript(d.script);
     setHistory((h) => [d, ...h]);
+    // A new draft needs its own quote; its URL is where a reload comes back to.
+    dispatch({ type: 'reset' });
+    syncUrl(d.id, null);
   }
+
+  // ── Resume after a reload: the draft from ?draft, the run from its claim ──
+  useEffect(() => {
+    const params = readFlowParams(window.location.search);
+    setPhoto(savedPhoto());
+    if (!params.draftId) {
+      if (params.runId) dispatch({ type: 'resume', runId: params.runId });
+      return;
+    }
+    let live = true;
+    void (async () => {
+      const d = await readDraft(params.draftId!);
+      if (!live) return;
+      if (!d) {
+        syncUrl(null, null);
+        return;
+      }
+      setDraft(d);
+      setScript(d.script);
+      setHistory([d]);
+      if (d.brief) setBrief(d.brief);
+      setDialect(d.dialect);
+      if (d.voice?.id) setVoiceId(d.voice.id);
+      const runId = runToResume(params, d);
+      if (runId) {
+        dispatch({ type: 'resume', runId });
+        syncUrl(d.id, runId);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
 
   /** Swap in a freshly signed audio URL for a draft whose URL has expired. */
   async function refreshAudio(id: string) {
@@ -199,19 +320,227 @@ export default function ProductHeroPage() {
 
   const voiceChanged = !!draft && !!voiceId && voiceId !== draft.voice?.id;
   const edited = draft ? script.trim() !== draft.script || voiceChanged : script.trim().length > 0;
+  const render = rs.render;
+  /** While a render starts or runs, the draft and photo on screen are the ones it uses. */
+  const renderLocked = render.phase === 'starting' || render.phase === 'rendering';
+
+  // ── Photo ──────────────────────────────────────────────────────────────
+  async function pickPhoto(file: File) {
+    setPhotoError(null);
+    setPhotoBusy(true);
+    try {
+      const r = await uploadProductPhoto(file);
+      if (r.ok) {
+        const p = { url: r.url, name: file.name };
+        setPhoto(p);
+        savePhoto(p);
+        dispatch({ type: 'reset' });
+      } else {
+        setPhotoError(classifyApiError(r.status, r.body));
+      }
+    } finally {
+      setPhotoBusy(false);
+      if (photoInput.current) photoInput.current.value = '';
+    }
+  }
+
+  function clearPhoto() {
+    setPhoto(null);
+    savePhoto(null);
+    setPhotoError(null);
+    dispatch({ type: 'reset' });
+  }
+
+  /** After a moderation block: drop the photo and open the picker. */
+  function choosePhotoAgain() {
+    clearPhoto();
+    dispatch({ type: 'retry' });
+    syncUrl(draft?.id ?? null, null);
+    photoInput.current?.click();
+  }
+
+  // ── Render: quote → Confirm → progress → Short ─────────────────────────
+
+  /** The draft is already rendering (or rendered): show that run instead of an error. */
+  const followDraftRun = useCallback(async (draftId: string, outcome: ApiOutcome) => {
+    const d = await readDraft(draftId);
+    const runId = d?.render_run_id ?? null;
+    if (runId) {
+      dispatch({ type: 'resume', runId });
+      syncUrl(draftId, runId);
+    } else {
+      dispatch({ type: 'refused', outcome });
+    }
+  }, []);
+
+  const handleRefusal = useCallback((draftId: string, outcome: ApiOutcome) => {
+    if (outcome.kind === 'resume_in_flight' || outcome.kind === 'already_rendered') void followDraftRun(draftId, outcome);
+    else dispatch({ type: 'refused', outcome });
+  }, [followDraftRun]);
+
+  const requestQuote = useCallback(async (draftId: string, photoUrl: string) => {
+    dispatch({ type: 'quote_requested' });
+    const r = await postSkill(`/api/v1/skills/${SKILL}/quote`, { draft_id: draftId, product_image_url: photoUrl });
+    const quote = r.status === 200 ? parseQuote(r.body) : null;
+    if (quote) dispatch({ type: 'quote_loaded', quote });
+    else handleRefusal(draftId, classifyApiError(r.status, r.body));
+  }, [handleRefusal]);
+
+  // Price the render as soon as there is a voiced draft and a photo. Only a
+  // quote is fetched here: nothing is charged until Confirm.
+  const draftId = draft?.id ?? null;
+  const photoUrl = photo?.url ?? null;
+  useEffect(() => {
+    if (render.phase !== 'idle' || !draftId || !photoUrl || edited) return;
+    void requestQuote(draftId, photoUrl);
+  }, [render.phase, draftId, photoUrl, edited, requestQuote]);
+
+  async function confirmRender() {
+    // Confirmable: a fresh quote, or the same quote again after a network blip / busy server.
+    const again = render.phase === 'refused' && !!render.quote && (render.outcome.kind === 'retryable' || render.outcome.kind === 'busy');
+    if (!draft || !photo || edited || startingRef.current || (render.phase !== 'quoted' && !again)) return;
+    startingRef.current = true;
+    try {
+      // Same (draft, photo) as the pending confirmation → same key → a replay, never a second charge.
+      const { key } = confirmationFor(rs.confirmation, draft.id, photo.url, crypto.randomUUID());
+      dispatch({ type: 'confirm', draftId: draft.id, photoUrl: photo.url, freshKey: key });
+      const r = await postSkill(
+        `/api/v1/skills/${SKILL}/run`,
+        { draft_id: draft.id, product_image_url: photo.url, aspect_ratio: '9:16' },
+        { 'Idempotency-Key': key },
+      );
+      const runId = r.status === 202 ? startedRunId(r.body) : null;
+      if (runId) {
+        dispatch({ type: 'run_started', runId });
+        syncUrl(draft.id, runId);
+      } else {
+        handleRefusal(draft.id, classifyApiError(r.status, r.body));
+      }
+    } finally {
+      startingRef.current = false;
+    }
+  }
+
+  function retryRender() {
+    dispatch({ type: 'retry' });
+    syncUrl(draft?.id ?? null, null);
+  }
+
+  // Follow the run until it ends. Transient errors keep polling; the render
+  // itself carries on server-side whatever this page does.
+  const pollRunId = render.phase === 'rendering' ? render.runId : null;
+  useEffect(() => {
+    if (!pollRunId) return;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      let done = false;
+      try {
+        const r = await fetch(`/api/v1/skills/runs/${encodeURIComponent(pollRunId)}`, { credentials: 'include', cache: 'no-store' });
+        if (!live) return;
+        if (r.status === 404) {
+          dispatch({ type: 'refused', outcome: { kind: 'error', code: 'not_found', message: 'This render could not be found on your account.' } });
+          syncUrl(draftId, null);
+          return;
+        }
+        if (r.ok) {
+          const run = (await r.json()) as SkillRunBody;
+          if (!live) return;
+          dispatch({ type: 'run_polled', runId: pollRunId, run });
+          done = isTerminalRun(run.status);
+        }
+      } catch {
+        // network blip: try again
+      }
+      if (live && !done) timer = setTimeout(tick, POLL_MS);
+    };
+    void tick();
+    return () => {
+      live = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [pollRunId, draftId]);
+
+  const step = currentStep({ hasPhoto: !!photo, hasDraft: !!draft, scriptEdited: !!draft && edited, render });
 
   return (
     <div className="mx-auto w-full max-w-3xl px-8 py-10">
       <div className="flex flex-col gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.2em]" style={{ color: 'rgba(255,255,255,0.4)' }}>Product Hero</p>
         <h1 className="font-normal" style={{ color: '#E9E9F0', fontSize: 'clamp(28px,2.6vw,36px)', letterSpacing: '-0.03em', lineHeight: 1.05 }}>
-          Script and voice preview
+          From product photo to Short
         </h1>
         <p className="mt-1 max-w-2xl text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
-          Describe the ad in any language. We write a fully diacritized Script in your Dialect and voice it so you can
-          hear it before anything is rendered. Drafts are free; the Short must speak for 5–15 seconds.
+          Add a product photo and describe the ad in any language. We write a fully diacritized Script in your Dialect and
+          voice it so you can hear it first; drafts are free, and the Short must speak for 5–15 seconds. You see the price
+          before anything is charged.
         </p>
       </div>
+      <Stepper current={step} />
+
+      {/* Product photo */}
+      <section className="mt-6 flex flex-col gap-3 rounded-2xl p-5" style={card}>
+        <span className={label} style={muted}>Product photo</span>
+        <input
+          ref={photoInput}
+          type="file"
+          accept={PHOTO_TYPES.join(',')}
+          className="hidden"
+          aria-label="Product photo"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void pickPhoto(f);
+          }}
+        />
+        {photo ? (
+          <div className="flex items-center gap-4">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={photo.url} alt="Your product photo" className="h-28 w-28 rounded-xl object-cover" style={{ border: '1px solid rgba(255,255,255,0.08)' }} />
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+              <span className="truncate text-sm" style={{ color: '#E9E9F0' }}>{photo.name}</span>
+              <span className="text-xs" style={muted}>Used as-is: the video is generated from this exact photo.</span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={photoBusy || renderLocked}
+                  onClick={() => photoInput.current?.click()}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold disabled:opacity-60"
+                  style={{ border: '1px solid rgba(167,139,250,0.5)', color: '#C9B8FF' }}
+                >
+                  {photoBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} Replace
+                </button>
+                <button
+                  type="button"
+                  disabled={photoBusy || renderLocked}
+                  onClick={clearPhoto}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs disabled:opacity-60"
+                  style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)' }}
+                >
+                  <X className="h-3.5 w-3.5" /> Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            disabled={photoBusy}
+            onClick={() => photoInput.current?.click()}
+            className="flex h-28 flex-col items-center justify-center gap-1 rounded-xl text-sm disabled:opacity-60"
+            style={{ border: '1px dashed rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.6)' }}
+          >
+            {photoBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
+            {photoBusy ? 'Uploading and checking…' : 'Upload a product photo (PNG or JPEG, up to 25 MB)'}
+          </button>
+        )}
+        {photoError ? (
+          <p role="alert" className="rounded-xl px-3 py-2 text-sm" style={{ border: '1px solid rgba(255,79,79,0.3)', backgroundColor: 'rgba(255,79,79,0.08)', color: '#FCA5A5' }}>
+            {photoError.kind === 'moderation_blocked'
+              ? 'This photo was blocked by our content check. Try a different photo.'
+              : cleanMessage('message' in photoError ? photoError.message : 'The upload failed. Try again.')}
+          </p>
+        ) : null}
+      </section>
 
       {/* Brief */}
       <section className="mt-8 flex flex-col gap-3 rounded-2xl p-5" style={card}>
@@ -312,7 +641,7 @@ export default function ProductHeroPage() {
           <button
             type="button"
             onClick={writeScript}
-            disabled={!!busy || !brief.trim() || !voiceId}
+            disabled={!!busy || renderLocked || !brief.trim() || !voiceId}
             className="inline-flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-semibold disabled:opacity-60"
             style={{ backgroundColor: '#A78BFA', color: '#0F1015' }}
           >
@@ -349,6 +678,7 @@ export default function ProductHeroPage() {
             lang="ar"
             value={script}
             onChange={(e) => setScript(e.target.value)}
+            readOnly={renderLocked}
             maxLength={600}
             rows={4}
             className="w-full resize-y rounded-xl px-4 py-3 outline-none"
@@ -362,7 +692,7 @@ export default function ProductHeroPage() {
             <button
               type="button"
               onClick={revoice}
-              disabled={!!busy || !script.trim() || !edited}
+              disabled={!!busy || renderLocked || !script.trim() || !edited}
               className="inline-flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-semibold disabled:opacity-60"
               style={{ border: '1px solid rgba(167,139,250,0.5)', color: '#C9B8FF' }}
             >
@@ -372,6 +702,17 @@ export default function ProductHeroPage() {
           </div>
         </section>
       ) : null}
+
+      <RenderPanel
+        render={render}
+        hasDraft={!!draft}
+        hasPhoto={!!photo}
+        edited={!!draft && edited}
+        onConfirm={() => void confirmRender()}
+        onRequote={retryRender}
+        onRetry={retryRender}
+        onNewPhoto={choosePhotoAgain}
+      />
 
       {history.length > 1 ? (
         <section className="mt-6">
