@@ -43,7 +43,7 @@ import {
   type WriteScriptInput,
 } from './product-hero-draft.js';
 import { randomUUID } from 'node:crypto';
-import { DELIVERY_TAGS } from '@agentmedia/schema';
+import { formatDeliveryTags } from '@agentmedia/schema';
 import { supabaseVoiceRepo } from '../voices/providers.js';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
@@ -59,12 +59,9 @@ const DIALECT_GUIDE: Record<Dialect, string> = {
     '(e.g. وَايِد، شْلُون، الحِين، أَبِي، هَذَا), never فصحى phrasing a native speaker would find stiff.',
 };
 
-/** The Delivery Tags, as the writer sees them: "[softly], [whispers], …". */
-const TAG_LIST = DELIVERY_TAGS.map((t) => `[${t}]`).join(', ');
-
 export function systemPrompt(dialect: Dialect, opts: { deliveryTags: boolean }): string {
   const tags = opts.deliveryTags
-    ? `Delivery Tags: add 2 to 4 Delivery Tags to direct the voice, each in square brackets right before the words it shapes, e.g. "[softly] برغموت، فلفل زهري". Use only these: ${TAG_LIST}. They are never spoken; any other bracketed text would be read aloud.`
+    ? `Delivery Tags: add 2 to 4 Delivery Tags to direct the voice, each in square brackets right before the words it shapes, e.g. "[softly] برغموت، فلفل زهري". Use only these: ${formatDeliveryTags()}. They are never spoken; any other bracketed text would be read aloud.`
     : 'Delivery Tags: do not add any. This voice would read bracketed text aloud.';
   return `You write the spoken voice-over Script for a short vertical product ad (a "Product Hero" Short). A synthetic voice will read your Script aloud exactly as written, over silent product visuals.
 

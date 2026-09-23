@@ -29,7 +29,7 @@
  * their own marks, and there is no writer to report terms.
  */
 
-import { bracketedSegments, unknownDeliveryTags } from '@agentmedia/schema';
+import { bracketedSegments, unknownDeliveryTagMessage, unknownDeliveryTags } from '@agentmedia/schema';
 
 export interface ScriptIssue {
   code: 'UNKNOWN_DELIVERY_TAG' | 'SCRIPT_NOT_ARABIC' | 'PRODUCT_TERM_MISSING' | 'WORD_NOT_MARKED';
@@ -66,7 +66,7 @@ export function scriptTextIssues(script: string): ScriptIssue[] {
   if (unknown.length) {
     issues.push({
       code: 'UNKNOWN_DELIVERY_TAG',
-      message: `${unknown.join(', ')} ${unknown.length === 1 ? 'is not a Delivery Tag' : 'are not Delivery Tags'}; it would be spoken aloud.`,
+      message: unknownDeliveryTagMessage(unknown),
       found: unknown,
     });
   }

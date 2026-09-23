@@ -38,7 +38,7 @@
  */
 
 import { z } from 'zod';
-import { DELIVERY_TAGS, modelHonoursDeliveryTags, stripDeliveryTags } from '@agentmedia/schema';
+import { DELIVERY_TAGS, formatDeliveryTags, modelHonoursDeliveryTags, stripDeliveryTags } from '@agentmedia/schema';
 import { generatedScriptIssues, scriptTextIssues, type ScriptIssue } from './script-check.js';
 import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
 
@@ -328,7 +328,7 @@ function refuseEditedScript(issues: ScriptIssue[]): DraftError {
     return new DraftError(
       422,
       'UNKNOWN_DELIVERY_TAG',
-      `${unknown.message} Use one of the Delivery Tags ${DELIVERY_TAGS.map((t) => `[${t}]`).join(' ')}, or remove it.`,
+      `${unknown.message} Use one of the Delivery Tags ${formatDeliveryTags()}, or remove it.`,
       { tags: unknown.found, allowed: [...DELIVERY_TAGS], issues },
     );
   }

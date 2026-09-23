@@ -8,10 +8,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   DELIVERY_TAGS,
+  formatDeliveryTags,
   isDeliveryTag,
   modelHonoursDeliveryTags,
   stripDeliveryTags,
   stripDeliveryTagsFromAlignment,
+  unknownDeliveryTagMessage,
   unknownDeliveryTags,
   type CharacterAlignment,
 } from '../delivery-tags.js';
@@ -45,6 +47,16 @@ describe('the allowed Delivery Tags', () => {
   it('finds unknown bracketed tags as written, and none in the live Script', () => {
     expect(unknownDeliveryTags(LIVE_SCRIPT)).toEqual([]);
     expect(unknownDeliveryTags('[wisper] مرحبا [softly] كيفك [shouts]')).toEqual(['[wisper]', '[shouts]']);
+  });
+
+  it('formats tags one way everywhere (prompt, errors, OpenAPI, editor)', () => {
+    expect(formatDeliveryTags(['softly', 'warmly'])).toBe('[softly], [warmly]');
+    expect(formatDeliveryTags()).toBe(DELIVERY_TAGS.map((t) => `[${t}]`).join(', '));
+  });
+
+  it('says why an unknown tag is refused, in one sentence for one or many', () => {
+    expect(unknownDeliveryTagMessage(['[wisper]'])).toBe('[wisper] is not a Delivery Tag; it would be spoken aloud.');
+    expect(unknownDeliveryTagMessage(['[wisper]', '[shouts]'])).toBe('[wisper], [shouts] are not Delivery Tags; they would be spoken aloud.');
   });
 });
 

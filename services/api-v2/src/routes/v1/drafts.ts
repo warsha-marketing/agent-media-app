@@ -39,7 +39,7 @@ import {
   type DraftRow,
 } from '../../drafts/product-hero-draft.js';
 import { isUuid } from '../../lib/uuid.js';
-import { DELIVERY_TAGS } from '@agentmedia/schema';
+import { formatDeliveryTags } from '@agentmedia/schema';
 
 interface DraftRouteMiddleware {
   generateLimiter: RequestHandler;
@@ -155,7 +155,7 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
     },
   });
   const voiceRefused = 'VOICE_NOT_APPROVED: voice_id is not an Approved Voice of the Dialect (unknown, pending, revoked or another Dialect)';
-  const tagList = DELIVERY_TAGS.map((t) => `[${t}]`).join(' ');
+  const tagList = formatDeliveryTags();
   const outOfBand = `SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG: voiced speech outside ${MIN_SPEECH_MS / 1000}–${MAX_SPEECH_MS / 1000} s (carries action, duration_ms and the Script)`;
   return {
     paths: {

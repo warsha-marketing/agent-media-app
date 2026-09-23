@@ -9,9 +9,11 @@
  * never shown in Captions. `eleven_v3` treats tags as direction; any other TTS
  * model would read them aloud, so they are stripped before voicing there.
  *
- * ⚠ This file holds THE allowed list. The Script-writing prompt, the Script
- * validator (api-v2) and the draft API all read DELIVERY_TAGS from here; the
- * web Script editor keeps a mirror (apps/web/lib/product-hero-flow.ts) that
+ * ⚠ This file holds THE allowed list, how tags are written in prose
+ * (formatDeliveryTags) and why an unknown one is refused
+ * (unknownDeliveryTagMessage). The Script-writing prompt, the Script validator
+ * (api-v2) and the draft API all read them from here; the web Script editor
+ * keeps a mirror (apps/web/lib/product-hero-flow.ts) that
  * scripts/tests/delivery-tags-parity.test.ts holds equal to this one.
  *
  * The strip helpers are for Captions (#10) and for any display of a Script to
@@ -68,6 +70,18 @@ export function bracketedSegments(script: string): BracketedSegment[] {
     out.push({ name: m[1], start: m.index, end: m.index + m[0].length });
   }
   return out;
+}
+
+/** Tags as a Script writes them, for prompts, messages and docs: "[softly], [warmly]". */
+export function formatDeliveryTags(tags: readonly string[] = DELIVERY_TAGS): string {
+  return tags.map((t) => `[${t}]`).join(', ');
+}
+
+/** Why unknown tags (as written, e.g. "[wisper]") are refused. The web editor shows the same words. */
+export function unknownDeliveryTagMessage(unknown: readonly string[]): string {
+  return unknown.length === 1
+    ? `${unknown[0]} is not a Delivery Tag; it would be spoken aloud.`
+    : `${unknown.join(', ')} are not Delivery Tags; they would be spoken aloud.`;
 }
 
 /** The bracketed segments of a Script that are NOT allowed Delivery Tags, as written (e.g. "[wisper]"). */

@@ -43,14 +43,17 @@ import {
   classifyApiError,
   currentStep,
   DELIVERY_TAGS,
+  formatDeliveryTags,
   initialRenderState,
   insertDeliveryTag,
   isRunSettled,
   parseQuote,
+  PRODUCT_DETAILS_MAX,
   readFlowParams,
   renderReducer,
   runToResume,
   startedRunId,
+  unknownDeliveryTagMessage,
   unknownDeliveryTags,
   writeFlowParams,
   type ApiOutcome,
@@ -85,8 +88,6 @@ interface Photo {
 }
 
 const PHOTO_KEY = 'product-hero:photo';
-/** Matches the API's PRODUCT_DETAILS_MAX_CHARS. */
-const PRODUCT_DETAILS_MAX = 3000;
 const POLL_MS = 4000;
 const SKILL = 'make_product_hero';
 
@@ -738,7 +739,7 @@ export default function ProductHeroPage() {
                   className="h-6 rounded-md px-2 font-mono text-[11px] disabled:opacity-60"
                   style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}
                 >
-                  [{t}]
+                  {formatDeliveryTags([t])}
                 </button>
               ))}
             </div>
@@ -747,8 +748,7 @@ export default function ProductHeroPage() {
             </p>
             {badTags.length ? (
               <p role="alert" className="text-xs" style={{ color: '#FCA5A5' }}>
-                {badTags.join(', ')} {badTags.length === 1 ? 'is not a Delivery Tag' : 'are not Delivery Tags'} and would be refused. Use one
-                of the tags above, or remove it.
+                {unknownDeliveryTagMessage(badTags)} Use one of the tags above, or remove it.
               </p>
             ) : null}
           </div>

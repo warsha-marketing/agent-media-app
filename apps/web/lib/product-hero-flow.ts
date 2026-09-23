@@ -398,7 +398,8 @@ export function currentStep(s: { hasPhoto: boolean; hasDraft: boolean; scriptEdi
  * The allowed Delivery Tags (CONTEXT.md, ADR 0002): bracketed directions such
  * as [softly] that eleven_v3 treats as how to speak, never as words. The list
  * lives in @agentmedia/schema (DELIVERY_TAGS); this is a mirror, because this
- * file takes no imports, held equal to it by scripts/tests/delivery-tags-parity.test.ts.
+ * file takes no imports, held equal to it by scripts/tests/delivery-tags-parity.test.ts
+ * (as are the helpers below that word or format tags).
  */
 export const DELIVERY_TAGS = [
   'softly',
@@ -412,6 +413,21 @@ export const DELIVERY_TAGS = [
   'calm',
   'cheerfully',
 ] as const;
+
+/** Tags as a Script writes them: "[softly], [warmly]". Mirrors formatDeliveryTags in @agentmedia/schema. */
+export function formatDeliveryTags(tags: readonly string[] = DELIVERY_TAGS): string {
+  return tags.map((t) => `[${t}]`).join(', ');
+}
+
+/** Why unknown tags are refused, in the server's words (unknownDeliveryTagMessage in @agentmedia/schema). */
+export function unknownDeliveryTagMessage(unknown: readonly string[]): string {
+  return unknown.length === 1
+    ? `${unknown[0]} is not a Delivery Tag; it would be spoken aloud.`
+    : `${unknown.join(', ')} are not Delivery Tags; they would be spoken aloud.`;
+}
+
+/** The Product Details field's limit: the API's PRODUCT_DETAILS_MAX_CHARS (held equal by the parity test). */
+export const PRODUCT_DETAILS_MAX = 3000;
 
 /**
  * Bracketed text in a Script that is not an allowed Delivery Tag, as written
