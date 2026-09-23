@@ -29,7 +29,7 @@ The spoken variety of Arabic a Short uses: Gulf, Egyptian, Levantine, Maghrebi, 
 _Avoid_: accent, language
 
 **Voice**:
-A named synthetic or cloned speaker, tagged with exactly one Dialect.
+A named synthetic or cloned speaker, tagged with exactly one Dialect and a gender, male or female (no gender-neutral Voices: not culturally acceptable for MENA ads).
 
 **Approved Voice**:
 A Voice that a native speaker of its Dialect has accepted as natural. Only Approved Voices may appear in a published Short.

@@ -30,7 +30,9 @@ export const VOICE_DIALECTS = ['levantine', 'gulf', 'egyptian', 'maghrebi', 'msa
 export type VoiceDialect = (typeof VOICE_DIALECTS)[number];
 export const VoiceDialectSchema = z.enum(VOICE_DIALECTS);
 
-export const VOICE_GENDERS = ['female', 'male', 'neutral'] as const;
+// Male or female only: a gender-neutral voice is not culturally acceptable for
+// MENA ads (owner decision, 2026-09-23).
+export const VOICE_GENDERS = ['female', 'male'] as const;
 export type VoiceGender = (typeof VOICE_GENDERS)[number];
 
 export const VOICE_STATES = ['pending', 'approved', 'revoked'] as const;

@@ -56,7 +56,7 @@ export function normalizeCandidate(voice: ProviderVoice): VoiceCandidate | null 
   const verified = voice.verified_languages?.find((v) => v.language === 'ar');
   const accent = voice.accent || labels.accent || verified?.accent || '';
   const rawGender = (voice.gender || labels.gender || '').toLowerCase();
-  const gender: VoiceGender | null = rawGender === 'female' || rawGender === 'male' || rawGender === 'neutral' ? rawGender : null;
+  const gender: VoiceGender | null = rawGender === 'female' || rawGender === 'male' ? rawGender : null;
   const rawStyle = (voice.descriptive || labels.descriptive || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-');
   return {
     provider: 'elevenlabs',

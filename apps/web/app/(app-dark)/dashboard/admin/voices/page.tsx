@@ -44,7 +44,7 @@ interface Candidate {
 }
 
 const DIALECTS = ['levantine', 'gulf', 'egyptian', 'maghrebi', 'msa'];
-const GENDERS = ['female', 'male', 'neutral'];
+const GENDERS = ['female', 'male'];
 const CARD = { backgroundColor: '#14151F', border: '1px solid rgba(255,255,255,0.06)' } as const;
 const FIELD = { backgroundColor: '#0F1015', color: '#E9E9F0', border: '1px solid rgba(255,255,255,0.1)' } as const;
 const MUTED = { color: 'rgba(255,255,255,0.45)' } as const;

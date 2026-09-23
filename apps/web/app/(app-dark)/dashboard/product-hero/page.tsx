@@ -121,7 +121,7 @@ async function readDraft(id: string): Promise<Draft | null> {
   return ((await r.json().catch(() => ({}))) as { draft?: Draft }).draft ?? null;
 }
 
-type Gender = 'female' | 'male' | 'neutral';
+type Gender = 'female' | 'male';
 
 /** An Approved Voice, as GET /v1/voices returns it. */
 interface Voice {
@@ -161,7 +161,6 @@ const GENDERS: Array<{ id: '' | Gender; label: string }> = [
   { id: '', label: 'Any gender' },
   { id: 'female', label: 'Female' },
   { id: 'male', label: 'Male' },
-  { id: 'neutral', label: 'Neutral' },
 ];
 
 export default function ProductHeroPage() {

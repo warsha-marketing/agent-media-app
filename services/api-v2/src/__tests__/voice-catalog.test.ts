@@ -251,6 +251,8 @@ describe('GET /v1/voices (the picker)', () => {
     expect(names((await call(h, 'GET', '/v1/voices?dialect=levantine&gender=male&style=energetic', USER)).body.voices)).toEqual(['Rami']);
     expect((await call(h, 'GET', '/v1/voices?dialect=levantine&gender=male&style=warm', USER)).body.voices).toEqual([]);
     expect((await call(h, 'GET', '/v1/voices?dialect=levantine&gender=robot', USER)).status).toBe(400);
+    // Male or female only (owner decision): neutral is not a Voice gender.
+    expect((await call(h, 'GET', '/v1/voices?dialect=levantine&gender=neutral', USER)).status).toBe(400);
   });
 
   it('lists the styles on offer for the Dialect, so the filter only offers real choices', async () => {
