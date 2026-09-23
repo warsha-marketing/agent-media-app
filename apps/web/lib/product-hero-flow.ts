@@ -12,7 +12,7 @@
  *   - reading the API's (mixed-shape) error bodies into one outcome per UI state;
  *   - reading a skill run into what the progress / result / failure panels show;
  *   - the render-phase reducer, including the Idempotency-Key lifecycle: one key
- *     per confirmation of a RenderChoice (draft, photo, Music Bed, Captions),
+ *     per confirmation of a RenderChoice (draft, photo, Music Bed),
  *     reused by a double-click or a retried request, retired once the run it
  *     started has failed, so a retry of the SAME draft is a new run rather than
  *     a replay of the failed one;
@@ -44,14 +44,6 @@ export interface Quote {
   sufficient: boolean;
   /** What the quote says about the Music Bed (#9), when it says anything. */
   musicBed?: MusicBedQuote;
-  /** What the quote says about Captions (#10), when it says anything. */
-  captions?: CaptionsQuote;
-}
-
-/** The quote's Captions (#10): whether they will be burned, in the server's words. */
-export interface CaptionsQuote {
-  on: boolean;
-  detail: string;
 }
 
 /** The quote's Music Bed (#9): a bed will play, or why the Short is voice only. */
@@ -68,13 +60,11 @@ export function parseQuote(body: unknown): Quote | null {
   if (typeof b.credits !== 'number' || !Number.isFinite(b.credits)) return null;
   const available = typeof b.available === 'number' ? b.available : null;
   const musicBed = parseMusicBed(b.music_bed);
-  const captions = parseCaptions(b.captions);
   return {
     credits: b.credits,
     available,
     sufficient: b.sufficient !== false,
     ...(musicBed ? { musicBed } : {}),
-    ...(captions ? { captions } : {}),
   };
 }
 
@@ -108,29 +98,6 @@ export function musicBedLine(music: boolean, quote: Quote): string {
   return music ? MUSIC_ON_LINE : NO_MUSIC_LINE;
 }
 
-// ── Captions (#10) ──────────────────────────────────────────────────────────
-
-/**
- * The line under the Captions toggle is the server's `captions.detail` from a
- * quote asked with this setting. The fallback (a quote that says nothing about
- * Captions, or was for the other setting) only states the setting: what
- * Captions are is the server's to say.
- */
-export const CAPTIONS_FALLBACK_LINE = { on: 'Captions on.', off: 'Captions off.' } as const;
-
-function parseCaptions(v: unknown): CaptionsQuote | null {
-  if (!v || typeof v !== 'object') return null;
-  const c = v as Record<string, unknown>;
-  if (typeof c.on !== 'boolean') return null;
-  return { on: c.on, detail: typeof c.detail === 'string' ? c.detail : '' };
-}
-
-export function captionsLine(captions: boolean, quote: Quote): string {
-  const c = quote.captions;
-  if (c && c.on === captions && c.detail) return c.detail;
-  return captions ? CAPTIONS_FALLBACK_LINE.on : CAPTIONS_FALLBACK_LINE.off;
-}
-
 // ── The request ─────────────────────────────────────────────────────────────
 
 /**
@@ -143,22 +110,18 @@ export interface RenderChoice {
   photoUrl: string;
   /** Music Bed on/off (#9). */
   music: boolean;
-  /** Captions on/off (#10). */
-  captions: boolean;
 }
 
 /**
  * The make_product_hero run body. aspect_ratio is left to the server (always
- * 9:16). Captions are sent only when on: the server's default is off, and the
- * Idempotency-Key fingerprint is taken over the parsed body, so an absent flag
- * and `captions: false` are the same request.
+ * 9:16). There is no Captions choice here: a render keeps a clean Short, and
+ * Captions are added afterwards in the Caption editor (#22).
  */
 export function renderBody(choice: RenderChoice) {
   return {
     draft_id: choice.draftId,
     product_image_url: choice.photoUrl,
     music: choice.music,
-    ...(choice.captions ? { captions: true } : {}),
   };
 }
 
@@ -306,16 +269,10 @@ const STEP_STAGE: Readonly<Record<string, RenderStage>> = {
   audio: 'voice',
   mux: 'cut',
   music_bed: 'cut',
-  captions: 'cut',
   done: 'cut',
 };
 
-/** A step's own label, where it is more specific than its stage's. */
-const STEP_LABEL: Readonly<Record<string, string>> = {
-  captions: 'Adding the Arabic Captions',
-};
-
-/** Map the workflow's current_step (pending | audio | clip_N | mux | music_bed | captions | done) to a stage. */
+/** Map the workflow's current_step (pending | audio | clip_N | mux | music_bed | done) to a stage. */
 export function stageOf(currentStep: string | null | undefined): { stage: RenderStage; shot: number | null } {
   const step = currentStep ?? '';
   const clip = /^clip_(\d+)$/.exec(step);
@@ -340,13 +297,7 @@ export function viewOfRun(run: SkillRunBody): RunView {
     return { kind: 'failed', canceled: status !== 'failed', moderation: isModerationBlock(code, message), code, message, refund: refundOf(run) };
   }
   const { stage, shot } = stageOf(run.current_step);
-  const step = run.current_step ?? '';
-  const label =
-    stage === 'visuals' && shot
-      ? `Generating product shot ${shot}`
-      : Object.hasOwn(STEP_LABEL, step)
-        ? STEP_LABEL[step]
-        : RENDER_STAGES.find((s) => s.stage === stage)!.label;
+  const label = stage === 'visuals' && shot ? `Generating product shot ${shot}` : RENDER_STAGES.find((s) => s.stage === stage)!.label;
   return { kind: 'rendering', stage, shot, label };
 }
 
@@ -398,7 +349,7 @@ export const initialRenderState: RenderState = { render: { phase: 'idle' }, conf
 
 /** Two choices are the same request. */
 export function sameChoice(a: RenderChoice, b: RenderChoice): boolean {
-  return a.draftId === b.draftId && a.photoUrl === b.photoUrl && a.music === b.music && a.captions === b.captions;
+  return a.draftId === b.draftId && a.photoUrl === b.photoUrl && a.music === b.music;
 }
 
 /** The key for confirming this choice: the pending one only if it is the same request. */

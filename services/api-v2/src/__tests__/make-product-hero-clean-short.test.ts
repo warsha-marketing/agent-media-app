@@ -1,17 +1,15 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 //
-// make_product_hero × Arabic Captions (#10) through the real quote and run
-// routes. Captions are off by default. Turned on, the run hands the workflow
-// the draft's stored TTS alignment — the cues are derived from it in the
-// worker, never from speech-to-text — and records only the flag on the skill
-// run. Captions are free: the quote, the in-flight reservation and the charge
-// are the same with them on or off. The toggle is part of the request body, so
-// the Idempotency-Key fingerprint covers it. The edges (database, photo
-// re-hosting, Temporal) are faked as in make-product-hero-music.test.ts.
+// make_product_hero never burns Captions (#22) — through the real quote and run
+// routes. #10's Captions toggle is gone: the render input has no `captions`, the
+// workflow is never handed an alignment, and the quote and run say nothing
+// about Captions. Captions are added after the render (routes/v1/shorts.ts).
+// An old client that still sends `captions: true` gets a clean Short, the same
+// request as without it. The edges (database, photo re-hosting, Temporal) are
+// faked as in make-product-hero-music.test.ts.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Request, Response } from 'express';
-import { planProductHeroShots, VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
 
 type Row = Record<string, unknown>;
 const TABLES: Record<string, Row[]> = {};
@@ -82,7 +80,6 @@ vi.mock('../orchestrator/temporal/client.js', () => ({
 
 const { quoteSkillRoute, runSkillRoute } = await import('../routes/v1/skills.js');
 const { MakeProductHeroSkillInputSchema } = await import('../skills/registry.js');
-const { quoteSkillCredits } = await import('../skills/credit-quotes.js');
 
 const OWNER = 'aaaaaaaa-0000-4000-8000-000000000001';
 const VOICE = 'ffffffff-0000-4000-8000-000000000001';
@@ -144,69 +141,37 @@ afterEach(() => {
   delete process.env.BILLING_MODE;
 });
 
-describe('make_product_hero input: Captions', () => {
-  it('are off by default, and only a boolean turns them on', () => {
+describe('make_product_hero: no Captions in the render', () => {
+  it('the input schema has no captions field (an old `captions: true` is dropped)', () => {
     const base = { draft_id: seedDraft(), product_image_url: PHOTO };
-    expect(MakeProductHeroSkillInputSchema.parse(base).captions).toBe(false);
-    expect(MakeProductHeroSkillInputSchema.parse({ ...base, captions: true }).captions).toBe(true);
-    expect(MakeProductHeroSkillInputSchema.safeParse({ ...base, captions: 'yes' }).success).toBe(false);
+    expect(MakeProductHeroSkillInputSchema.parse({ ...base, captions: true })).not.toHaveProperty('captions');
   });
-});
 
-describe('make_product_hero run: Captions', () => {
-  it('off (the default): the workflow gets no captions, and the run records them off', async () => {
-    const r = await call(runSkillRoute, { draft_id: seedDraft(), product_image_url: PHOTO });
+  it.each([
+    ['without captions', {}],
+    ['with an old captions: true', { captions: true }],
+  ])('run %s: the workflow gets no alignment, the run records nothing about Captions', async (_label, extra) => {
+    const r = await call(runSkillRoute, { draft_id: seedDraft(), product_image_url: PHOTO, ...extra });
     expect(r.status).toBe(202);
-    expect(workflowInput().captions).toBeNull();
-    expect(runRow(r.body.skill_run_id).input).toMatchObject({ captions: false });
-    expect(r.body.captions).toMatchObject({ on: false });
+    expect(workflowInput()).not.toHaveProperty('captions');
+    expect(JSON.stringify(workflowInput())).not.toContain('character_start_times_seconds');
+    expect(runRow(r.body.skill_run_id).input).not.toHaveProperty('captions');
+    expect(r.body).not.toHaveProperty('captions');
   });
 
-  it("on: the workflow gets the draft's stored alignment (Delivery Tags included, stripped in the worker)", async () => {
-    const r = await call(runSkillRoute, { draft_id: seedDraft(), product_image_url: PHOTO, captions: true });
-    expect(r.status).toBe(202);
-    expect(workflowInput().captions).toEqual({ alignment: ALIGNMENT });
-    // The run stores the choice, not the alignment.
-    const input = runRow(r.body.skill_run_id).input as Record<string, unknown>;
-    expect(input).toMatchObject({ captions: true });
-    expect(JSON.stringify(input)).not.toContain('character_start_times_seconds');
-    expect(r.body.captions).toMatchObject({ on: true });
+  it('the quote says nothing about Captions', async () => {
+    const q = await call(quoteSkillRoute, { draft_id: seedDraft(), product_image_url: PHOTO, captions: true });
+    expect(q.status).toBe(200);
+    expect(q.body).not.toHaveProperty('captions');
   });
 
-  it('the quote says whether Captions will be burned', async () => {
+  it('an Idempotency-Key replayed with an old captions flag is the same request (a replay, not a second render)', async () => {
     const id = seedDraft();
-    expect((await call(quoteSkillRoute, { draft_id: id, product_image_url: PHOTO })).body.captions).toMatchObject({ on: false });
-    expect((await call(quoteSkillRoute, { draft_id: id, product_image_url: PHOTO, captions: true })).body.captions).toMatchObject({ on: true });
-  });
-
-  it('refuses an Idempotency-Key replayed with Captions toggled (the fingerprint covers them)', async () => {
-    const id = seedDraft();
-    const headers = { 'Idempotency-Key': 'render-captions-toggle' };
+    const headers = { 'Idempotency-Key': 'render-no-captions' };
     const first = await call(runSkillRoute, { draft_id: id, product_image_url: PHOTO }, headers);
-    expect(first.status).toBe(202);
-    const toggled = await call(runSkillRoute, { draft_id: id, product_image_url: PHOTO, captions: true }, headers);
-    expect(toggled.status).toBe(409);
-    expect(toggled.body).toMatchObject({ error: 'idempotency_key_reused' });
+    const again = await call(runSkillRoute, { draft_id: id, product_image_url: PHOTO, captions: true }, headers);
+    expect(again.status).toBe(202);
+    expect(again.body).toMatchObject({ skill_run_id: first.body.skill_run_id, idempotent_replay: true });
     expect(started).toHaveLength(1);
-  });
-});
-
-describe('make_product_hero Captions are free: quote == charge, on or off', () => {
-  const charged = (ms: number) => planProductHeroShots(ms).reduce((sum, d) => sum + VIDEO_CLIP_CREDITS[d], 0);
-
-  it.each([5_000, 9_000, 12_000, 15_000])('%i ms: the quote, the reservation and the charge match with Captions on and off', async (ms) => {
-    process.env.BILLING_MODE = 'enabled';
-    (TABLES.user_credits ??= []).push({ user_id: OWNER, monthly_credits_remaining: 10_000, purchased_balance: 0 });
-    const off = await call(quoteSkillRoute, { draft_id: seedDraft(ms), product_image_url: PHOTO });
-    const id = seedDraft(ms);
-    const on = await call(quoteSkillRoute, { draft_id: id, product_image_url: PHOTO, captions: true });
-    expect(on.status).toBe(200);
-    expect(on.body.credits).toBe(off.body.credits);
-    expect(on.body.credits).toBe(charged(ms));
-
-    // The run reserves (and the worker charges) the planned clips — nothing for Captions.
-    const r = await call(runSkillRoute, { draft_id: id, product_image_url: PHOTO, captions: true });
-    expect(r.status).toBe(202);
-    expect(quoteSkillCredits('make_product_hero', runRow(r.body.skill_run_id).input as Record<string, unknown>)).toBe(on.body.credits);
   });
 });

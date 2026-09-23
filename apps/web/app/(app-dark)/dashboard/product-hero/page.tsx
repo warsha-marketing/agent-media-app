@@ -447,15 +447,6 @@ export default function ProductHeroPage() {
     setMusic(on);
     dispatch({ type: 'invalidate_quote' });
   };
-  // Captions (#10): off by default, free. Like the Music Bed, the choice is part
-  // of the request: a toggle withdraws the quote, re-quotes, and makes the next
-  // Confirm a new confirmation with a new Idempotency-Key.
-  const [captions, setCaptions] = useState(false);
-  const setCaptionsOn = (on: boolean) => {
-    if (on === captions) return;
-    setCaptions(on);
-    dispatch({ type: 'invalidate_quote' });
-  };
 
   /** The draft is already rendering (or rendered): show that run instead of an error. */
   const followDraftRun = useCallback(async (draftId: string, outcome: ApiOutcome) => {
@@ -491,8 +482,8 @@ export default function ProductHeroPage() {
   const draftId = draft?.id ?? null;
   const photoUrl = photo?.url ?? null;
   const choice = useMemo<RenderChoice | null>(
-    () => (draftId && photoUrl ? { draftId, photoUrl, music, captions } : null),
-    [draftId, photoUrl, music, captions],
+    () => (draftId && photoUrl ? { draftId, photoUrl, music } : null),
+    [draftId, photoUrl, music],
   );
 
   // Price the render as soon as there is a voiced draft and a photo. Only a
@@ -517,7 +508,7 @@ export default function ProductHeroPage() {
   // Start the render when — and only when — the reducer accepted a Confirm. The
   // key is the confirmation's: the same choice confirmed again after a network
   // blip sends the same key, so the server replays instead of charging twice; a
-  // changed Music Bed or Captions choice is a new confirmation with a new key.
+  // changed Music Bed choice is a new confirmation with a new key.
   const starting = render.phase === 'starting' ? rs.confirmation : null;
   useEffect(() => {
     if (!starting) return;
@@ -917,8 +908,6 @@ export default function ProductHeroPage() {
         onNewPhoto={choosePhotoAgain}
         music={music}
         onMusicChange={setMusicOn}
-        captions={captions}
-        onCaptionsChange={setCaptionsOn}
       />
 
       {history.length > 1 ? (
