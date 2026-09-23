@@ -154,9 +154,9 @@ const body = (draftId: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-async function call(route: (req: Request, res: Response) => Promise<void>, userId: string, payload: Record<string, unknown>) {
+async function call(route: (req: Request, res: Response) => Promise<void>, userId: string, payload: Record<string, unknown>, slug = 'make_reaction') {
   const out = { status: 0, body: {} as Record<string, unknown> };
-  const req = { userId, params: { slug: 'make_reaction' }, body: payload, header: () => undefined } as unknown as Request;
+  const req = { userId, params: { slug }, body: payload, header: () => undefined } as unknown as Request;
   const res = {
     status(code: number) { out.status = code; return this; },
     json(p: Record<string, unknown>) { out.body = p; return this; },
@@ -298,7 +298,7 @@ describe('make_reaction — the Modesty Default', () => {
     const id = seedDraft({ dialect: 'gulf' });
     const q = await call(quoteSkillRoute, OWNER, body(id));
     expect(q.status).toBe(200);
-    expect(q.body.modesty).toEqual({ arms: 'covered', hijab: true });
+    expect((q.body.preset_inputs as Record<string, unknown>).modesty).toEqual({ arms: 'covered', hijab: true });
     const r = await call(runSkillRoute, OWNER, body(id));
     expect(r.status).toBe(202);
     expect(workflowInput().modesty).toEqual({ arms: 'covered', hijab: true });
@@ -312,7 +312,7 @@ describe('make_reaction — the Modesty Default', () => {
   });
 
   it('outside the Gulf the hijab is offered and off by default; a woman may choose it', async () => {
-    expect((await call(quoteSkillRoute, OWNER, body(seedDraft()))).body.modesty).toEqual({ arms: 'covered', hijab: false });
+    expect(((await call(quoteSkillRoute, OWNER, body(seedDraft()))).body.preset_inputs as Record<string, unknown>).modesty).toEqual({ arms: 'covered', hijab: false });
     await call(runSkillRoute, OWNER, body(seedDraft(), { modesty: { hijab: true, arms: 'sleeved' } }));
     expect(workflowInput().modesty).toEqual({ arms: 'sleeved', hijab: true });
   });
@@ -423,6 +423,22 @@ describe('make_reaction renders only a Qualified Preset', () => {
     expect(started).toHaveLength(0);
   });
 
+  it('a draft in a Dialect qualified only for Reaction renders as Reaction and is refused as Product Hero', async () => {
+    // Gulf is qualified for Reaction only (beforeEach). Drafting it is allowed
+    // (qualified-presets.test.ts); each render checks its own Preset.
+    const id = seedDraft({ dialect: 'gulf' });
+    const { product_image_url } = body(id);
+    for (const route of [quoteSkillRoute, runSkillRoute]) {
+      const hero = await call(route, OWNER, { draft_id: id, product_image_url }, 'make_product_hero');
+      expect(hero.status).toBe(422);
+      expect(hero.body).toMatchObject({ error: 'PRESET_NOT_QUALIFIED', skill: 'make_product_hero', preset: 'product_hero', dialect: 'gulf' });
+    }
+    expect(started).toHaveLength(0);
+    const r = await call(runSkillRoute, OWNER, body(id));
+    expect(r.status).toBe(202);
+    expect(started[0].type).toBe('makeReactionWorkflow');
+  });
+
   it('a Product Hero qualification does not qualify Reaction', async () => {
     TABLES.qualified_presets = [{ preset: 'product_hero', dialect: 'levantine', state: 'qualified' }];
     const r = await call(runSkillRoute, OWNER, body(seedDraft()));
@@ -449,7 +465,7 @@ describe('make_reaction in the OpenAPI spec', () => {
     const { paths } = skillRouteOpenApi() as { paths: Record<string, { post: { responses: Record<string, { description: string }> } }> };
     for (const path of ['/v1/skills/{slug}/run', '/v1/skills/{slug}/quote']) {
       for (const [code, { status }] of Object.entries(REACTION_REFUSALS)) {
-        expect(paths[path].post.responses[String(status)]?.description, `${path} ${status}`).toContain(`\`${code}\` (make_reaction)`);
+        expect(paths[path].post.responses[String(status)]?.description, `${path} ${status}`).toMatch(new RegExp(`\`${code}\` \\((make_hands_on, )?make_reaction\\)`));
       }
     }
   });

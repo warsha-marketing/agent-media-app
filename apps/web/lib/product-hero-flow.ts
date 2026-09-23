@@ -44,6 +44,12 @@ export interface Quote {
   sufficient: boolean;
   /** What the quote says about the Music Bed (#9), when it says anything. */
   musicBed?: MusicBedQuote;
+  /**
+   * What the Preset's own inputs resolve to, as the server says (`preset_inputs`:
+   * the Modesty Default; Hands-on's hand gender and setting with their source,
+   * #18). Each Preset's flow reads its own (lib/hands-on-flow.ts).
+   */
+  presetInputs?: Record<string, unknown>;
 }
 
 /** The quote's Music Bed (#9): a bed will play, or why the Short is voice only. */
@@ -60,11 +66,16 @@ export function parseQuote(body: unknown): Quote | null {
   if (typeof b.credits !== 'number' || !Number.isFinite(b.credits)) return null;
   const available = typeof b.available === 'number' ? b.available : null;
   const musicBed = parseMusicBed(b.music_bed);
+  const presetInputs =
+    b.preset_inputs && typeof b.preset_inputs === 'object' && !Array.isArray(b.preset_inputs)
+      ? (b.preset_inputs as Record<string, unknown>)
+      : null;
   return {
     credits: b.credits,
     available,
     sufficient: b.sufficient !== false,
     ...(musicBed ? { musicBed } : {}),
+    ...(presetInputs ? { presetInputs } : {}),
   };
 }
 
@@ -250,7 +261,7 @@ export function refundOf(run: SkillRunBody): RefundView {
 }
 
 export type RunView =
-  | { kind: 'rendering'; stage: RenderStage; shot: number | null; label: string }
+  | { kind: 'rendering'; stage: RenderStage; shot: number | null; label: string; frame?: boolean }
   | { kind: 'succeeded'; videoUrl: string; durationMs: number | null }
   | { kind: 'failed'; canceled: boolean; moderation: boolean; code: string | null; message: string | null; refund: RefundView };
 
@@ -282,11 +293,17 @@ const STEP_STAGE: Readonly<Record<string, RenderStage>> = {
   done: 'cut',
 };
 
-/** Map the workflow's current_step (pending | audio | clip_N | mux | music_bed | done) to a stage. */
-export function stageOf(currentStep: string | null | undefined): { stage: RenderStage; shot: number | null } {
+/**
+ * Map the workflow's current_step (pending | audio | frame_N | clip_N | mux |
+ * music_bed | done) to a stage. frame_N (#18) is the starting frame of shot N,
+ * made before the shots are animated: part of the visuals.
+ */
+export function stageOf(currentStep: string | null | undefined): { stage: RenderStage; shot: number | null; frame?: boolean } {
   const step = currentStep ?? '';
   const clip = /^clip_(\d+)$/.exec(step);
   if (clip) return { stage: 'visuals', shot: Number(clip[1]) };
+  const frame = /^frame_(\d+)$/.exec(step);
+  if (frame) return { stage: 'visuals', shot: Number(frame[1]), frame: true };
   return { stage: Object.hasOwn(STEP_STAGE, step) ? STEP_STAGE[step] : 'queued', shot: null };
 }
 
@@ -306,9 +323,14 @@ export function viewOfRun(run: SkillRunBody): RunView {
     const message = run.error?.message ?? null;
     return { kind: 'failed', canceled: status !== 'failed', moderation: isModerationBlock(code, message), code, message, refund: refundOf(run) };
   }
-  const { stage, shot } = stageOf(run.current_step);
-  const label = stage === 'visuals' && shot ? `Generating shot ${shot}` : RENDER_STAGES.find((s) => s.stage === stage)!.label;
-  return { kind: 'rendering', stage, shot, label };
+  const { stage, shot, frame } = stageOf(run.current_step);
+  const label =
+    stage === 'visuals' && shot
+      ? frame
+        ? `Making the starting frame for shot ${shot}`
+        : `Generating shot ${shot}`
+      : RENDER_STAGES.find((s) => s.stage === stage)!.label;
+  return { kind: 'rendering', stage, shot, label, ...(frame ? { frame } : {}) };
 }
 
 // ── Render phase + Idempotency-Key lifecycle ───────────────────────────────

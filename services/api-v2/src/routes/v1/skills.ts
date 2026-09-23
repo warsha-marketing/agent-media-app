@@ -999,6 +999,7 @@ async function dispatchPresetRender(
     draft_id: draft.id,
     status: 'submitted',
     music_bed: musicBedView(musicBed), // #9
+    ...own.quote, // preset_inputs: what renders (#18, #19)
   });
 }
 

@@ -13,6 +13,7 @@ import { RUN_CREDITS_OPENAPI } from '../../skills/run-credits.js';
 import { IDEMPOTENCY_KEY_REUSED } from '../../skills/idempotency.js';
 import { PRESET_NOT_QUALIFIED as PRESET_NOT_QUALIFIED_CODE } from '../../presets/qualification.js';
 import { REACTION_REFUSALS } from '../../skills/reaction.js';
+import { MODESTY_REFUSALS } from '../../skills/preset-inputs.js';
 
 const skillError = (description: string) => ({
   description,
@@ -25,10 +26,14 @@ function refusalLines(status: number): string[] {
     .filter((code) => RENDER_REFUSALS[code].status === status)
     .map((code) => `\`${code}\` (make_product_hero): ${RENDER_REFUSALS[code].when}`)
     .concat(
-      // make_reaction's own refusals (#19): saved character, Modesty Default.
+      // make_reaction's own refusals (#19): the saved character.
       Object.entries(REACTION_REFUSALS)
-        .filter(([, r]) => r.status === status)
+        .filter(([code, r]) => r.status === status && !Object.hasOwn(MODESTY_REFUSALS, code))
         .map(([code, r]) => `\`${code}\` (make_reaction): ${r.when}`),
+      // The Modesty Default (#17), for every Preset render that takes a `modesty` choice.
+      Object.entries(MODESTY_REFUSALS)
+        .filter(([, r]) => r.status === status)
+        .map(([code, r]) => `\`${code}\` (make_hands_on, make_reaction): ${r.when}`),
     );
 }
 
@@ -36,7 +41,7 @@ const sentences = (...parts: string[]) => parts.join('. ');
 
 /** The Qualified Preset gate (#8, presets/qualification.ts), checked after the draft refusals.
  *  The same code string the drafts routes send (upper snake, the domain's own). */
-const PRESET_NOT_QUALIFIED = `\`${PRESET_NOT_QUALIFIED_CODE}\` (make_product_hero, make_reaction): the skill's Preset is not a Qualified Preset in the draft's Dialect (carries preset, dialect and available; see GET /v1/presets)`;
+const PRESET_NOT_QUALIFIED = `\`${PRESET_NOT_QUALIFIED_CODE}\` (make_product_hero, make_hands_on, make_reaction): the skill's Preset is not a Qualified Preset in the draft's Dialect (carries preset, dialect and available; see GET /v1/presets)`;
 
 const SLUG = { name: 'slug', in: 'path', required: true, schema: { type: 'string' } };
 
@@ -84,7 +89,7 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
       security: [{ bearerAuth: [] }],
       parameters: [SLUG],
       responses: {
-        '200': { description: 'The quote: credits, available (after reservations), committed, sufficient; for a Preset render also music_bed (on, track_id, mood, reason off|no_tracks, detail)' },
+        '200': { description: 'The quote: credits, available (after reservations), committed, sufficient; for a Preset render also music_bed (on, track_id, mood, reason off|no_tracks, detail) and, for a Preset with its own inputs, preset_inputs (what renders: the resolved modesty; make_hands_on: hand_gender, setting and source user|product_details for each; make_reaction: character_id, character_gender)' },
         '400': skillError(sentences('`invalid_input`: the body fails the skill schema', ...refusalLines(400))),
         '404': skillError(sentences('`unknown_skill`', ...refusalLines(404))),
         '409': skillError(sentences(...refusalLines(409))),

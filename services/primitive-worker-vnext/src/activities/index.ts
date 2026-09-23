@@ -27,6 +27,8 @@ import {
 import { makeMixMusicBedActivity } from './music-bed.js';
 // Arabic Captions (#10) — burned last, from cues the workflow derives from the draft alignment.
 import { makeBurnCaptionsActivity } from './captions.js';
+// Starting frames (#18) — e.g. Hands-on's product-in-hands image, made before its clip.
+import { makePresetStartingFrameActivity } from './preset-frame.js';
 
 export function createActivities(cfg: WorkerConfig) {
   return {
@@ -52,6 +54,7 @@ export function createActivities(cfg: WorkerConfig) {
     releaseDraftRender: makeReleaseDraftRenderActivity(cfg),
     mixMusicBed: makeMixMusicBedActivity(cfg),
     burnCaptions: makeBurnCaptionsActivity(cfg),
+    presetStartingFrame: makePresetStartingFrameActivity(cfg),
   };
 }
 

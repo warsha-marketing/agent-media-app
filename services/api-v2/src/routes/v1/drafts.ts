@@ -12,7 +12,8 @@
  *
  * voice_id is an Approved Voice of the Dialect (GET /v1/voices, #7); anything
  * else is refused with 422 VOICE_NOT_APPROVED before a provider is called. The
- * Dialect must be one Product Hero is qualified for (GET /v1/presets, #8), or
+ * Dialect must be one at least one Preset is qualified for (GET /v1/presets,
+ * #8): the draft is Preset-agnostic, and each render checks its own Preset. Else
  * the draft is refused with 422 PRESET_NOT_QUALIFIED (operators excepted).
  *   GET  /v1/drafts/:id                                                   → 200 { draft } | 404
  *
@@ -151,7 +152,7 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
         'createProductHeroDraft',
         'Product Hero draft: write a Script (plain dialect spelling, Targeted Diacritics, Delivery Tags) that sells the Product Details, in a Dialect, and voice it. Free (no credits).',
         bodySchema(CreateDraftInputSchema, 'create_draft_input'),
-        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, stray brackets, Latin letters) — carries the Script and issues, to fix in the editor and re-voice; ${PRESET_NOT_QUALIFIED}: Product Hero is not a Qualified Preset in this Dialect yet (carries preset, dialect and available; see GET /v1/presets); BRIEF_REFUSED; ${voiceRefused}`,
+        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, stray brackets, Latin letters) — carries the Script and issues, to fix in the editor and re-voice; ${PRESET_NOT_QUALIFIED}: no Preset is a Qualified Preset in this Dialect yet (carries dialect and available; see GET /v1/presets); BRIEF_REFUSED; ${voiceRefused}`,
       ),
       '/v1/drafts/product-hero/revoice': post(
         'revoiceProductHeroDraft',
@@ -241,8 +242,8 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
               tags: { type: 'array', items: { type: 'string' }, description: 'On UNKNOWN_DELIVERY_TAG: the refused tags, as written (e.g. "[wisper]").' },
               allowed: { type: 'array', items: { type: 'string' }, description: 'On UNKNOWN_DELIVERY_TAG: the allowed Delivery Tags.' },
               found: { type: 'array', items: { type: 'string' }, description: 'On SCRIPT_STRAY_BRACKETS: the stray brackets found.' },
-              preset: { type: 'string', description: 'On PRESET_NOT_QUALIFIED: the Preset refused.' },
-              available: { type: 'array', items: { type: 'string' }, description: 'On PRESET_NOT_QUALIFIED: the Dialects the Preset is qualified for.' },
+              preset: { type: 'string', description: 'The Preset refused, where one is named (skill routes).' },
+              available: { type: 'array', items: { type: 'string' }, description: 'On PRESET_NOT_QUALIFIED: the Dialects some Preset is qualified for.' },
               issues: {
                 type: 'array',
                 description: 'INVALID_INPUT: zod issues. SCRIPT_CHECK_FAILED / UNKNOWN_DELIVERY_TAG / SCRIPT_STRAY_BRACKETS / SCRIPT_NO_ARABIC: Script check issues ({ code, message, found }).',

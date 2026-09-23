@@ -25,63 +25,23 @@
  */
 
 import { z } from 'zod';
-import {
-  REACTION,
-  ModestyError,
-  modestyChoiceSchema,
-  resolveModesty,
-  type Dialect,
-  type Modesty,
-  type ModestyErrorCode,
-} from '@agentmedia/schema';
-import { RenderRefusal, refuseCaptionsField } from './product-hero-render.js';
-import type { PresetInputResolver } from './preset-inputs.js';
+import { REACTION } from '@agentmedia/schema';
+import { RenderRefusal } from './product-hero-render.js';
+import { MODESTY_REFUSALS, presetRenderInputSchema, resolvePresetModesty, type PresetInputResolver } from './preset-inputs.js';
 
 export const CHARACTER_GENDERS = ['female', 'male'] as const;
 
-export const MakeReactionSkillInputSchema = refuseCaptionsField(
-  z
-    .object({
-      draft_id: z
-        .string()
-        .uuid()
-        .describe(
-          'The approved draft to render: its id from the draft step. Show the user the Script and let them hear the voice preview first, and get their OK — the Short speaks exactly that audio. A draft becomes one Short; if its render fails, the same draft can be rendered again.',
-        ),
-      product_image_url: z
-        .string()
-        .url()
-        .regex(/^https:\/\//, 'product_image_url must use https')
-        .describe('The product photo, an https URL. If you only hold bytes, call `upload_image` first and pass the URL it returns.')
-        .optional(),
-      product_image_base64: z.string().min(64).describe('The product photo as base64 (prefer product_image_url).').optional(),
-      character_id: z
-        .string()
-        .trim()
-        .min(1)
-        .max(100)
-        .describe('The saved character who reacts: its character_id (char_…) from list_characters. Must be one of the user’s own characters.'),
-      character_gender: z
-        .enum(CHARACTER_GENDERS)
-        .describe('The saved character’s gender, "female" or "male" (saved characters do not record it). A hijab is offered only for a woman.'),
-      modesty: modestyChoiceSchema
-        .optional()
-        .describe(
-          'Modest by default: arms covered (long sleeves), and for a woman a hijab, on by default for Gulf drafts. Only to change a default: { arms: "covered" | "sleeved", hijab: true | false }. Never less modest than the Preset allows; a hijab for a man is refused.',
-        ),
-      aspect_ratio: z.literal(REACTION.aspectRatio).default(REACTION.aspectRatio),
-      music: z
-        .boolean()
-        .default(true)
-        .describe(
-          'Music Bed under the voice, on by default. Set false for a voice-only Short, e.g. when the user will add a sound in TikTok. The quote says whether a bed will be mixed.',
-        ),
-    })
-    .refine((d) => Boolean(d.product_image_url) !== Boolean(d.product_image_base64), {
-      message: 'provide exactly one of product_image_url (any https URL) or product_image_base64 (data URL or raw base64)',
-      path: ['product_image_url'],
-    }),
-);
+export const MakeReactionSkillInputSchema = presetRenderInputSchema(REACTION, {
+  character_id: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .describe('The saved character who reacts: its character_id (char_…) from list_characters. Must be one of the user’s own characters.'),
+  character_gender: z
+    .enum(CHARACTER_GENDERS)
+    .describe('The saved character’s gender, "female" or "male" (saved characters do not record it). A hijab is offered only for a woman.'),
+});
 
 /** The refusals make_reaction adds to a Preset render's (RENDER_REFUSALS), by code. */
 export const REACTION_REFUSALS = {
@@ -89,12 +49,8 @@ export const REACTION_REFUSALS = {
     status: 404,
     when: 'no such saved character on this account (someone else’s, or an archived one, is indistinguishable from none)',
   },
-  LESS_MODEST_THAN_PRESET: {
-    status: 400,
-    when: 'the modesty choice is less modest than the Preset allows (arms under "sleeved", or a required hijab turned off)',
-  },
-  HIJAB_NOT_OFFERED: { status: 400, when: 'a hijab was asked for a man; it is offered only for a woman on screen' },
-} as const satisfies Record<string, { status: number; when: string }> & Record<ModestyErrorCode, unknown>;
+  ...MODESTY_REFUSALS,
+} as const satisfies Record<string, { status: number; when: string }>;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -113,17 +69,12 @@ interface SavedCharacterRow {
  * sheet — for the worker, which passes it on reaction shots only.
  */
 export const resolveReactionInputs: PresetInputResolver = async ({ userId, body, draft, preset, stage, db, rehostImage }) => {
-  let modesty: Modesty;
-  try {
-    modesty = resolveModesty(preset, {
-      dialect: draft.dialect as Dialect,
-      gender: body.character_gender as (typeof CHARACTER_GENDERS)[number],
-      choice: body.modesty as z.infer<typeof modestyChoiceSchema> | undefined,
-    });
-  } catch (err) {
-    if (err instanceof ModestyError) throw new RenderRefusal(REACTION_REFUSALS[err.code].status, err.code, err.message);
-    throw err;
-  }
+  const modesty = resolvePresetModesty(
+    preset,
+    draft,
+    body.character_gender as (typeof CHARACTER_GENDERS)[number],
+    body.modesty as Parameters<typeof resolvePresetModesty>[3],
+  );
 
   const ref = String(body.character_id ?? '').trim();
   const { data, error } = await db
@@ -149,7 +100,8 @@ export const resolveReactionInputs: PresetInputResolver = async ({ userId, body,
     character_gender: body.character_gender,
     modesty,
   };
-  if (stage === 'quote') return { run, workflow: {}, quote: { modesty } };
+  const quote = { preset_inputs: run };
+  if (stage === 'quote') return { run, workflow: {}, quote };
   const hosted = await rehostImage(userId, source);
-  return { run, workflow: { character_image_url: hosted.url, modesty }, quote: { modesty } };
+  return { run, workflow: { character_image_url: hosted.url, modesty }, quote };
 };

@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { refuseCaptionsField } from './product-hero-render.js';
 import type { PresetInputResolver } from './preset-inputs.js';
 import { MakeReactionSkillInputSchema, resolveReactionInputs } from './reaction.js';
+import { MAKE_HANDS_ON_SKILL } from './hands-on.js'; // #18
 import {
   PortraitGpt2ToolInputSchema,
   CharacterSheetGpt2ToolInputSchema,
@@ -495,6 +496,7 @@ export const SKILLS: Record<string, SkillEntry> = {
     preset: REACTION,
     presetInputs: resolveReactionInputs,
   },
+  make_hands_on: MAKE_HANDS_ON_SKILL,
   make_ugc: {
     slug: 'make_ugc',
     name: 'Agent-Media UGC Video',

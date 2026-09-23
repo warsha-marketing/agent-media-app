@@ -27,10 +27,15 @@
  * is refused with VOICE_NOT_APPROVED before any provider is paid. The draft
  * stores which catalog Voice spoke it.
  *
- * Only a Qualified Preset (presets/, #8) is drafted: a Dialect Product Hero is
- * not qualified for is refused with PRESET_NOT_QUALIFIED before any provider is
- * paid, on create and re-voice alike, unless the caller is an operator making
- * reviewer samples.
+ * The draft is Preset-agnostic (Brief, Script, Voice and Dialect do not depend
+ * on the Preset it is rendered with; any Preset qualified for its Dialect can
+ * render it). So a Dialect is drafted when it is a Qualified Preset (presets/,
+ * #8) for AT LEAST ONE Preset; one qualified for none is refused with
+ * PRESET_NOT_QUALIFIED before any provider is paid, on create and re-voice
+ * alike, unless the caller is an operator making reviewer samples. Each render
+ * checks its own Preset–Dialect pair. (`preset` on the row stays
+ * 'product_hero': it names this draft pipeline, not a Preset the draft is
+ * bound to.)
  *
  * Product Details are the facts the Script sells (name, notes, ingredients,
  * benefits); they are stored on the draft and carried over on re-voice.
@@ -46,7 +51,7 @@ import { z } from 'zod';
 import { DELIVERY_TAGS, SCRIPT_DIALECTS, formatDeliveryTags, modelHonoursDeliveryTags, stripDeliveryTags, type ScriptDialect } from '@agentmedia/schema';
 import { generatedScriptIssues, scriptTextIssues, type ScriptIssue } from './script-check.js';
 import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
-import { PresetError, assertPresetAvailable, type PresetAccess } from '../presets/qualification.js';
+import { PresetError, assertDialectDraftable, type PresetAccess } from '../presets/qualification.js';
 
 // ── Vocabulary (CONTEXT.md) ──────────────────────────────────────────────────
 
@@ -264,12 +269,13 @@ function voiceRef(voice: VoiceRow): VoiceRef {
 }
 
 /**
- * Only a Qualified Preset may be drafted (PRESET_NOT_QUALIFIED otherwise); an
- * operator may draft any pair, to make the sample Shorts native reviewers judge.
+ * A Dialect is drafted only when some Preset is qualified for it
+ * (PRESET_NOT_QUALIFIED otherwise); an operator may draft any Dialect, to make
+ * the sample Shorts native reviewers judge.
  */
 async function assertQualified(deps: DraftDeps, userId: string, dialect: Dialect): Promise<void> {
   try {
-    await assertPresetAvailable(deps.presets, userId, PRESET, dialect);
+    await assertDialectDraftable(deps.presets, userId, dialect);
   } catch (err) {
     if (err instanceof PresetError) throw new DraftError(err.status, err.code, err.message, err.details);
     throw err;

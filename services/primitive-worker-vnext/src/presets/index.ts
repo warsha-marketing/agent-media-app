@@ -16,6 +16,8 @@
 import { PRODUCT_HERO, type Modesty, type PresetDefinition, type ProductHeroShotKind } from '@agentmedia/schema';
 import { modestyPrompt } from './modesty.js';
 import { REACTION_RENDER } from './reaction.js';
+import type { PresetRenderInput } from '../workflows/render-preset.js';
+import { HANDS_ON_RENDER } from './hands-on.js';
 
 /** A Preset as the render pipeline reads it: its definition plus a prompt per shot kind. */
 export interface PresetRenderDefinition<Kind extends string = string> extends PresetDefinition<Kind> {
@@ -25,6 +27,25 @@ export interface PresetRenderDefinition<Kind extends string = string> extends Pr
    * draft audio is the only voice (ADR 0001).
    */
   shotPrompts: Readonly<Record<Kind, string>>;
+  /**
+   * The image prompt for each kind that declares a starting frame
+   * (shotKinds[kind].frame, #18). The product photo is the reference image.
+   */
+  framePrompts?: Readonly<Partial<Record<Kind, string>>>;
+  /**
+   * The Preset's own inputs as words for its prompts' `{name}` placeholders
+   * (e.g. Hands-on's `{hands}` and `{setting}`). Throws on an input it cannot
+   * word; the render refuses to start then. Absent: prompts have no placeholders.
+   */
+  promptVars?: (input: PresetRenderInput) => Readonly<Record<string, string>>;
+}
+
+/** `template` with every `{name}` filled from `vars`; throws on a placeholder `vars` does not fill. */
+export function fillPrompt(template: string, vars: Readonly<Record<string, string>>): string {
+  return template.replace(/\{([a-z_]+)\}/g, (_m, name: string) => {
+    if (!Object.hasOwn(vars, name)) throw new Error(`prompt placeholder {${name}} has no value`);
+    return vars[name];
+  });
 }
 
 /**
@@ -48,8 +69,27 @@ export function presetShotPrompt<Kind extends string>(
   preset: PresetRenderDefinition<Kind>,
   kind: Kind,
   modesty: Modesty,
+  vars: Readonly<Record<string, string>> = {},
 ): string {
-  const base = preset.shotPrompts[kind];
+  const base = fillPrompt(preset.shotPrompts[kind], vars);
+  const extra = modestyPrompt(preset.shotKinds[kind].shows, modesty);
+  return extra ? `${base} ${extra}` : base;
+}
+
+/**
+ * The full image prompt for the starting frame of a shot of `kind` (#18): the
+ * Preset's frame prompt, plus the Modesty Default when that kind shows a person
+ * or hands — the frame is what the clip animates, so it must be modest too.
+ */
+export function presetFramePrompt<Kind extends string>(
+  preset: PresetRenderDefinition<Kind>,
+  kind: Kind,
+  modesty: Modesty,
+  vars: Readonly<Record<string, string>> = {},
+): string {
+  const template = preset.framePrompts?.[kind];
+  if (!template) throw new Error(`${preset.name} has no frame prompt for ${kind} shots`);
+  const base = fillPrompt(template, vars);
   const extra = modestyPrompt(preset.shotKinds[kind].shows, modesty);
   return extra ? `${base} ${extra}` : base;
 }
@@ -58,6 +98,7 @@ export function presetShotPrompt<Kind extends string>(
 export const PRESET_RENDERS: Readonly<Record<string, PresetRenderDefinition>> = {
   [PRODUCT_HERO_RENDER.id]: PRODUCT_HERO_RENDER,
   [REACTION_RENDER.id]: REACTION_RENDER,
+  [HANDS_ON_RENDER.id]: HANDS_ON_RENDER,
 };
 
 /** The render definition of Preset `id`; throws on an id the worker does not know. */

@@ -25,6 +25,10 @@ export * from './preset-definition.js';
 export * from './preset-registry.js';
 // Reaction Preset (#19): a silent reacting face intercut with the product.
 export * from './presets/reaction.js';
+// Starting frames (#18): shots animated from a generated frame, priced with the clips.
+export * from './starting-frames.js';
+// Hands-on (#18): the definition, hand genders and the setting list.
+export * from './presets/hands-on.js';
 // Modesty Default (#17): levels, the per-Preset rule, the user-facing choice and its resolution.
 export * from './modesty.js';
 // Delivery Tags — the allowed list and the strip helpers (Captions, viewer display).

@@ -23,6 +23,7 @@
 import { VIDEO_CLIP_CREDITS, VIDEO_CLIP_USD } from './video-pricing.js';
 import type { MusicBedTrack } from './music-bed/types.js';
 import type { ModestyDefault, ShotSubject } from './modesty.js';
+import { STARTING_FRAME_CREDITS, STARTING_FRAME_USD, type StartingFrame } from './starting-frames.js';
 
 /** Clip lengths a Preset renders from. 15 s clips are never needed: two clips
  *  (10 + 5) already cover the longest allowed speech. */
@@ -33,7 +34,7 @@ export type PresetClipSeconds = 5 | 10;
  * start without every input its Preset requires. (Later Presets add their own,
  * e.g. hand gender and setting for Hands-on, a character for Reaction.)
  */
-export type PresetInput = 'product_image' | 'character';
+export type PresetInput = 'product_image' | 'character' | 'hand_gender' | 'setting';
 
 /**
  * The shot plan's order rule, as data: shot i takes `order[i]`, cycling when a
@@ -65,9 +66,11 @@ export interface PresetDefinition<Kind extends string = string> {
   /**
    * Every kind of shot this Preset makes, and what it shows besides the product
    * (#17): the pipeline adds the Modesty Default to every `hands` and `person`
-   * shot, and to no other.
+   * shot, and to no other. `frame` (#18, ./starting-frames.ts): the shot is
+   * animated from a generated starting frame instead of the product photo, one
+   * frame per planned shot of that kind, priced with the clips.
    */
-  shotKinds: Readonly<Record<Kind, { shows: ShotSubject }>>;
+  shotKinds: Readonly<Record<Kind, { shows: ShotSubject; frame?: StartingFrame }>>;
   /** Which kinds of shots, in what order. Clip lengths follow the shared rule. */
   shotPlan: PresetShotOrder<Kind>;
   /** Inputs the render needs beyond the draft. */
@@ -96,9 +99,9 @@ export interface PresetDefinition<Kind extends string = string> {
    * product shots only renders exactly as before.
    */
   modesty: ModestyDefault;
-  // Extension points (later tickets, deliberately not declared yet): any
-  // Preset-specific steps before the clips (e.g. product-in-hands frames) join
-  // here as further fields, priced by quotePresetCredits.
+  // Extension points: Preset-specific steps before the clips are declared as
+  // data and priced by quotePresetCredits — per shot kind, a starting frame
+  // (shotKinds[kind].frame, #18).
 }
 
 /** One planned clip: what kind of shot it is, and how long it renders. */
@@ -182,12 +185,23 @@ function intercutShots<Kind extends string>(plan: PresetShotOrder<Kind>, duratio
   }));
 }
 
-/** Credits for rendering `durationMs` of speech under `preset`: the sum of its planned clips. */
-export function quotePresetCredits(preset: PresetDefinition, durationMs: number): number {
-  return planPresetShots(preset, durationMs).reduce((sum, s) => sum + VIDEO_CLIP_CREDITS[s.seconds], 0);
+/** The starting frame a planned shot of `kind` is animated from, if any (#18). */
+export function shotFrame(preset: Pick<PresetDefinition, 'shotKinds'>, kind: string): StartingFrame | undefined {
+  return (preset.shotKinds as Record<string, { frame?: StartingFrame }>)[kind]?.frame;
 }
 
-/** Provider USD for rendering `durationMs` of speech under `preset`: the sum of its planned clips. */
+/** Credits for rendering `durationMs` of speech under `preset`: its planned clips plus their starting frames. */
+export function quotePresetCredits(preset: PresetDefinition, durationMs: number): number {
+  return planPresetShots(preset, durationMs).reduce((sum, s) => {
+    const frame = shotFrame(preset, s.kind);
+    return sum + VIDEO_CLIP_CREDITS[s.seconds] + (frame ? STARTING_FRAME_CREDITS[frame] : 0);
+  }, 0);
+}
+
+/** Provider USD for rendering `durationMs` of speech under `preset`: its planned clips plus their starting frames. */
 export function presetProviderUsd(preset: PresetDefinition, durationMs: number): number {
-  return planPresetShots(preset, durationMs).reduce((sum, s) => sum + VIDEO_CLIP_USD[s.seconds], 0);
+  return planPresetShots(preset, durationMs).reduce((sum, s) => {
+    const frame = shotFrame(preset, s.kind);
+    return sum + VIDEO_CLIP_USD[s.seconds] + (frame ? STARTING_FRAME_USD[frame] : 0);
+  }, 0);
 }

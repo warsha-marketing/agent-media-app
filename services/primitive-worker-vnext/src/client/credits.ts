@@ -10,7 +10,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ApplicationFailure } from '@temporalio/activity';
-import { VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
+import { STARTING_FRAME_CREDITS, VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
 
 /**
  * Is billing explicitly disabled for this deployment?
@@ -37,7 +37,8 @@ export type PrimitiveCreditableId =
   | 'subtitles_v2'
   | 'wireframe_gpt2'
   | 'lip_sync'
-  | 'product_hero_clip';
+  | 'product_hero_clip'
+  | 'preset_frame';
 
 // Portraits are not charged (free identity prep). Character sheets are charged
 // ONLY when generated standalone (make_character_sheet); inside a video flow the
@@ -76,6 +77,9 @@ export function quotePrimitiveCredits(
       return 35;
     case 'lip_sync':
       return SELFIE_CREDITS_BY_DURATION[duration ?? 10];
+    case 'preset_frame':
+      // A Preset's starting frame (#18): the shared price api-v2 quotes from.
+      return STARTING_FRAME_CREDITS.product_in_hands;
   }
 }
 

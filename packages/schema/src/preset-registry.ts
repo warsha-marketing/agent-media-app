@@ -9,10 +9,12 @@
 import type { PresetDefinition } from './preset-definition.js';
 import { PRODUCT_HERO } from './product-hero.js';
 import { REACTION } from './presets/reaction.js';
+import { HANDS_ON } from './presets/hands-on.js';
 
 export const PRESETS = {
   product_hero: PRODUCT_HERO,
   reaction: REACTION,
+  hands_on: HANDS_ON,
 } as const satisfies Record<string, PresetDefinition>;
 
 export type PresetId = keyof typeof PRESETS;
