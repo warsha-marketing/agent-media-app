@@ -71,11 +71,9 @@ describe('captionWordsFromAlignment', () => {
     expect(words[0]).toEqual(w('أب', +(9 * 0.06).toFixed(3), +(11 * 0.06).toFixed(3)));
   });
 
-  it('shows Targeted Diacritics stripped by default, as the Script has them with diacritics: keep', () => {
+  it('shows the Script without its Targeted Diacritics', () => {
     const a = alignmentOf('[softly] برغموت، جِلد ومِسك.');
     expect(captionWordsFromAlignment(a).map((x) => x.text)).toEqual(['برغموت،', 'جلد', 'ومسك.']);
-    expect(captionWordsFromAlignment(a, { diacritics: 'keep' }).map((x) => x.text)).toEqual(['برغموت،', 'جِلد', 'ومِسك.']);
-    expect(ARABIC_CAPTION_RULES.diacritics).toBe('strip');
   });
 
   it('folds a punctuation-only token into the word before it (or after it, at the start)', () => {

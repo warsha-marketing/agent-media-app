@@ -21,15 +21,12 @@
  * moment. On screen, marks on two or three words out of fifteen read as
  * inconsistent, and at caption size with a heavy outline they crowd the line
  * (the marks sit above and below the letters, inside the outline). So captions
- * show the Script's words with their تشكيل removed by default
- * (ARABIC_CAPTION_RULES.diacritics = 'strip'); 'keep' shows them exactly as the
- * Script has them. Letters are never changed: hamza forms (أ إ آ ؤ ئ ء), the
- * maddah and the tatweel stay.
+ * always show the Script's words without their تشكيل (owner decision, #10).
+ * Letters are never changed: hamza forms (أ إ آ ؤ ئ ء), the maddah and the
+ * tatweel stay.
  */
 
 import { stripDeliveryTagsFromAlignment, type CharacterAlignment } from './delivery-tags.js';
-
-export type CaptionDiacritics = 'strip' | 'keep';
 
 export interface CaptionRules {
   /** Most words on one cue (a cue is one caption line). */
@@ -44,8 +41,6 @@ export interface CaptionRules {
   pauseBreakSeconds: number;
   /** A gap between cues shorter than this is bridged (the earlier cue holds) so captions do not flicker. */
   bridgeSeconds: number;
-  /** Show the Script's تشكيل ('keep') or remove it for reading ('strip'). See the header. */
-  diacritics: CaptionDiacritics;
 }
 
 /** The rules Arabic Captions are cut by: 3–4 words or ~1.8 s a line, whichever comes first. */
@@ -56,7 +51,6 @@ export const ARABIC_CAPTION_RULES: Readonly<CaptionRules> = {
   minSeconds: 0.8,
   pauseBreakSeconds: 0.45,
   bridgeSeconds: 0.25,
-  diacritics: 'strip',
 };
 
 /** One spoken word as shown, with when it is spoken (seconds from the start of the audio). */
@@ -96,15 +90,12 @@ const ms = (s: number) => Math.round(s * 1000) / 1000;
 
 /**
  * The spoken words of a voiced Script, from its TTS character alignment:
- * Delivery Tags stripped, split on whitespace, each word timed from its first
- * character's start to its last character's end. Punctuation stays attached to
- * its word; a token of punctuation alone joins the word before it (or the one
- * after it, at the start).
+ * Delivery Tags stripped, split on whitespace, تشكيل removed (see the header),
+ * each word timed from its first character's start to its last character's
+ * end. Punctuation stays attached to its word; a token of punctuation alone
+ * joins the word before it (or the one after it, at the start).
  */
-export function captionWordsFromAlignment(
-  alignment: CharacterAlignment,
-  opts: { diacritics?: CaptionDiacritics } = {},
-): CaptionWord[] {
+export function captionWordsFromAlignment(alignment: CharacterAlignment): CaptionWord[] {
   const n = alignment.characters.length;
   if (alignment.character_start_times_seconds.length !== n || alignment.character_end_times_seconds.length !== n) {
     throw new RangeError(
@@ -112,7 +103,6 @@ export function captionWordsFromAlignment(
     );
   }
   const spoken = stripDeliveryTagsFromAlignment(alignment);
-  const diacritics = opts.diacritics ?? ARABIC_CAPTION_RULES.diacritics;
 
   const tokens: CaptionWord[] = [];
   let cur: CaptionWord | null = null;
@@ -151,7 +141,7 @@ export function captionWordsFromAlignment(
 
   return words
     .map((x) => ({
-      text: diacritics === 'strip' ? stripArabicDiacritics(x.text) : x.text,
+      text: stripArabicDiacritics(x.text),
       start: ms(x.start),
       end: ms(Math.max(x.start, x.end)),
     }))
@@ -216,6 +206,6 @@ export function captionCuesFromAlignment(
   alignment: CharacterAlignment,
   opts: { rules?: Partial<CaptionRules>; durationSeconds?: number } = {},
 ): CaptionCue[] {
-  const words = captionWordsFromAlignment(alignment, { diacritics: opts.rules?.diacritics });
+  const words = captionWordsFromAlignment(alignment);
   return groupCaptionCues(words, opts);
 }
