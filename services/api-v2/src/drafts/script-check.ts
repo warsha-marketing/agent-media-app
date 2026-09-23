@@ -39,9 +39,13 @@ export interface ScriptIssue {
 }
 
 /**
- * Words a voice commonly reads the wrong way without a mark (bare spelling).
- * Grow this from live tests; each entry forces a mark on every occurrence in a
- * generated Script, so keep it to words whose second reading is common.
+ * THE list of known misreadable words (homographs): words a voice commonly
+ * reads the wrong way without a mark. Native reviewers extend it whenever they
+ * hear a mis-read in a voiced Script: add the word in bare spelling (no marks;
+ * any hamza, alef maqsura or ta marbuta spelling matches) with both readings,
+ * and a case to __tests__/script-check.test.ts. Each entry forces a mark on
+ * every occurrence in a generated Script, so keep it to words whose second
+ * reading is common.
  */
 export const HOMOGRAPHS: readonly string[] = [
   'جلد', // jild (leather) / jald (whipping)
@@ -50,9 +54,22 @@ export const HOMOGRAPHS: readonly string[] = [
   'سكر', // sukkar (sugar) / sakar (closed, Levantine)
 ];
 
-const HARAKA = /[\u064B-\u0652\u0670]/;
+/**
+ * An Arabic diacritic: every combining mark in U+064B–U+065F (tanween, the
+ * short vowels, shadda, sukun, madda / hamza above and below, and the rarer
+ * vowel marks) plus the superscript alef U+0670. Tested after NFC, so a hamza
+ * that is part of a letter (ا + U+0654 = أ) is a letter, not a mark.
+ */
+const HARAKA = /[\u064B-\u065F\u0670]/;
 const TATWEEL = '\u0640';
 const ARABIC_LETTER = /[\u0621-\u064A\u0671-\u06D3]/;
+/**
+ * Letters that are spelled more than one way for the same word, folded for
+ * matching only: alef with hamza or madda (and wasla) → ا, alef maqsura → ي,
+ * ta marbuta → ه (it only ends a word). So a term reported as امبر matches
+ * أمبَر in the Script, and a homograph matches however it is spelled.
+ */
+const FOLD: Record<string, string> = { 'أ': 'ا', 'إ': 'ا', 'آ': 'ا', 'ٱ': 'ا', 'ى': 'ي', 'ة': 'ه' };
 const LATIN = /[A-Za-z\u00C0-\u024F]+/g;
 /** Letters that may be attached in front of a word: و/ف, then ب/ل/ك, then the article. */
 const PROCLITICS = /^(?:[وف])?(?:[بلك])?(?:ال|ل)?$/;
@@ -89,31 +106,37 @@ export function scriptTextIssues(script: string): ScriptIssue[] {
 
 // ── Targeted Diacritics ─────────────────────────────────────────────────────
 
-/** A Script with marks and tatweel removed, and where each bare character came from. */
+/**
+ * A Script with marks and tatweel removed and letters folded (FOLD), and where
+ * each bare character came from. Expects NFC text (see prepare()).
+ */
 function bareWithMap(text: string): { bare: string; from: number[] } {
   let bare = '';
   const from: number[] = [];
   for (let i = 0; i < text.length; i += 1) {
     const ch = text[i];
     if (HARAKA.test(ch) || ch === TATWEEL) continue;
-    bare += ch;
+    bare += FOLD[ch] ?? ch;
     from.push(i);
   }
   return { bare, from };
 }
 
-const bareOf = (s: string) => bareWithMap(s).bare.replace(/\s+/g, ' ').trim();
+/** NFC (so a decomposed أ is one letter), whitespace collapsed. */
+const prepare = (s: string) => s.normalize('NFC').replace(/\s+/g, ' ');
+
+const bareOf = (s: string) => bareWithMap(prepare(s)).bare.trim();
 
 /**
- * Every place `term` (mark-insensitive) is a whole word of the Script, allowing
- * attached proclitics in front (ومِسك matches مِسك), with whether that span
- * carries at least one mark.
+ * Every place `term` (mark-, tatweel- and FOLD-insensitive) is a whole word of
+ * the Script, allowing attached proclitics in front (ومِسك matches مِسك), with
+ * whether that span carries at least one mark.
  */
 function occurrences(script: string, term: string): Array<{ text: string; marked: boolean }> {
   const target = bareOf(term);
   if (!target) return [];
-  const { bare, from } = bareWithMap(script.replace(/\s+/g, ' '));
-  const src = script.replace(/\s+/g, ' ');
+  const src = prepare(script);
+  const { bare, from } = bareWithMap(src);
   const out: Array<{ text: string; marked: boolean }> = [];
   for (let at = bare.indexOf(target); at !== -1; at = bare.indexOf(target, at + 1)) {
     const end = at + target.length;

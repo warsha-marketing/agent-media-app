@@ -133,7 +133,7 @@ async function start(opts: { seed?: Record<string, Seed>; candidates?: VoiceCand
   const draftDeps: DraftDeps = {
     writeScript: async () => {
       h.written += 1;
-      return { script: SCRIPT, model: 'claude-test' };
+      return { script: SCRIPT, product_terms: [], model: 'claude-test' };
     },
     voiceScript: async ({ script, voice }) => {
       voiced.push({ script, provider: voice.provider, provider_voice_id: voice.provider_voice_id });

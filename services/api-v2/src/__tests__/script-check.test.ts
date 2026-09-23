@@ -66,6 +66,36 @@ describe('generatedScriptIssues (Targeted Diacritics)', () => {
     expect(generatedScriptIssues('جِلد ومِسك', [])).toEqual([]);
   });
 
+  it('matches a reported term whatever its hamza, alef maqsura, ta marbuta or tatweel', () => {
+    // Reported with a different hamza than the Script uses: found, and marked.
+    expect(generatedScriptIssues('عطر بالأمبَر والجِلد', ['امبَر', 'الإمبَر', 'آمبَر'])).toEqual([]);
+    // ى / ي and ة / ه at the end of a word, and tatweel.
+    expect(generatedScriptIssues('نغمة موسيقَى ناعمة', ['موسيقي'])).toEqual([]);
+    expect(generatedScriptIssues('ريحة الفانيلّة بتضل', ['فانيله'])).toEqual([]);
+    expect(generatedScriptIssues('عُود ومِسك', ['عـود', 'مـسك'])).toEqual([]);
+  });
+
+  it('flags such a term as unmarked (not missing) when the Script leaves it bare', () => {
+    expect(generatedScriptIssues('عطر بالأمبر', ['امبر'])).toEqual([
+      expect.objectContaining({ code: 'WORD_NOT_MARKED', found: ['بالأمبر'] }),
+    ]);
+  });
+
+  it('matches homographs across hamza and tatweel spellings too', () => {
+    expect(codes(generatedScriptIssues('جـلد ومسـك', []))).toEqual(['WORD_NOT_MARKED']);
+  });
+
+  it('counts every Arabic combining mark as a diacritic: shadda, sukun, superscript alef, madda and hamza marks', () => {
+    for (const mark of ['\u0651', '\u0652', '\u0670', '\u0653', '\u0654', '\u0655', '\u0656']) {
+      expect(generatedScriptIssues(`جل${mark}د`, [`جل${mark}د`]), `U+${mark.codePointAt(0)!.toString(16)}`).toEqual([]);
+    }
+  });
+
+  it('does not count a hamza that is part of a letter as a mark, even written decomposed', () => {
+    // ا + U+0654 is just أ: the word is still bare.
+    expect(codes(generatedScriptIssues('عطر بالا\u0654مبر', ['أمبر']))).toEqual(['WORD_NOT_MARKED']);
+  });
+
   it('still applies the text rules', () => {
     expect(codes(generatedScriptIssues(LIVE_SCRIPT.replace('[softly]', '[wisper]'), ['جِلد']))).toEqual(['UNKNOWN_DELIVERY_TAG']);
   });

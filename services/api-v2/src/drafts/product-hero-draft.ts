@@ -171,9 +171,10 @@ export interface WrittenScript {
   /**
    * The words the writer used in the Script for the Product Details' nouns,
    * notes and ingredients that a voice could misread, as written in the Script
-   * (with their marks). The Script check holds each one to Targeted Diacritics.
+   * (with their marks); [] when none. The Script check holds each one to
+   * Targeted Diacritics.
    */
-  product_terms?: string[];
+  product_terms: string[];
   model: string;
 }
 
@@ -392,7 +393,7 @@ async function write(deps: DraftDeps, request: WriteScriptInput): Promise<Writte
   if (!script || script.length > SCRIPT_MAX_CHARS) {
     throw new DraftError(502, 'SCRIPT_GENERATION_FAILED', 'Could not write a Script for this Brief. Try again or rephrase the Brief.');
   }
-  return { ...written, script, product_terms: written.product_terms ?? [] };
+  return { ...written, script };
 }
 
 /**
@@ -403,10 +404,10 @@ async function write(deps: DraftDeps, request: WriteScriptInput): Promise<Writte
  */
 async function writeChecked(deps: DraftDeps, request: WriteScriptInput): Promise<WrittenScript> {
   let written = await write(deps, request);
-  let issues = generatedScriptIssues(written.script, written.product_terms ?? []);
+  let issues = generatedScriptIssues(written.script, written.product_terms);
   if (issues.length === 0) return written;
   written = await write(deps, { ...request, rejected: { script: written.script, reasons: issues.map((i) => i.message) } });
-  issues = generatedScriptIssues(written.script, written.product_terms ?? []);
+  issues = generatedScriptIssues(written.script, written.product_terms);
   if (issues.length === 0) return written;
   throw new DraftError(
     422,

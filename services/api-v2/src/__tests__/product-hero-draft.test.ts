@@ -98,7 +98,7 @@ async function start(opts: { durations: number[]; scripts?: Written[]; ttsModel?
     writeScript: async (input) => {
       calls.write.push(input as unknown as Record<string, unknown>);
       const next = scripts.shift() ?? SCRIPT_A;
-      return typeof next === 'string' ? { script: next, model: 'claude-test' } : { ...next, model: 'claude-test' };
+      return typeof next === 'string' ? { script: next, product_terms: [], model: 'claude-test' } : { ...next, model: 'claude-test' };
     },
     voiceScript: async ({ script, voice }) => {
       calls.voice.push(script);
