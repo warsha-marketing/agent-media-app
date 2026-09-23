@@ -17,7 +17,18 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+
+/**
+ * The request's Idempotency-Key, trimmed; null when missing, blank or longer
+ * than 200 characters. Both spellings are tried so a case-sensitive header
+ * lookup (a hand-rolled request) reads it too; Express's own is case-insensitive.
+ */
+export function readIdempotencyKey(req: Request): string | null {
+  const raw = req.header('idempotency-key') ?? req.header('Idempotency-Key');
+  const t = raw?.trim() ?? '';
+  return t.length === 0 || t.length > 200 ? null : t;
+}
 
 /** JSON with object keys sorted at every depth; undefined members dropped. */
 export function canonicalJson(value: unknown): string {

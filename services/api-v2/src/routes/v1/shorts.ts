@@ -14,11 +14,12 @@
  * file (video_url) and the Short it belongs to (short_id). Free.
  *
  * Errors are `{ error: { code, message, … } }`; the codes are SHORT_CAPTION_REFUSALS
- * plus INVALID_INPUT (400, body shape) and idempotency_key_reused (409).
+ * plus INVALID_INPUT (400, body shape). idempotency_key_reused (409) is the
+ * body every run path sends (sendIdempotencyKeyReused).
  */
 
 import type express from 'express';
-import type { Request, RequestHandler, Response } from 'express';
+import type { RequestHandler, Response } from 'express';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
   CAPTION_EXPORT_SLUG,
@@ -32,7 +33,13 @@ import {
   type ShortCaptionDeps,
   type StoredExport,
 } from '../../captions/short-captions.js';
-import { replayMatches, requestFingerprint, IDEMPOTENCY_KEY_REUSED } from '../../skills/idempotency.js';
+import {
+  IDEMPOTENCY_KEY_REUSED,
+  readIdempotencyKey,
+  replayMatches,
+  requestFingerprint,
+  sendIdempotencyKeyReused,
+} from '../../skills/idempotency.js';
 import { isUuid } from '../../lib/uuid.js';
 import { sendInvalidInput, userOf } from './route-helpers.js';
 import { CAPTION_COLOURS, CAPTION_POSITIONS, CAPTION_SIZES } from '@agentmedia/schema';
@@ -50,12 +57,6 @@ function sendError(res: Response, err: unknown, tag: string): void {
   }
   console.error(`[v1 shorts/${tag}] ${(err as Error)?.message ?? 'unknown error'}`);
   res.status(500).json({ error: { code: 'internal_error', message: 'Something went wrong. Try again in a moment.' } });
-}
-
-function readIdempotencyKey(req: Request): string | null {
-  const raw = req.header('idempotency-key');
-  const t = raw?.trim() ?? '';
-  return t.length === 0 || t.length > 200 ? null : t;
 }
 
 const workflowIdOf = (runId: string) => `${CAPTION_EXPORT_SLUG}-${runId}`;
@@ -85,16 +86,7 @@ export function registerShortCaptionRoutes(app: express.Express, middleware: Sho
     const key = readIdempotencyKey(req);
     const fingerprint = requestFingerprint(CAPTION_EXPORT_SLUG, { short_id: shortId, ...parsed.data });
     const replay = (run: StoredExport) => {
-      if (!replayMatches(run.request_fingerprint, fingerprint)) {
-        res.status(409).json({
-          error: {
-            code: 'idempotency_key_reused',
-            message: 'This Idempotency-Key already started an export with a different request. Use a new key for a new export.',
-            run_id: run.id,
-          },
-        });
-        return;
-      }
+      if (!replayMatches(run.request_fingerprint, fingerprint)) return sendIdempotencyKeyReused(res, CAPTION_EXPORT_SLUG, run.id);
       res.status(202).json({
         skill_run_id: run.id,
         workflow_id: workflowIdOf(run.id),
@@ -240,7 +232,14 @@ export function shortCaptionOpenApi(): { paths: Record<string, unknown>; schemas
             '400': errorResponse('`INVALID_INPUT`: the body is not { lines: [{ text, start, end }], style: { position, size, colour } }'),
             '401': errorResponse('Unauthorized'),
             '404': errorResponse(refusals(404)),
-            '409': errorResponse(`${refusals(409)}. ${IDEMPOTENCY_KEY_REUSED}`),
+            '409': {
+              description: `${refusals(409)}. ${IDEMPOTENCY_KEY_REUSED} (sent with the run-wide SkillError body, like POST /v1/skills/{slug}/run)`,
+              content: {
+                'application/json': {
+                  schema: { oneOf: [{ $ref: '#/components/schemas/ShortCaptionError' }, { $ref: '#/components/schemas/SkillError' }] },
+                },
+              },
+            },
             '422': errorResponse(refusals(422)),
             '502': errorResponse('`temporal_dispatch_failed`: the export could not be started'),
             '503': errorResponse('`temporal_unconfigured`'),

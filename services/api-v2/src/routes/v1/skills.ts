@@ -21,7 +21,7 @@ import {
 } from '../../skills/product-hero-render.js';
 import { musicBedView, musicBedWorkflowInput, presetMusicBed } from '../../skills/preset-music-bed.js'; // #9
 import { summarizeRunCredits, type RunCredits } from '../../skills/run-credits.js';
-import { replayMatches, requestFingerprint, sendIdempotencyKeyReused } from '../../skills/idempotency.js';
+import { readIdempotencyKey, replayMatches, requestFingerprint, sendIdempotencyKeyReused } from '../../skills/idempotency.js';
 import type { PresetDefinition } from '@agentmedia/schema';
 import { PresetError, assertPresetAvailable } from '../../presets/qualification.js';
 import { supabasePresetAccess } from '../../presets/providers.js';
@@ -1476,14 +1476,6 @@ export async function cancelSkillRunRoute(req: Request, res: Response): Promise<
   // rendered again (terminate() skipped the workflow's own release).
   if (getSkill(String(run.skill_slug))?.preset) await releaseDraftClaim(run.id);
   res.status(200).json({ skill_run_id: run.id, status: 'canceled' });
-}
-
-function readIdempotencyKey(req: Request): string | null {
-  const raw = req.header('idempotency-key') ?? req.header('Idempotency-Key');
-  if (!raw) return null;
-  const t = raw.trim();
-  if (t.length === 0 || t.length > 200) return null;
-  return t;
 }
 
 function errorMessage(err: unknown): string {

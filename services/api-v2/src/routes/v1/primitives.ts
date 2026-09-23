@@ -7,6 +7,7 @@ import { supabase } from '../../server.js';
 import { getTemporalClient } from '../../orchestrator/temporal/client.js';
 import { getTemporalConfig } from '../../orchestrator/temporal/config.js';
 import { withTimeout } from '../../orchestrator/temporal/timeout.js';
+import { readIdempotencyKey } from '../../skills/idempotency.js';
 
 /**
  * Task queue for the vNext primitive worker. Intentionally separate from
@@ -264,14 +265,6 @@ export async function getPrimitiveRunRoute(
     created_at: data.created_at,
     artifacts: data.primitive_artifacts ?? [],
   });
-}
-
-function readIdempotencyKey(req: Request): string | null {
-  const raw = req.header('idempotency-key') ?? req.header('Idempotency-Key');
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0 || trimmed.length > 200) return null;
-  return trimmed;
 }
 
 function errorMessage(err: unknown): string {

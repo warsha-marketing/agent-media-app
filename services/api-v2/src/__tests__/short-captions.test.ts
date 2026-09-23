@@ -307,7 +307,13 @@ describe('POST /v1/shorts/:id/caption-exports', () => {
     expect(again.body).toMatchObject({ skill_run_id: first.body.skill_run_id, short_id: SHORT, idempotent_replay: true });
     const edited = await call(h, 'POST', exportPath(), OWNER, { lines: LINES.slice(0, 2), style: STYLE }, key);
     expect(edited.status).toBe(409);
-    expect(edited.body.error.code).toBe('idempotency_key_reused');
+    // The same 409 body every run path sends (skills/idempotency.ts).
+    expect(edited.body).toEqual({
+      error: 'idempotency_key_reused',
+      skill: 'caption_export',
+      run_id: first.body.skill_run_id,
+      detail: expect.stringContaining('Use a new key'),
+    });
     expect(h.started).toHaveLength(1);
   });
 
