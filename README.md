@@ -196,6 +196,29 @@ into the images.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces fit together and which
 providers are swappable.
 
+### Storage CORS
+
+The dashboard uploads product photos **directly from the browser** to a
+presigned URL on your bucket, and the Download button fetches the finished
+Short from it, so the bucket must allow the dashboard's origin. The compose stack does this for
+MinIO (`MINIO_API_CORS_ALLOW_ORIGIN`, from `STORAGE_CORS_ORIGINS`, default
+`http://localhost:$WEB_PORT`) and signs URLs for `http://localhost:9000`
+(`S3_PUBLIC_ENDPOINT`). On Cloudflare R2, add this CORS policy to the public
+bucket (`R2_BUCKET`), with your dashboard's origin:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://your-dashboard.example"],
+    "AllowedMethods": ["GET", "PUT"],
+    "AllowedHeaders": ["Content-Type"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+Without it the photo upload fails with "Could not reach storage".
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE). No follow-on obligations beyond the license.

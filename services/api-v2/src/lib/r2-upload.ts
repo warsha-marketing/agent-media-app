@@ -300,8 +300,13 @@ let _presignClient: S3Client | null = null;
 function getPresignClient(): S3Client {
   if (_presignClient) return _presignClient;
   const env = readEnv();
+  // Signed URLs are used by browsers and agents, never by this server, so they
+  // are signed for the host THEY reach: S3_PUBLIC_ENDPOINT when the server's own
+  // route to storage is a private name (compose: http://minio:9000).
   const endpoint =
-    process.env.S3_ENDPOINT?.trim() || `https://${env.accountId}.r2.cloudflarestorage.com`;
+    process.env.S3_PUBLIC_ENDPOINT?.trim() ||
+    process.env.S3_ENDPOINT?.trim() ||
+    `https://${env.accountId}.r2.cloudflarestorage.com`;
   _presignClient = new S3Client({
     region: process.env.S3_REGION?.trim() || 'auto',
     endpoint,
