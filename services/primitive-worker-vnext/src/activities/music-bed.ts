@@ -18,22 +18,17 @@
  *   - video = the cut Short's video stream, copied (not re-encoded).
  * So the Music Bed can never make the Short longer than its audio.
  *
- * Free, like the mux: the Music Bed never changes the price.
+ * Free, like the mux: the Music Bed never changes the price. The download,
+ * upload and run records are shared with the Captions burn (../lib/finished-short.ts).
  */
 
-import { ApplicationFailure, Context } from '@temporalio/activity';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { tmpdir } from 'node:os';
+import { ApplicationFailure } from '@temporalio/activity';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { MUSIC_BED_STORAGE_PREFIX, isMusicBedStorageKey, type PresetDefinition } from '@agentmedia/schema';
+import { MUSIC_BED_STORAGE_PREFIX, isMusicBedStorageKey } from '@agentmedia/schema';
 import type { WorkerConfig } from '../config.js';
-import { getDb } from '../client/db.js';
-import { r2UploadVnext } from '../client/r2.js';
 import { DRAFT_AUDIO, MUSIC_BED_TRACK, probeSeconds, readPrivateObject } from '../lib/media-io.js';
-
-const execFileP = promisify(execFile);
+import { processFinishedShort, type FinishedShortInput, type FinishedShortResult } from '../lib/finished-short.js';
 
 /** Fixed mix levels — the Preset's sound, not a user setting. */
 export const MUSIC_BED_MIX = {
@@ -45,32 +40,15 @@ export const MUSIC_BED_MIX = {
   duck: { threshold: 0.03, ratio: 8, attackMs: 20, releaseMs: 400 },
 } as const;
 
-export interface MixMusicBedInput {
-  primitive_run_id: string;
-  user_id: string;
-  skill_run_id: string;
-  /** The cut Short (R2 public URL) whose video stream is kept. */
-  short_url: string;
-  /** The approved draft's audio (private key) — the voice, mixed in whole. */
+export interface MixMusicBedInput extends FinishedShortInput {
+  /** The approved draft's audio (private key) — the voice, mixed in whole. The mix is exactly audio_duration_ms long. */
   audio_key: string;
-  /** The voice's measured length; the mix is exactly this long. */
-  audio_duration_ms: number;
-  /** The Preset id, recorded on the Short. */
-  preset: string;
-  /** The Preset's aspect ratio, recorded on the Short. Absent on mixes scheduled before it was passed. */
-  aspect_ratio?: PresetDefinition['aspectRatio'];
   track_id: string;
   /** Private-bucket key of the track (under music-bed/). */
   track_storage_key: string;
 }
 
-export interface MixMusicBedResult {
-  primitive_run_id: string;
-  video_url: string;
-  /** Length of the finished Short, measured from the output file. */
-  duration_ms: number;
-  artifact_id: string;
-}
+export type MixMusicBedResult = FinishedShortResult;
 
 /**
  * The ffmpeg filter graph for inputs [0]=Short video, [1]=voice, [2]=bed
@@ -116,80 +94,20 @@ export function makeMixMusicBedActivity(cfg: WorkerConfig) {
     if (!isMusicBedStorageKey(input.track_storage_key)) {
       throw ApplicationFailure.nonRetryable(`Music Bed tracks are read only from ${MUSIC_BED_STORAGE_PREFIX}`, 'INVALID_INPUT');
     }
-    const db = getDb(cfg.supabase.url, cfg.supabase.serviceRoleKey);
-    const allowedPrefix = cfg.r2.publicUrl.replace(/\/+$/, '') + '/';
-    if (!input.short_url.startsWith(allowedPrefix)) {
-      throw ApplicationFailure.nonRetryable('short_url must be hosted on the configured R2 public URL', 'REFERENCE_URL_NOT_ALLOWED');
-    }
-    const startedAt = new Date().toISOString();
-
-    const workDir = await mkdtemp(join(tmpdir(), `vnext-hero-bed-${input.primitive_run_id}-`));
-    let videoBytes: Buffer;
-    let durationMs: number;
-    try {
-      const resp = await fetch(input.short_url, { redirect: 'follow', signal: AbortSignal.timeout(180_000) });
-      if (!resp.ok) throw new Error(`short download ${resp.status}`);
-      const shortPath = join(workDir, 'short.mp4');
-      await writeFile(shortPath, Buffer.from(await resp.arrayBuffer()));
-      const voicePath = join(workDir, 'voice.mp3');
-      await writeFile(voicePath, await readPrivateObject(cfg, input.audio_key, DRAFT_AUDIO));
-      const bedPath = join(workDir, 'bed.audio');
-      await writeFile(bedPath, await readPrivateObject(cfg, input.track_storage_key, MUSIC_BED_TRACK));
-      Context.current().heartbeat({ stage: 'inputs_ready' });
-
-      const outPath = join(workDir, 'short-bed.mp4');
-      const seconds = await probeSeconds(voicePath);
-      await execFileP('ffmpeg', musicBedMixArgs({ shortPath, voicePath, bedPath, outPath, seconds }), { maxBuffer: 1024 * 1024 * 64 });
-      Context.current().heartbeat({ stage: 'mixed' });
-      durationMs = Math.round((await probeSeconds(outPath)) * 1000);
-      videoBytes = await readFile(outPath);
-    } finally {
-      await rm(workDir, { recursive: true, force: true }).catch(() => {});
-    }
-
-    const { publicUrl } = await r2UploadVnext(cfg.r2, input.primitive_run_id, 'product-hero.mp4', videoBytes, 'video/mp4');
-
-    const { error: upErr } = await db.from('primitive_runs').upsert(
-      {
-        id: input.primitive_run_id,
-        user_id: input.user_id,
-        skill_run_id: input.skill_run_id,
-        primitive_id: 'music_bed_mix',
-        status: 'submitted',
-        input: { track_id: input.track_id, audio_duration_ms: input.audio_duration_ms },
-        estimated_credits_usd: 0,
-        started_at: startedAt,
+    return processFinishedShort(cfg, input, {
+      primitiveId: 'music_bed_mix',
+      tag: 'bed',
+      runInput: { track_id: input.track_id, audio_duration_ms: input.audio_duration_ms },
+      metadata: { music_bed: input.track_id },
+      doneStage: 'mixed',
+      async prepare({ workDir, shortPath, outPath }) {
+        const voicePath = join(workDir, 'voice.mp3');
+        await writeFile(voicePath, await readPrivateObject(cfg, input.audio_key, DRAFT_AUDIO));
+        const bedPath = join(workDir, 'bed.audio');
+        await writeFile(bedPath, await readPrivateObject(cfg, input.track_storage_key, MUSIC_BED_TRACK));
+        const seconds = await probeSeconds(voicePath);
+        return musicBedMixArgs({ shortPath, voicePath, bedPath, outPath, seconds });
       },
-      { onConflict: 'id' },
-    );
-    if (upErr) throw new Error(`primitive_runs upsert failed: ${upErr.message}`);
-
-    const { data: artifact, error: artErr } = await db
-      .from('primitive_artifacts')
-      .insert({
-        primitive_run_id: input.primitive_run_id,
-        kind: 'short',
-        url: publicUrl,
-        bytes: videoBytes.byteLength,
-        mime: 'video/mp4',
-        metadata: {
-          preset: input.preset,
-          ...(input.aspect_ratio ? { aspect_ratio: input.aspect_ratio } : {}),
-          duration_ms: durationMs,
-          audio_duration_ms: input.audio_duration_ms,
-          music_bed: input.track_id,
-        },
-      })
-      .select('id')
-      .single();
-    if (artErr || !artifact) throw new Error(`primitive_artifacts insert failed: ${artErr?.message ?? 'no row'}`);
-
-    const { error: finErr } = await db
-      .from('primitive_runs')
-      .update({ status: 'succeeded', actual_credits_usd: 0, finished_at: new Date().toISOString() })
-      .eq('id', input.primitive_run_id);
-    if (finErr) throw new Error(`primitive_runs finalize failed: ${finErr.message}`);
-
-    return { primitive_run_id: input.primitive_run_id, video_url: publicUrl, duration_ms: durationMs, artifact_id: artifact.id as string };
+    });
   };
 }
