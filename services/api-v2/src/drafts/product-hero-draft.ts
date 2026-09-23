@@ -322,19 +322,26 @@ function forVoice(deps: DraftDeps, script: string): string {
   return modelHonoursDeliveryTags(deps.ttsModel) ? script : stripDeliveryTags(script).trim();
 }
 
-/** A user's Script that is not Arabic text plus allowed Delivery Tags: refused before any voicing. */
+/** What each refusal of an edited Script tells the user, most specific first. */
+const EDIT_REFUSALS: ReadonlyArray<ScriptIssue['code']> = ['UNKNOWN_DELIVERY_TAG', 'SCRIPT_STRAY_BRACKETS', 'SCRIPT_NO_ARABIC'];
+
+/**
+ * A user's Script that failed the rules for every Script, refused before any
+ * voicing. The error code is picked by issue code (EDIT_REFUSALS order), and
+ * every issue rides along in `issues`.
+ */
 function refuseEditedScript(issues: ScriptIssue[]): DraftError {
-  const unknown = issues.find((i) => i.code === 'UNKNOWN_DELIVERY_TAG');
-  if (unknown) {
+  const code = EDIT_REFUSALS.find((c) => issues.some((i) => i.code === c)) ?? issues[0].code;
+  const issue = issues.find((i) => i.code === code)!;
+  if (code === 'UNKNOWN_DELIVERY_TAG') {
     return new DraftError(
       422,
-      'UNKNOWN_DELIVERY_TAG',
-      `${unknown.message} Use one of the Delivery Tags ${formatDeliveryTags()}, or remove it.`,
-      { tags: unknown.found, allowed: [...DELIVERY_TAGS], issues },
+      code,
+      `${issue.message} Use one of the Delivery Tags ${formatDeliveryTags()}, or remove it.`,
+      { tags: issue.found, allowed: [...DELIVERY_TAGS], issues },
     );
   }
-  const notArabic = issues[0];
-  return new DraftError(422, 'SCRIPT_NOT_ARABIC', notArabic.message, { found: notArabic.found, issues });
+  return new DraftError(422, code, issue.message, { found: issue.found, issues });
 }
 
 // ── The two draft operations ─────────────────────────────────────────────────
@@ -397,7 +404,7 @@ async function write(deps: DraftDeps, request: WriteScriptInput): Promise<Writte
 }
 
 /**
- * Ask the writer for a Script and hold it to the Script check (Arabic plus
+ * Ask the writer for a Script and hold it to the Script check (Arabic-only,
  * allowed Delivery Tags, Targeted Diacritics). A refused Script gets ONE
  * rewrite told why; a second refusal goes back to the user with the Script and
  * the reasons, so they can fix it in the editor and re-voice.
@@ -468,9 +475,11 @@ export async function createDraftFromBrief(deps: DraftDeps, userId: string, inpu
  * Without a voice_id the parent's Voice speaks again, provided it is still an
  * Approved Voice.
  *
- * The user may add marks and Delivery Tags anywhere; the Script must still be
- * Arabic text plus allowed Delivery Tags, so a typo like [wisper] is refused
- * (UNKNOWN_DELIVERY_TAG) instead of being spoken aloud.
+ * The user may add marks, Delivery Tags and Latin words (a brand as they spell
+ * it) anywhere; a bracket must still hold an allowed Delivery Tag, so a typo
+ * like [wisper] is refused (UNKNOWN_DELIVERY_TAG) instead of being spoken
+ * aloud, as is a stray bracket (SCRIPT_STRAY_BRACKETS) or a Script with no
+ * Arabic to speak (SCRIPT_NO_ARABIC).
  */
 export async function revoiceDraft(deps: DraftDeps, userId: string, input: RevoiceDraftInput): Promise<DraftRow> {
   let brief = input.brief?.trim() || null;

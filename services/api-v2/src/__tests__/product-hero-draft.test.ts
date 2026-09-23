@@ -501,6 +501,15 @@ describe('the Script check on generated Scripts', () => {
     expect((h.calls.write[1].rejected as { reasons: string[] }).reasons.join(' ')).toContain('[wisper]');
   });
 
+  it('rewrites a generated Script that uses Latin letters (names are written in Arabic letters)', async () => {
+    const h = await start({ durations: [9000], scripts: [{ script: LIVE_SCRIPT.replace('رومي', 'RUMI'), product_terms: LIVE_TERMS }, { script: LIVE_SCRIPT, product_terms: LIVE_TERMS }] });
+    const r = await create(h);
+    expect(r.status).toBe(201);
+    expect(h.calls.write).toHaveLength(2);
+    expect((h.calls.write[1].rejected as { reasons: string[] }).reasons.join(' ')).toContain('RUMI');
+    expect(h.calls.voice).toEqual([LIVE_SCRIPT]);
+  });
+
   it('after a second refusal, hands the user the Script and the reasons, having paid for no voice', async () => {
     const h = await start({ durations: [9000], scripts: [LIVE_UNMARKED, LIVE_UNMARKED] });
     const r = await create(h);
@@ -545,12 +554,39 @@ describe('Delivery Tags on re-voice', () => {
     expect(h.calls.voice).toHaveLength(0);
   });
 
-  it('refuses Latin text with SCRIPT_NOT_ARABIC', async () => {
+  it('accepts Latin words in an edit, such as the brand name RUMI', async () => {
     const h = await start({ durations: [9000] });
-    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: 'جرّبها RUMI هلق', dialect: 'levantine', voice_id: VOICE });
+    const edited = LIVE_SCRIPT.replace('رومي', 'RUMI');
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: edited, dialect: 'levantine', voice_id: VOICE });
+    expect(r.status).toBe(201);
+    expect(h.calls.voice).toEqual([edited]);
+  });
+
+  it('refuses stray brackets with SCRIPT_STRAY_BRACKETS, before any voicing', async () => {
+    const h = await start({ durations: [9000] });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: 'جرّبها [softly هلق', dialect: 'levantine', voice_id: VOICE });
     expect(r.status).toBe(422);
-    expect(r.body.error).toMatchObject({ code: 'SCRIPT_NOT_ARABIC', found: ['RUMI'] });
+    expect(r.body.error).toMatchObject({ code: 'SCRIPT_STRAY_BRACKETS', found: ['['] });
     expect(h.calls.voice).toHaveLength(0);
+  });
+
+  it('refuses a Script with no Arabic with SCRIPT_NO_ARABIC', async () => {
+    const h = await start({ durations: [9000] });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: '[softly] RUMI', dialect: 'levantine', voice_id: VOICE });
+    expect(r.status).toBe(422);
+    expect(r.body.error.code).toBe('SCRIPT_NO_ARABIC');
+    expect(h.calls.voice).toHaveLength(0);
+  });
+
+  it('picks the refusal by code, not by the order of the issues', async () => {
+    const h = await start({ durations: [9000] });
+    // No Arabic AND a stray bracket AND an unknown tag: the tag is named first, the rest ride along in issues.
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: 'RUMI [ [wisper]', dialect: 'levantine', voice_id: VOICE });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatchObject({ code: 'UNKNOWN_DELIVERY_TAG', tags: ['[wisper]'] });
+    expect(r.body.error.issues.map((i: { code: string }) => i.code).sort()).toEqual(['SCRIPT_NO_ARABIC', 'SCRIPT_STRAY_BRACKETS', 'UNKNOWN_DELIVERY_TAG']);
+    const r2 = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: 'RUMI [', dialect: 'levantine', voice_id: VOICE });
+    expect(r2.body.error).toMatchObject({ code: 'SCRIPT_STRAY_BRACKETS', found: ['['] });
   });
 
   it('does not hold a user edit to the product-noun rule: the user judges their own marks', async () => {
@@ -843,7 +879,9 @@ describe('draft routes in the OpenAPI spec', () => {
     expect(revoice.requestBody.content['application/json'].schema.properties).toHaveProperty('product_details');
     expect(create.responses['422'].description).toContain('SCRIPT_CHECK_FAILED');
     expect(revoice.responses['422'].description).toContain('UNKNOWN_DELIVERY_TAG');
-    expect(revoice.responses['422'].description).toContain('SCRIPT_NOT_ARABIC');
+    expect(revoice.responses['422'].description).toContain('SCRIPT_STRAY_BRACKETS');
+    expect(revoice.responses['422'].description).toContain('SCRIPT_NO_ARABIC');
+    expect(JSON.stringify(spec)).not.toContain('SCRIPT_NOT_ARABIC');
     const err = (spec.schemas.DraftError as any).properties.error.properties;
     for (const f of ['tags', 'allowed', 'found', 'issues', 'script']) expect(err).toHaveProperty(f);
   });

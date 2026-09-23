@@ -1,6 +1,7 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 //
-// The Script validator (ADR 0002): Arabic text plus allowed Delivery Tags, and
+// The Script validator (ADR 0002): allowed Delivery Tags only, Arabic-only
+// generated Scripts (an edit may carry a Latin brand name), and
 // Targeted Diacritics on product terms and on words with a common second
 // reading. The fixture is the Script from the first live Product Hero render
 // (RUMI Royal Rituals, Levantine), which sounded right.
@@ -23,10 +24,18 @@ describe('scriptTextIssues (every Script)', () => {
     expect(issues).toEqual([expect.objectContaining({ code: 'UNKNOWN_DELIVERY_TAG', found: ['[wisper]'] })]);
   });
 
-  it('refuses Latin text and stray brackets outside tags', () => {
-    expect(scriptTextIssues('جرّبها RUMI هلق')).toEqual([expect.objectContaining({ code: 'SCRIPT_NOT_ARABIC', found: ['RUMI'] })]);
-    expect(codes(scriptTextIssues('جرّبها [softly هلق'))).toEqual(['SCRIPT_NOT_ARABIC']);
-    expect(codes(scriptTextIssues('[softly]'))).toEqual(['SCRIPT_NOT_ARABIC']);
+  it('accepts Latin words such as a brand name (a user may type RUMI)', () => {
+    expect(scriptTextIssues(LIVE_SCRIPT.replace('رومي', 'RUMI'))).toEqual([]);
+  });
+
+  it('refuses stray brackets outside tags, naming them', () => {
+    expect(scriptTextIssues('جرّبها [softly هلق')).toEqual([expect.objectContaining({ code: 'SCRIPT_STRAY_BRACKETS', found: ['['] })]);
+    expect(scriptTextIssues('جرّبها ]] هلق [')).toEqual([expect.objectContaining({ code: 'SCRIPT_STRAY_BRACKETS', found: [']', '['] })]);
+  });
+
+  it('refuses a Script with no Arabic to speak', () => {
+    expect(codes(scriptTextIssues('[softly]'))).toEqual(['SCRIPT_NO_ARABIC']);
+    expect(codes(scriptTextIssues('Try RUMI tonight'))).toEqual(['SCRIPT_NO_ARABIC']);
   });
 });
 
@@ -94,6 +103,12 @@ describe('generatedScriptIssues (Targeted Diacritics)', () => {
   it('does not count a hamza that is part of a letter as a mark, even written decomposed', () => {
     // ا + U+0654 is just أ: the word is still bare.
     expect(codes(generatedScriptIssues('عطر بالا\u0654مبر', ['أمبر']))).toEqual(['WORD_NOT_MARKED']);
+  });
+
+  it('keeps a generated Script Arabic-only: names are written in Arabic letters as they are said', () => {
+    expect(generatedScriptIssues(LIVE_SCRIPT.replace('رومي', 'RUMI'), ['جِلد', 'مِسك'])).toEqual([
+      expect.objectContaining({ code: 'SCRIPT_LATIN_TEXT', found: ['RUMI'] }),
+    ]);
   });
 
   it('still applies the text rules', () => {

@@ -4,8 +4,16 @@
  * What a Script must look like before anyone pays to voice it (ADR 0002).
  *
  * Every Script (generated or edited by the user):
- *   - is Arabic text plus allowed Delivery Tags only: no other bracketed text
- *     (a typo like [wisper] would be spoken aloud) and no Latin letters.
+ *   - carries no bracketed text but allowed Delivery Tags (a typo like
+ *     [wisper] would be spoken aloud), and no stray [ or ];
+ *   - has Arabic text to speak.
+ *
+ * A generated Script is also Arabic-only: no Latin letters. The writer is told
+ * to write names in Arabic letters as they are said (رومي for RUMI), which is
+ * how the live Script that sounded right was written, and a Latin word in the
+ * middle of Arabic makes the voice switch language. A user's edit MAY carry a
+ * Latin word, such as the brand as they spell it: they hear the result before
+ * anything renders.
  *
  * A generated Script also has Targeted Diacritics:
  *   - every product term the writer reports — the words it used for the
@@ -25,16 +33,22 @@
  * them. Loanwords with a single reading (برغموت) may stay plain, as they did
  * in the live Script that sounded right.
  *
- * A user's edited Script gets only the first rule: the user is the judge of
- * their own marks, and there is no writer to report terms.
+ * A user's edited Script gets only the rules for every Script: the user is the
+ * judge of their own marks, and there is no writer to report terms.
  */
 
 import { bracketedSegments, unknownDeliveryTagMessage, unknownDeliveryTags } from '@agentmedia/schema';
 
 export interface ScriptIssue {
-  code: 'UNKNOWN_DELIVERY_TAG' | 'SCRIPT_NOT_ARABIC' | 'PRODUCT_TERM_MISSING' | 'WORD_NOT_MARKED';
+  code:
+    | 'UNKNOWN_DELIVERY_TAG'
+    | 'SCRIPT_STRAY_BRACKETS'
+    | 'SCRIPT_NO_ARABIC'
+    | 'SCRIPT_LATIN_TEXT'
+    | 'PRODUCT_TERM_MISSING'
+    | 'WORD_NOT_MARKED';
   message: string;
-  /** The offending tags, Latin text or words, as written. */
+  /** The offending tags, brackets, Latin words or Arabic words, as written. */
   found: string[];
 }
 
@@ -74,32 +88,35 @@ const LATIN = /[A-Za-z\u00C0-\u024F]+/g;
 /** Letters that may be attached in front of a word: و/ف, then ب/ل/ك, then the article. */
 const PROCLITICS = /^(?:[وف])?(?:[بلك])?(?:ال|ل)?$/;
 
-// ── Arabic text plus allowed Delivery Tags ──────────────────────────────────
+// ── Delivery Tags, brackets, Arabic ─────────────────────────────────────────
 
-/** Issues with any Script: unknown bracketed tags, Latin letters, stray brackets, no Arabic. */
+/** The Script with every bracketed segment (allowed or not) blanked out. */
+function withoutBracketed(script: string): string {
+  let rest = script;
+  for (const seg of bracketedSegments(script).reverse()) rest = rest.slice(0, seg.start) + ' ' + rest.slice(seg.end);
+  return rest;
+}
+
+/**
+ * Issues with any Script, generated or edited: unknown bracketed tags, stray
+ * brackets, no Arabic to speak. Latin words are allowed here (a user may type
+ * the brand as RUMI); generatedScriptIssues refuses them in generated Scripts.
+ */
 export function scriptTextIssues(script: string): ScriptIssue[] {
   const issues: ScriptIssue[] = [];
   const unknown = unknownDeliveryTags(script);
-  if (unknown.length) {
+  if (unknown.length) issues.push({ code: 'UNKNOWN_DELIVERY_TAG', message: unknownDeliveryTagMessage(unknown), found: unknown });
+  const rest = withoutBracketed(script);
+  const stray = [...new Set(rest.match(/[[\]]/g) ?? [])];
+  if (stray.length) {
     issues.push({
-      code: 'UNKNOWN_DELIVERY_TAG',
-      message: unknownDeliveryTagMessage(unknown),
-      found: unknown,
+      code: 'SCRIPT_STRAY_BRACKETS',
+      message: `The Script has a stray ${stray.join(' and ')}; square brackets may only hold a Delivery Tag, like [softly]. Close the tag or remove the bracket.`,
+      found: stray,
     });
   }
-  // What is left once every bracketed segment is gone must be Arabic.
-  let rest = script;
-  for (const seg of bracketedSegments(script).reverse()) rest = rest.slice(0, seg.start) + ' ' + rest.slice(seg.end);
-  const latin = rest.match(LATIN) ?? [];
-  const stray = /[[\]]/.test(rest) ? ['[ or ]'] : [];
-  if (latin.length || stray.length || !ARABIC_LETTER.test(rest)) {
-    issues.push({
-      code: 'SCRIPT_NOT_ARABIC',
-      message: latin.length || stray.length
-        ? `The Script must be Arabic text and Delivery Tags only; found ${[...latin, ...stray].join(', ')}. Write names in Arabic letters as they are said.`
-        : 'The Script has no Arabic text to speak.',
-      found: [...latin, ...stray],
-    });
+  if (!ARABIC_LETTER.test(rest)) {
+    issues.push({ code: 'SCRIPT_NO_ARABIC', message: 'The Script has no Arabic text to speak.', found: [] });
   }
   return issues;
 }
@@ -153,11 +170,20 @@ function occurrences(script: string, term: string): Array<{ text: string; marked
 }
 
 /**
- * Issues with a Script the writer generated: the text rules, then Targeted
- * Diacritics on the writer's product terms and on HOMOGRAPHS.
+ * Issues with a Script the writer generated: the rules for every Script, no
+ * Latin letters, then Targeted Diacritics on the writer's product terms and on
+ * HOMOGRAPHS.
  */
 export function generatedScriptIssues(script: string, productTerms: readonly string[]): ScriptIssue[] {
   const issues = scriptTextIssues(script);
+  const latin = withoutBracketed(script).match(LATIN) ?? [];
+  if (latin.length) {
+    issues.push({
+      code: 'SCRIPT_LATIN_TEXT',
+      message: `The Script must be Arabic text and Delivery Tags only; found ${latin.join(', ')}. Write names in Arabic letters as they are said.`,
+      found: latin,
+    });
+  }
   const missing: string[] = [];
   const unmarked = new Set<string>();
   for (const term of productTerms) {

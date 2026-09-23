@@ -163,13 +163,13 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
         'createProductHeroDraft',
         'Product Hero draft: write a Script (plain dialect spelling, Targeted Diacritics, Delivery Tags) that sells the Product Details, in a Dialect, and voice it. Free (no credits).',
         bodySchema(CreateDraftInputSchema, 'create_draft_input'),
-        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, non-Arabic text) — carries the Script and issues, to fix in the editor and re-voice; DIALECT_NOT_AVAILABLE; BRIEF_REFUSED; ${voiceRefused}`,
+        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, stray brackets, Latin letters) — carries the Script and issues, to fix in the editor and re-voice; DIALECT_NOT_AVAILABLE; BRIEF_REFUSED; ${voiceRefused}`,
       ),
       '/v1/drafts/product-hero/revoice': post(
         'revoiceProductHeroDraft',
         `Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief, Product Details and Dialect carry over. The Script may carry Delivery Tags: ${tagList}.`,
         bodySchema(RevoiceDraftInputSchema, 'revoice_draft_input'),
-        `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_NOT_ARABIC: Latin letters or stray brackets (carries found); DIALECT_MISMATCH (dialect differs from the parent's); DIALECT_NOT_AVAILABLE; ${voiceRefused}`,
+        `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_STRAY_BRACKETS: a [ or ] outside a Delivery Tag (carries found); SCRIPT_NO_ARABIC: no Arabic text to speak (Latin words such as a brand name are allowed in an edit); DIALECT_MISMATCH (dialect differs from the parent's); DIALECT_NOT_AVAILABLE; ${voiceRefused}`,
       ),
       '/v1/drafts/{id}': {
         get: {
@@ -252,11 +252,11 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
               voice_id: { type: 'string', description: 'On VOICE_NOT_APPROVED: the refused Voice.' },
               tags: { type: 'array', items: { type: 'string' }, description: 'On UNKNOWN_DELIVERY_TAG: the refused tags, as written (e.g. "[wisper]").' },
               allowed: { type: 'array', items: { type: 'string' }, description: 'On UNKNOWN_DELIVERY_TAG: the allowed Delivery Tags.' },
-              found: { type: 'array', items: { type: 'string' }, description: 'On SCRIPT_NOT_ARABIC: the non-Arabic text found.' },
+              found: { type: 'array', items: { type: 'string' }, description: 'On SCRIPT_STRAY_BRACKETS: the stray brackets found.' },
               available: { type: 'array', items: { type: 'string' } },
               issues: {
                 type: 'array',
-                description: 'INVALID_INPUT: zod issues. SCRIPT_CHECK_FAILED / UNKNOWN_DELIVERY_TAG / SCRIPT_NOT_ARABIC: Script check issues ({ code, message, found }).',
+                description: 'INVALID_INPUT: zod issues. SCRIPT_CHECK_FAILED / UNKNOWN_DELIVERY_TAG / SCRIPT_STRAY_BRACKETS / SCRIPT_NO_ARABIC: Script check issues ({ code, message, found }).',
                 items: { type: 'object' },
               },
             },
