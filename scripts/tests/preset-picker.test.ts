@@ -110,7 +110,8 @@ describe('defaultPreset', () => {
   it('picks a Preset with a web flow, keeping the current one', () => {
     const op = parsePresets(OPERATOR_BODY)!;
     assert.equal(defaultPreset(op, null)!.slug, 'product_hero');
-    assert.equal(defaultPreset(op, 'hands_on')!.slug, 'product_hero'); // listed, but no web flow yet
+    assert.equal(defaultPreset(op, 'hands_on')!.slug, 'hands_on'); // Hands-on has a web flow (#18)
+    assert.equal(defaultPreset(op, 'no_web_flow_yet')!.slug, 'product_hero'); // listed, but no web flow
     assert.equal(defaultPreset(parsePresets({ presets: [] }), null), null);
   });
 });

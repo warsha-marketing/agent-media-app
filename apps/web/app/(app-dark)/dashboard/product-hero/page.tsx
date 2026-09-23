@@ -11,7 +11,9 @@
  * this page and renders with its own skill (the picker's `skill`). Reaction adds
  * only its own inputs — the saved character who reacts, their gender and the
  * hijab option (components/reaction-character-picker.tsx, lib/reaction-flow.ts)
- * — which join the render request.
+ * — which join the render request. Hands-on (#18) adds whose hands and the
+ * setting (components/hands-on-inputs.tsx, lib/hands-on-flow.ts), shown from
+ * the server's pick from the Product Details until the user changes them.
  *
  * The flow starts with the Preset picker (GET /v1/presets): each Preset with
  * every Dialect marked available (a Qualified Preset) or coming soon. Only
@@ -88,6 +90,8 @@ import {
 import { PHOTO_ACCEPT, uploadProductPhoto } from '@/lib/product-hero-upload';
 import { RenderPanel, Stepper } from '@/components/product-hero-render';
 import { ReactionCharacterPicker } from '@/components/reaction-character-picker';
+import { HandsOnInputs } from '@/components/hands-on-inputs'; // #18
+import { HANDS_ON_PRESET, NO_HANDS_ON_CHOICE, handsOnInputs, handsOnView, type HandsOnChoice } from '@/lib/hands-on-flow';
 import {
   REACTION_PRESET,
   emptyReactionPick,
@@ -220,6 +224,9 @@ export default function ProductHeroPage() {
 
   const preset = picker?.presets.find((p) => p.slug === presetSlug) ?? null;
   const isReaction = preset?.slug === REACTION_PRESET;
+  const isHandsOn = preset?.slug === HANDS_ON_PRESET;
+  // Hands-on (#18): whose hands and the setting, only once the user changes them.
+  const [handsOn, setHandsOn] = useState<HandsOnChoice>(NO_HANDS_ON_CHOICE);
   const choices = dialectChoices(preset, picker?.operator ?? false);
 
   // Reaction (#19): the saved character who reacts, their gender, the hijab option.
@@ -525,7 +532,7 @@ export default function ProductHeroPage() {
   // The Preset's skill and own fields (Reaction: character, gender, hijab) are
   // part of the request; a Reaction pick that is not complete cannot be priced.
   const skill = preset?.skill || undefined;
-  const presetInputs = isReaction ? reactionInputs(reactionPick) : null;
+  const presetInputs = isReaction ? reactionInputs(reactionPick) : isHandsOn ? handsOnInputs(handsOn) : null;
   const presetInputsKey = JSON.stringify(presetInputs);
   const choice = useMemo<RenderChoice | null>(
     () => {
@@ -964,6 +971,15 @@ export default function ProductHeroPage() {
             </button>
           </div>
         </section>
+      ) : null}
+
+      {isHandsOn && draft ? (
+        <HandsOnInputs
+          view={handsOnView(handsOn, 'quote' in render ? render.quote?.presetInputs : null)}
+          disabled={renderLocked}
+          onHandGender={(g) => setHandsOn((cur) => ({ ...cur, handGender: g }))}
+          onSetting={(s) => setHandsOn((cur) => ({ ...cur, setting: s }))}
+        />
       ) : null}
 
       <RenderPanel
