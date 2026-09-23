@@ -391,3 +391,49 @@ export function currentStep(s: { hasPhoto: boolean; hasDraft: boolean; scriptEdi
   if (s.scriptEdited) return 'Script';
   return s.hasPhoto ? 'Confirm' : 'Photo';
 }
+
+// ── Delivery Tags in the Script editor ─────────────────────────────────────
+
+/**
+ * The allowed Delivery Tags (CONTEXT.md, ADR 0002): bracketed directions such
+ * as [softly] that eleven_v3 treats as how to speak, never as words. The list
+ * lives in @agentmedia/schema (DELIVERY_TAGS); this is a mirror, because this
+ * file takes no imports, held equal to it by scripts/tests/delivery-tags-parity.test.ts.
+ */
+export const DELIVERY_TAGS = [
+  'softly',
+  'whispers',
+  'warmly',
+  'excited',
+  'confidently',
+  'laughs',
+  'sighs',
+  'curious',
+  'calm',
+  'cheerfully',
+] as const;
+
+/**
+ * Bracketed text in a Script that is not an allowed Delivery Tag, as written
+ * (e.g. "[wisper]"). The server refuses these on re-voice (UNKNOWN_DELIVERY_TAG);
+ * the editor warns first so a typo is not sent at all.
+ */
+export function unknownDeliveryTags(script: string): string[] {
+  const allowed = new Set<string>(DELIVERY_TAGS);
+  const out: string[] = [];
+  for (const m of script.matchAll(/\[([^[\]\n]*)\]/g)) {
+    if (!allowed.has(m[1].trim().toLowerCase())) out.push(m[0]);
+  }
+  return out;
+}
+
+/** `script` with `[tag] ` inserted at the caret (or over the selection), and where the caret goes next. */
+export function insertDeliveryTag(script: string, tag: string, selStart: number, selEnd: number): { script: string; caret: number } {
+  const start = Math.max(0, Math.min(selStart, script.length));
+  const end = Math.max(start, Math.min(selEnd, script.length));
+  const before = script.slice(0, start);
+  const pad = before && !/\s$/.test(before) ? ' ' : '';
+  const insert = `${pad}[${tag}] `;
+  const after = script.slice(end).replace(/^\s+/, '');
+  return { script: before + insert + after, caret: before.length + insert.length };
+}

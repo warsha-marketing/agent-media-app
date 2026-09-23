@@ -3,7 +3,10 @@
 /**
  * Product Hero draft — the cheap phase before the cost gate (ADR 0001).
  *
- *   Brief + Dialect → a writer (Claude) writes a fully diacritized Script in that Dialect
+ *   Brief + Product Details + Dialect
+ *                   → a writer (Claude) writes a Script in that Dialect: plain dialect
+ *                     spelling with Targeted Diacritics and a few Delivery Tags (ADR 0002)
+ *                   → the Script is checked (script-check.ts); one rewrite if it fails
  *                   → a Voice speaks it, with character alignment
  *                   → the duration is MEASURED from the audio bytes
  *                   → 5–15 s of speech is a draft; anything else is refused.
@@ -24,11 +27,19 @@
  * is refused with VOICE_NOT_APPROVED before any provider is paid. The draft
  * stores which catalog Voice spoke it.
  *
+ * Product Details are the facts the Script sells (name, notes, ingredients,
+ * benefits); they are stored on the draft and carried over on re-voice.
+ * Delivery Tags are voiced only by a TTS model that honours them (eleven_v3);
+ * with any other model they are stripped before voicing, and the draft stores
+ * the Script exactly as it was spoken.
+ *
  * Every provider is injected (DraftDeps) so the route tests run on fakes; the
  * real ones live in ./providers.ts.
  */
 
 import { z } from 'zod';
+import { DELIVERY_TAGS, modelHonoursDeliveryTags, stripDeliveryTags } from '@agentmedia/schema';
+import { generatedScriptIssues, scriptTextIssues, type ScriptIssue } from './script-check.js';
 import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
 
 // ── Vocabulary (CONTEXT.md) ──────────────────────────────────────────────────
@@ -49,12 +60,16 @@ export const MIN_SPEECH_MS = 5_000;
 export const MAX_SPEECH_MS = 15_000;
 
 export const BRIEF_MAX_CHARS = 2_000;
+/** Room for a full product page description (name, notes, ingredients, benefits). */
+export const PRODUCT_DETAILS_MAX_CHARS = 3_000;
 /** Well above 15 s of speech (~40 words), well below a runaway TTS bill. */
 export const SCRIPT_MAX_CHARS = 600;
 
 export const CreateDraftInputSchema = z
   .object({
     brief: z.string().trim().min(1, 'brief is required').max(BRIEF_MAX_CHARS),
+    /** Optional: the facts the Script sells (name, description, notes or ingredients, benefits). */
+    product_details: z.string().trim().max(PRODUCT_DETAILS_MAX_CHARS).optional(),
     dialect: DialectSchema,
     /** An Approved Voice of `dialect`, from GET /v1/voices. */
     voice_id: z.string().uuid(),
@@ -71,6 +86,8 @@ export const RevoiceDraftInputSchema = z
     parent_draft_id: z.string().uuid().optional(),
     /** Only used when there is no parent (a first draft that was refused). */
     brief: z.string().trim().max(BRIEF_MAX_CHARS).optional(),
+    /** Only used when there is no parent; with one, the parent's Product Details carry over. */
+    product_details: z.string().trim().max(PRODUCT_DETAILS_MAX_CHARS).optional(),
     /** An Approved Voice of `dialect`. Optional with a parent: the parent's Voice is reused. */
     voice_id: z.string().uuid().optional(),
   })
@@ -78,7 +95,11 @@ export const RevoiceDraftInputSchema = z
   .refine((v) => v.voice_id || v.parent_draft_id, { message: 'voice_id is required without a parent_draft_id', path: ['voice_id'] });
 export type RevoiceDraftInput = z.infer<typeof RevoiceDraftInputSchema>;
 
-/** Character-level alignment of the voiced Script, stored verbatim for Captions (#6). */
+/**
+ * Character-level alignment of the voiced Script, stored verbatim for Captions (#10).
+ * It includes the Delivery Tags' characters: strip them with
+ * stripDeliveryTagsFromAlignment (@agentmedia/schema) before timing Captions.
+ */
 export interface Alignment {
   characters: string[];
   character_start_times_seconds: number[];
@@ -91,6 +112,8 @@ export interface DraftRow {
   preset: typeof PRESET;
   dialect: Dialect;
   brief: string | null;
+  /** The facts the Script sells; null when none were given. */
+  product_details: string | null;
   script: string;
   script_source: 'generated' | 'edited';
   parent_draft_id: string | null;
@@ -132,9 +155,26 @@ export interface SpokenScript {
 
 export interface WriteScriptInput {
   brief: string;
+  /** The facts to sell; null = the Brief is all there is. */
+  product_details: string | null;
   dialect: Dialect;
-  /** Set on the one rewrite: what the last Script measured and which way to go. */
+  /** Whether the voice honours Delivery Tags (eleven_v3); without, the writer adds none. */
+  delivery_tags: boolean;
+  /** Set on the duration rewrite: what the last Script measured and which way to go. */
   previous?: { script: string; duration_ms: number; direction: 'shorten' | 'lengthen' };
+  /** Set on the check rewrite: the last Script and why the Script check refused it. */
+  rejected?: { script: string; reasons: string[] };
+}
+
+export interface WrittenScript {
+  script: string;
+  /**
+   * The words the writer used in the Script for the Product Details' nouns,
+   * notes and ingredients that a voice could misread, as written in the Script
+   * (with their marks). The Script check holds each one to Targeted Diacritics.
+   */
+  product_terms?: string[];
+  model: string;
 }
 
 export interface VoicedScript {
@@ -154,8 +194,10 @@ export interface SignedAudioUrl {
 }
 
 export interface DraftDeps {
-  writeScript(input: WriteScriptInput): Promise<{ script: string; model: string }>;
+  writeScript(input: WriteScriptInput): Promise<WrittenScript>;
   voiceScript(input: SpokenScript): Promise<VoicedScript>;
+  /** The TTS model voiceScript speaks with: decides whether Delivery Tags are voiced or stripped. */
+  ttsModel: string;
   /** Store the audio as a PRIVATE object; returns only its key. */
   storeAudio(input: { userId: string; draftId: string; audio: Buffer; mime: string }): Promise<{ key: string }>;
   /** Mint a short-lived GET URL for a stored audio key. Call only for the owner. */
@@ -272,20 +314,26 @@ export function mp3DurationMs(buf: Buffer): number {
   return Math.round(seconds * 1000);
 }
 
-// ── Diacritics sanity check on what the writer returned ──────────────────────
+// ── The Script check ─────────────────────────────────────────────────────────
 
-const ARABIC_LETTER = /[ء-ي]/g;
-const HARAKA = /[ً-ْ]/g;
+/** A Script as the draft's voice will speak it: Delivery Tags only where the model honours them. */
+function forVoice(deps: DraftDeps, script: string): string {
+  return modelHonoursDeliveryTags(deps.ttsModel) ? script : stripDeliveryTags(script).trim();
+}
 
-/**
- * True when a Script looks fully diacritized. Long vowels (ا و ي) and a few
- * letters legitimately carry no mark, so "full" is not one mark per letter;
- * fewer than ~0.4 marks per letter means Claude skipped the تشكيل.
- */
-export function looksDiacritized(script: string): boolean {
-  const letters = script.match(ARABIC_LETTER)?.length ?? 0;
-  const marks = script.match(HARAKA)?.length ?? 0;
-  return letters > 0 && marks / letters >= 0.4;
+/** A user's Script that is not Arabic text plus allowed Delivery Tags: refused before any voicing. */
+function refuseEditedScript(issues: ScriptIssue[]): DraftError {
+  const unknown = issues.find((i) => i.code === 'UNKNOWN_DELIVERY_TAG');
+  if (unknown) {
+    return new DraftError(
+      422,
+      'UNKNOWN_DELIVERY_TAG',
+      `${unknown.message} Use one of the Delivery Tags ${DELIVERY_TAGS.map((t) => `[${t}]`).join(' ')}, or remove it.`,
+      { tags: unknown.found, allowed: [...DELIVERY_TAGS], issues },
+    );
+  }
+  const notArabic = issues[0];
+  return new DraftError(422, 'SCRIPT_NOT_ARABIC', notArabic.message, { found: notArabic.found, issues });
 }
 
 // ── The two draft operations ─────────────────────────────────────────────────
@@ -313,7 +361,7 @@ function assertInBand(take: VoiceTake): void {
 async function persist(
   deps: DraftDeps,
   userId: string,
-  fields: Pick<NewDraftRow, 'brief' | 'script_source' | 'parent_draft_id' | 'script_model'>,
+  fields: Pick<NewDraftRow, 'brief' | 'product_details' | 'script_source' | 'parent_draft_id' | 'script_model'>,
   take: VoiceTake,
 ): Promise<DraftRow> {
   const id = deps.newId();
@@ -337,14 +385,42 @@ async function persist(
   });
 }
 
-/** Ask the writer for a Script, check its تشكيل, then voice and measure it. */
-async function writeAndVoice(deps: DraftDeps, request: WriteScriptInput, voice: VoiceRow): Promise<VoiceTake & { model: string }> {
+/** One writer call, trimmed, with its Script as the voice will speak it. */
+async function write(deps: DraftDeps, request: WriteScriptInput): Promise<WrittenScript> {
   const written = await deps.writeScript(request);
-  const script = written.script.trim();
-  if (!script || script.length > SCRIPT_MAX_CHARS || !looksDiacritized(script)) {
-    throw new DraftError(502, 'SCRIPT_GENERATION_FAILED', 'Could not write a diacritized Script for this Brief. Try again or rephrase the Brief.');
+  const script = forVoice(deps, written.script.trim());
+  if (!script || script.length > SCRIPT_MAX_CHARS) {
+    throw new DraftError(502, 'SCRIPT_GENERATION_FAILED', 'Could not write a Script for this Brief. Try again or rephrase the Brief.');
   }
-  const take = await voiceAndMeasure(deps, { script, dialect: request.dialect, voice: voiceRef(voice) }, voice.id);
+  return { ...written, script, product_terms: written.product_terms ?? [] };
+}
+
+/**
+ * Ask the writer for a Script and hold it to the Script check (Arabic plus
+ * allowed Delivery Tags, Targeted Diacritics). A refused Script gets ONE
+ * rewrite told why; a second refusal goes back to the user with the Script and
+ * the reasons, so they can fix it in the editor and re-voice.
+ */
+async function writeChecked(deps: DraftDeps, request: WriteScriptInput): Promise<WrittenScript> {
+  let written = await write(deps, request);
+  let issues = generatedScriptIssues(written.script, written.product_terms ?? []);
+  if (issues.length === 0) return written;
+  written = await write(deps, { ...request, rejected: { script: written.script, reasons: issues.map((i) => i.message) } });
+  issues = generatedScriptIssues(written.script, written.product_terms ?? []);
+  if (issues.length === 0) return written;
+  throw new DraftError(
+    422,
+    'SCRIPT_CHECK_FAILED',
+    `The written Script did not pass the Script check: ${issues.map((i) => i.message).join(' ')} ` +
+      'Fix it in the editor and re-voice, or add Product Details and write again.',
+    { script: written.script, issues },
+  );
+}
+
+/** Write a checked Script, then voice and measure it. */
+async function writeAndVoice(deps: DraftDeps, request: WriteScriptInput, voice: VoiceRow): Promise<VoiceTake & { model: string }> {
+  const written = await writeChecked(deps, request);
+  const take = await voiceAndMeasure(deps, { script: written.script, dialect: request.dialect, voice: voiceRef(voice) }, voice.id);
   return { ...take, model: written.model };
 }
 
@@ -356,7 +432,13 @@ async function writeAndVoice(deps: DraftDeps, request: WriteScriptInput, voice: 
 export async function createDraftFromBrief(deps: DraftDeps, userId: string, input: CreateDraftInput): Promise<DraftRow> {
   assertLive(input.dialect);
   const voice = await approvedVoice(deps, input.voice_id, input.dialect);
-  const request: WriteScriptInput = { brief: input.brief, dialect: input.dialect };
+  const productDetails = input.product_details?.trim() || null;
+  const request: WriteScriptInput = {
+    brief: input.brief,
+    product_details: productDetails,
+    dialect: input.dialect,
+    delivery_tags: modelHonoursDeliveryTags(deps.ttsModel),
+  };
   let take = await writeAndVoice(deps, request, voice);
   if (!inBand(take.durationMs)) {
     take = await writeAndVoice(deps, {
@@ -371,6 +453,7 @@ export async function createDraftFromBrief(deps: DraftDeps, userId: string, inpu
   assertInBand(take);
   return persist(deps, userId, {
     brief: input.brief,
+    product_details: productDetails,
     script_source: 'generated',
     parent_draft_id: null,
     script_model: take.model,
@@ -379,12 +462,18 @@ export async function createDraftFromBrief(deps: DraftDeps, userId: string, inpu
 
 /**
  * The user's (edited) Script, voiced verbatim, as a new draft. With a parent,
- * the Brief and Dialect are the parent's: a request naming another Dialect is
- * refused rather than silently voiced in the wrong one. Without a voice_id the
- * parent's Voice speaks again, provided it is still an Approved Voice.
+ * the Brief, Product Details and Dialect are the parent's: a request naming
+ * another Dialect is refused rather than silently voiced in the wrong one.
+ * Without a voice_id the parent's Voice speaks again, provided it is still an
+ * Approved Voice.
+ *
+ * The user may add marks and Delivery Tags anywhere; the Script must still be
+ * Arabic text plus allowed Delivery Tags, so a typo like [wisper] is refused
+ * (UNKNOWN_DELIVERY_TAG) instead of being spoken aloud.
  */
 export async function revoiceDraft(deps: DraftDeps, userId: string, input: RevoiceDraftInput): Promise<DraftRow> {
   let brief = input.brief?.trim() || null;
+  let productDetails = input.product_details?.trim() || null;
   let voiceId = input.voice_id ?? null;
   if (input.parent_draft_id) {
     const parent = await deps.repo.getOwned(input.parent_draft_id, userId);
@@ -399,17 +488,21 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
       );
     }
     brief = parent.brief;
+    productDetails = parent.product_details ?? null;
     voiceId ??= parent.voice_catalog_id;
   }
   assertLive(input.dialect);
+  const issues = scriptTextIssues(input.script);
+  if (issues.length) throw refuseEditedScript(issues);
   if (!voiceId) {
     throw new DraftError(400, 'VOICE_REQUIRED', 'Pick an Approved Voice for this Dialect (voice_id) and re-voice.');
   }
   const voice = await approvedVoice(deps, voiceId, input.dialect);
-  const take = await voiceAndMeasure(deps, { script: input.script, dialect: input.dialect, voice: voiceRef(voice) }, voice.id);
+  const take = await voiceAndMeasure(deps, { script: forVoice(deps, input.script), dialect: input.dialect, voice: voiceRef(voice) }, voice.id);
   assertInBand(take);
   return persist(deps, userId, {
     brief,
+    product_details: productDetails,
     script_source: 'edited',
     parent_draft_id: input.parent_draft_id ?? null,
     script_model: null,
@@ -426,6 +519,7 @@ export function toDraftView(row: DraftRow, audio: SignedAudioUrl) {
     preset: row.preset,
     dialect: row.dialect,
     brief: row.brief,
+    product_details: row.product_details ?? null,
     script: row.script,
     script_source: row.script_source,
     parent_draft_id: row.parent_draft_id,

@@ -4,9 +4,11 @@
  * Product Hero draft routes (#4). The logic lives in drafts/product-hero-draft.ts;
  * this file is only HTTP: validate, call, map DraftError to a status.
  *
- *   POST /v1/drafts/product-hero          { brief, dialect, voice_id }   → 201 { draft }
+ *   POST /v1/drafts/product-hero          { brief, product_details?,
+ *                                           dialect, voice_id }         → 201 { draft }
  *   POST /v1/drafts/product-hero/revoice  { script, dialect, voice_id?,
- *                                           parent_draft_id?, brief? }   → 201 { draft }
+ *                                           parent_draft_id?, brief?,
+ *                                           product_details? }          → 201 { draft }
  *
  * voice_id is an Approved Voice of the Dialect (GET /v1/voices, #7); anything
  * else is refused with 422 VOICE_NOT_APPROVED before a provider is called.
@@ -37,6 +39,7 @@ import {
   type DraftRow,
 } from '../../drafts/product-hero-draft.js';
 import { isUuid } from '../../lib/uuid.js';
+import { DELIVERY_TAGS } from '@agentmedia/schema';
 
 interface DraftRouteMiddleware {
   generateLimiter: RequestHandler;
@@ -152,20 +155,21 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
     },
   });
   const voiceRefused = 'VOICE_NOT_APPROVED: voice_id is not an Approved Voice of the Dialect (unknown, pending, revoked or another Dialect)';
+  const tagList = DELIVERY_TAGS.map((t) => `[${t}]`).join(' ');
   const outOfBand = `SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG: voiced speech outside ${MIN_SPEECH_MS / 1000}–${MAX_SPEECH_MS / 1000} s (carries action, duration_ms and the Script)`;
   return {
     paths: {
       '/v1/drafts/product-hero': post(
         'createProductHeroDraft',
-        'Product Hero draft: write a diacritized Script for a Brief in a Dialect and voice it. Free (no credits).',
+        'Product Hero draft: write a Script (plain dialect spelling, Targeted Diacritics, Delivery Tags) that sells the Product Details, in a Dialect, and voice it. Free (no credits).',
         bodySchema(CreateDraftInputSchema, 'create_draft_input'),
-        `${outOfBand}; DIALECT_NOT_AVAILABLE; BRIEF_REFUSED; ${voiceRefused}`,
+        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, non-Arabic text) — carries the Script and issues, to fix in the editor and re-voice; DIALECT_NOT_AVAILABLE; BRIEF_REFUSED; ${voiceRefused}`,
       ),
       '/v1/drafts/product-hero/revoice': post(
         'revoiceProductHeroDraft',
-        "Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief and Dialect carry over.",
+        `Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief, Product Details and Dialect carry over. The Script may carry Delivery Tags: ${tagList}.`,
         bodySchema(RevoiceDraftInputSchema, 'revoice_draft_input'),
-        `${outOfBand}; DIALECT_MISMATCH (dialect differs from the parent's); DIALECT_NOT_AVAILABLE; ${voiceRefused}`,
+        `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_NOT_ARABIC: Latin letters or stray brackets (carries found); DIALECT_MISMATCH (dialect differs from the parent's); DIALECT_NOT_AVAILABLE; ${voiceRefused}`,
       ),
       '/v1/drafts/{id}': {
         get: {
@@ -186,7 +190,13 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
           preset: { type: 'string', enum: ['product_hero'] },
           dialect: { type: 'string', enum: [...DIALECTS] },
           brief: { type: ['string', 'null'] },
-          script: { type: 'string', description: 'The diacritized Script that was voiced.' },
+          product_details: { type: ['string', 'null'], description: 'The facts the Script sells (name, notes or ingredients, benefits); carried over on re-voice.' },
+          script: {
+            type: 'string',
+            description:
+              `The Script exactly as voiced: plain dialect spelling with Targeted Diacritics and optional Delivery Tags (${tagList}). ` +
+              'Strip the tags before showing it to viewers or burning Captions (stripDeliveryTags in @agentmedia/schema); the alignment includes the tag characters.',
+          },
           script_source: { type: 'string', enum: ['generated', 'edited'] },
           parent_draft_id: { type: ['string', 'null'], format: 'uuid' },
           voice: {
@@ -236,12 +246,19 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
               duration_ms: { type: 'integer' },
               min_ms: { type: 'integer' },
               max_ms: { type: 'integer' },
-              script: { type: 'string', description: 'On SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG: the Script, to edit and re-voice.' },
+              script: { type: 'string', description: 'On SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG / SCRIPT_CHECK_FAILED: the Script, to edit and re-voice.' },
               dialect: { type: 'string' },
               parent_dialect: { type: 'string' },
               voice_id: { type: 'string', description: 'On VOICE_NOT_APPROVED: the refused Voice.' },
+              tags: { type: 'array', items: { type: 'string' }, description: 'On UNKNOWN_DELIVERY_TAG: the refused tags, as written (e.g. "[wisper]").' },
+              allowed: { type: 'array', items: { type: 'string' }, description: 'On UNKNOWN_DELIVERY_TAG: the allowed Delivery Tags.' },
+              found: { type: 'array', items: { type: 'string' }, description: 'On SCRIPT_NOT_ARABIC: the non-Arabic text found.' },
               available: { type: 'array', items: { type: 'string' } },
-              issues: { type: 'array', items: { type: 'object' } },
+              issues: {
+                type: 'array',
+                description: 'INVALID_INPUT: zod issues. SCRIPT_CHECK_FAILED / UNKNOWN_DELIVERY_TAG / SCRIPT_NOT_ARABIC: Script check issues ({ code, message, found }).',
+                items: { type: 'object' },
+              },
             },
             required: ['code', 'message'],
           },
