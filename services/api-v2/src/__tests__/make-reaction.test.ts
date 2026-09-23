@@ -298,7 +298,7 @@ describe('make_reaction — the Modesty Default', () => {
     const id = seedDraft({ dialect: 'gulf' });
     const q = await call(quoteSkillRoute, OWNER, body(id));
     expect(q.status).toBe(200);
-    expect(q.body.modesty).toEqual({ arms: 'covered', hijab: true });
+    expect((q.body.preset_inputs as Record<string, unknown>).modesty).toEqual({ arms: 'covered', hijab: true });
     const r = await call(runSkillRoute, OWNER, body(id));
     expect(r.status).toBe(202);
     expect(workflowInput().modesty).toEqual({ arms: 'covered', hijab: true });
@@ -312,7 +312,7 @@ describe('make_reaction — the Modesty Default', () => {
   });
 
   it('outside the Gulf the hijab is offered and off by default; a woman may choose it', async () => {
-    expect((await call(quoteSkillRoute, OWNER, body(seedDraft()))).body.modesty).toEqual({ arms: 'covered', hijab: false });
+    expect(((await call(quoteSkillRoute, OWNER, body(seedDraft()))).body.preset_inputs as Record<string, unknown>).modesty).toEqual({ arms: 'covered', hijab: false });
     await call(runSkillRoute, OWNER, body(seedDraft(), { modesty: { hijab: true, arms: 'sleeved' } }));
     expect(workflowInput().modesty).toEqual({ arms: 'sleeved', hijab: true });
   });
@@ -449,7 +449,7 @@ describe('make_reaction in the OpenAPI spec', () => {
     const { paths } = skillRouteOpenApi() as { paths: Record<string, { post: { responses: Record<string, { description: string }> } }> };
     for (const path of ['/v1/skills/{slug}/run', '/v1/skills/{slug}/quote']) {
       for (const [code, { status }] of Object.entries(REACTION_REFUSALS)) {
-        expect(paths[path].post.responses[String(status)]?.description, `${path} ${status}`).toContain(`\`${code}\` (make_reaction)`);
+        expect(paths[path].post.responses[String(status)]?.description, `${path} ${status}`).toMatch(new RegExp(`\`${code}\` \\((make_hands_on, )?make_reaction\\)`));
       }
     }
   });

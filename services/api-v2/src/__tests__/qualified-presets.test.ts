@@ -274,6 +274,8 @@ describe('operator qualification routes', () => {
       // Reaction (#19): in the registry, not reviewed in any Dialect yet.
       expect.objectContaining({ preset: 'reaction', dialect: 'levantine', state: 'not_reviewed', qualified_at: null }),
       expect.objectContaining({ preset: 'reaction', dialect: 'gulf', state: 'not_reviewed', qualified_at: null }),
+      expect.objectContaining({ preset: 'hands_on', dialect: 'levantine', state: 'not_reviewed', qualified_at: null }),
+      expect.objectContaining({ preset: 'hands_on', dialect: 'gulf', state: 'not_reviewed', qualified_at: null }),
     ]);
   });
 
