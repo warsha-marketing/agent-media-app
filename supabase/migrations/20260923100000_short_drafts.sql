@@ -1,7 +1,7 @@
 -- Short drafts (#4) — the draft phase of a Preset Short (ADR 0001).
 --
 -- One row per voiced Script: the Brief it came from, the diacritized Script, the
--- Voice that spoke it, the stored audio, the duration MEASURED from that audio,
+-- Voice that spoke it, the key of the stored audio, the duration MEASURED from that audio,
 -- and ElevenLabs' character-level alignment. The render phase (#5) references a
 -- draft by id and ships exactly this audio, Script and alignment — it never
 -- re-voices. Re-voicing an edited Script inserts a NEW row (parent_draft_id
@@ -11,6 +11,10 @@
 -- really produced and measured, so users get SELECT on their own rows and
 -- nothing else. The only permitted UPDATE is stamping rendered_at once; after
 -- that the row is frozen and cannot be deleted.
+--
+-- The audio is a PRIVATE object: only its key is stored. Clients get a
+-- short-lived signed URL minted per read by api-v2; the render phase reads the
+-- object by key. No public URL is ever persisted.
 
 CREATE TABLE IF NOT EXISTS public.short_drafts (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -27,7 +31,6 @@ CREATE TABLE IF NOT EXISTS public.short_drafts (
   voice_id         text NOT NULL,
   tts_model        text NOT NULL,
   audio_key        text NOT NULL,
-  audio_url        text NOT NULL,
   audio_mime       text NOT NULL,
   -- The duration contract: only 5–15 s of speech is a renderable draft.
   duration_ms      integer NOT NULL CHECK (duration_ms BETWEEN 5000 AND 15000),

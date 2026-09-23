@@ -6,17 +6,19 @@
 //
 // What must hold: the input schema; a draft comes back with Script, playable
 // audio, the duration MEASURED from the audio, and the alignment; re-voicing an
-// edited Script makes a NEW draft; speech outside 5–15 s is refused with a code
-// the UI and agent can act on; and nobody reads a draft they do not own.
+// edited Script makes a NEW draft in the parent's Dialect; speech outside 5–15 s
+// is refused with a code the UI and agent can act on; nobody reads a draft they
+// do not own; and draft audio is private: the owner gets a short-lived signed
+// URL minted at read time, never a public URL or the storage key.
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { registerDraftRoutes } from '../routes/v1/drafts.js';
+import { registerDraftRoutes, draftOpenApi } from '../routes/v1/drafts.js';
 import {
   CreateDraftInputSchema,
   RevoiceDraftInputSchema,
@@ -51,10 +53,14 @@ function alignmentFor(text: string, ms: number): Alignment {
   };
 }
 
+/** Where the bucket would serve objects publicly. Draft audio must never be handed out here. */
+const PUBLIC_PREFIX = 'https://pub.r2.test/';
+const SIGNED_PREFIX = 'https://signed.r2.test/';
+
 interface Harness {
   baseUrl: string;
   rows: DraftRow[];
-  calls: { write: Array<Record<string, unknown>>; voice: string[]; store: string[] };
+  calls: { write: Array<Record<string, unknown>>; voice: string[]; store: string[]; sign: string[] };
   close: () => Promise<void>;
 }
 
@@ -66,7 +72,7 @@ afterEach(async () => {
 /** @param durations ms of speech the fake voice returns, one per voicing, in order. */
 async function start(opts: { durations: number[]; scripts?: string[] }): Promise<Harness> {
   const rows: DraftRow[] = [];
-  const calls = { write: [] as Array<Record<string, unknown>>, voice: [] as string[], store: [] as string[] };
+  const calls = { write: [] as Array<Record<string, unknown>>, voice: [] as string[], store: [] as string[], sign: [] as string[] };
   const durations = [...opts.durations];
   const scripts = [...(opts.scripts ?? [SCRIPT_A, SCRIPT_B])];
   let seq = 0;
@@ -83,6 +89,7 @@ async function start(opts: { durations: number[]; scripts?: string[] }): Promise
         audio: silentMp3(ms),
         mime: 'audio/mpeg',
         alignment: alignmentFor(script, ms),
+        provider: 'fake-voice',
         voiceId: 'voice-test',
         ttsModel: 'eleven_test',
       };
@@ -90,7 +97,14 @@ async function start(opts: { durations: number[]; scripts?: string[] }): Promise
     storeAudio: async ({ userId, draftId }) => {
       const key = `vnext/drafts/${userId}/${draftId}.mp3`;
       calls.store.push(key);
-      return { key, url: `https://r2.test/${key}` };
+      return { key };
+    },
+    signAudioUrl: async (key) => {
+      calls.sign.push(key);
+      return {
+        url: `${SIGNED_PREFIX}${key}?X-Amz-Expires=900&X-Amz-Signature=sig${calls.sign.length}`,
+        expires_at: new Date(Date.now() + 900_000).toISOString(),
+      };
     },
     repo: {
       insert: async (row) => {
@@ -218,16 +232,32 @@ describe('POST /v1/drafts/product-hero', () => {
     expect(d.dialect).toBe('levantine');
     expect(d.brief).toBe('Cold brew promo');
     expect(d.script).toBe(SCRIPT_A);
-    expect(d.audio_url).toMatch(/^https:\/\/r2\.test\/vnext\/drafts\/user-a\//);
+    expect(d.audio_url).toMatch(/^https:\/\/signed\.r2\.test\/vnext\/drafts\/user-a\//);
+    expect(Date.parse(d.audio_url_expires_at)).toBeGreaterThan(Date.now());
     expect(Math.abs(d.duration_ms - 9000)).toBeLessThan(30);
     expect(d.alignment.characters.join('')).toBe(SCRIPT_A);
-    expect(d.voice).toEqual({ provider: 'elevenlabs', voice_id: 'voice-test', model: 'eleven_test' });
+    // The provider is whatever voiced it, not a name the draft core assumes.
+    expect(d.voice).toEqual({ provider: 'fake-voice', voice_id: 'voice-test', model: 'eleven_test' });
     expect(d.rendered_at).toBeNull();
     // The Brief went to the writer with its Dialect; the writer's Script is what got voiced.
     expect(h.calls.write[0]).toMatchObject({ brief: 'Cold brew promo', dialect: 'levantine' });
     expect(h.calls.voice).toEqual([SCRIPT_A]);
     expect(h.rows).toHaveLength(1);
     expect(h.rows[0].user_id).toBe('user-a');
+    // The render phase (#5) finds the audio by its storage key, kept server-side.
+    expect(h.rows[0].audio_key).toBe(h.calls.store[0]);
+  });
+
+  it('keeps draft audio private: a signed URL for the owner, never a public URL or the storage key', async () => {
+    const h = await start({ durations: [9000] });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' });
+    expect(r.status).toBe(201);
+    const text = JSON.stringify(r.body);
+    expect(text).not.toContain(PUBLIC_PREFIX);
+    expect(r.body.draft).not.toHaveProperty('audio_key');
+    expect(r.body.draft.audio_url.startsWith(SIGNED_PREFIX)).toBe(true);
+    // Nothing public is persisted either: the row holds the key only.
+    expect(h.rows[0]).not.toHaveProperty('audio_url');
   });
 
   it('asks the writer for one rewrite when the first voicing misses the band, telling it by how much', async () => {
@@ -294,6 +324,7 @@ describe('POST /v1/drafts/product-hero/revoice', () => {
     expect(second.parent_draft_id).toBe(first.id);
     expect(second.brief).toBe('Promo'); // inherited from the parent
     expect(Math.abs(second.duration_ms - 12_000)).toBeLessThan(30);
+    expect(second.dialect).toBe('levantine'); // inherited from the parent
     expect(second.audio_url).not.toBe(first.audio_url);
     // Re-voicing never rewrites: the user's words go to the voice verbatim.
     expect(h.calls.write).toHaveLength(1);
@@ -322,6 +353,20 @@ describe('POST /v1/drafts/product-hero/revoice', () => {
     expect(h.rows).toHaveLength(0);
   });
 
+  it("rejects a Dialect that differs from the parent's before paying for a voice", async () => {
+    const h = await start({ durations: [8000, 8000] });
+    const first = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' })).body.draft;
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', {
+      script: SCRIPT_A,
+      dialect: 'gulf',
+      parent_draft_id: first.id,
+    });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatchObject({ code: 'DIALECT_MISMATCH', dialect: 'gulf', parent_dialect: 'levantine' });
+    expect(h.calls.voice).toHaveLength(1);
+    expect(h.rows).toHaveLength(1);
+  });
+
   it("cannot branch from another user's draft", async () => {
     const h = await start({ durations: [8000, 8000] });
     const first = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' })).body.draft;
@@ -345,14 +390,132 @@ describe('GET /v1/drafts/:id', () => {
     expect(mine.body.draft.script).toBe(SCRIPT_A);
     expect(mine.body.draft.alignment.characters.length).toBeGreaterThan(0);
 
+    const signsBefore = h.calls.sign.length;
     const theirs = await call(h, 'GET', `/v1/drafts/${d.id}`, 'user-b');
     expect(theirs.status).toBe(404);
     expect(JSON.stringify(theirs.body)).not.toContain(SCRIPT_A);
+    expect(JSON.stringify(theirs.body)).not.toContain(SIGNED_PREFIX);
+    expect(h.calls.sign.length).toBe(signsBefore); // nothing signed for a non-owner
+  });
+
+  it('signs a fresh audio URL on every read, since signed URLs expire', async () => {
+    const h = await start({ durations: [8000] });
+    const d = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Promo', dialect: 'levantine' })).body.draft;
+    const a = (await call(h, 'GET', `/v1/drafts/${d.id}`, 'user-a')).body.draft;
+    const b = (await call(h, 'GET', `/v1/drafts/${d.id}`, 'user-a')).body.draft;
+    expect(a.audio_url.startsWith(SIGNED_PREFIX)).toBe(true);
+    expect(b.audio_url).not.toBe(a.audio_url);
+    expect(h.calls.sign).toEqual([h.rows[0].audio_key, h.rows[0].audio_key, h.rows[0].audio_key]);
+    expect(JSON.stringify(b)).not.toContain(PUBLIC_PREFIX);
   });
 
   it('404s a malformed id without touching the table', async () => {
     const h = await start({ durations: [] });
     const r = await call(h, 'GET', '/v1/drafts/not-a-uuid', 'user-a');
     expect(r.status).toBe(404);
+  });
+});
+
+// ── Private audio storage (the real signer, offline) ─────────────────────────
+
+describe('draft audio storage', () => {
+  it('presigns a short-lived GET on the private bucket, never the public URL', async () => {
+    vi.resetModules();
+    vi.stubEnv('R2_ACCESS_KEY_ID', 'AKIATEST');
+    vi.stubEnv('R2_SECRET_ACCESS_KEY', 'secret');
+    vi.stubEnv('S3_ENDPOINT', 'https://s3.example.test');
+    vi.stubEnv('S3_FORCE_PATH_STYLE', 'true');
+    vi.stubEnv('R2_BUCKET', 'public-outputs');
+    vi.stubEnv('R2_PRIVATE_BUCKET', 'private-drafts');
+    vi.stubEnv('R2_PUBLIC_URL', 'https://pub.r2.test/');
+    try {
+      const { presignPrivateGet } = await import('../lib/r2-upload.js');
+      const signed = await presignPrivateGet('vnext/drafts/user-a/d1.mp3', 900);
+      const url = new URL(signed.url);
+      expect(url.origin).toBe('https://s3.example.test');
+      expect(url.pathname).toBe('/private-drafts/vnext/drafts/user-a/d1.mp3');
+      expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
+      expect(url.searchParams.get('X-Amz-Signature')).toBeTruthy();
+      expect(signed.url.startsWith('https://pub.r2.test')).toBe(false);
+      expect(Date.parse(signed.expires_at) - Date.now()).toBeLessThanOrEqual(900_000);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it('the production store writes a private object, not a public one', () => {
+    const providers = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'drafts/providers.ts'), 'utf8');
+    expect(providers).toContain('putPrivateObject(');
+    expect(providers).not.toMatch(/putPublicObject|getR2PublicUrlPrefix/);
+  });
+});
+
+// ── OpenAPI ──────────────────────────────────────────────────────────────────
+
+describe('draft routes in the OpenAPI spec', () => {
+  function mountedRoutes(): Array<{ method: string; path: string }> {
+    const routes: Array<{ method: string; path: string }> = [];
+    const recorder = {
+      post: (path: string) => routes.push({ method: 'post', path }),
+      get: (path: string) => routes.push({ method: 'get', path }),
+    } as unknown as express.Express;
+    const NOOP: express.RequestHandler = (_req, _res, next) => next();
+    registerDraftRoutes(recorder, { generateLimiter: NOOP, readLimiter: NOOP, authMiddleware: NOOP, draftLimiter: NOOP }, {} as DraftDeps);
+    return routes;
+  }
+
+  it('documents every mounted draft route with request, response and error schemas', () => {
+    const spec = draftOpenApi();
+    const routes = mountedRoutes();
+    expect(routes).toHaveLength(3);
+    for (const { method, path } of routes) {
+      const openApiPath = path.replace(/:(\w+)/g, '{$1}');
+      const op = (spec.paths[openApiPath] as Record<string, any> | undefined)?.[method];
+      expect(op, `${method.toUpperCase()} ${openApiPath}`).toBeDefined();
+      expect(op.security).toEqual([{ bearerAuth: [] }]);
+      const ok = op.responses[method === 'post' ? '201' : '200'];
+      expect(ok.content['application/json'].schema).toEqual({ $ref: '#/components/schemas/DraftResponse' });
+      for (const status of ['401', '404']) {
+        expect(op.responses[status].content['application/json'].schema).toEqual({ $ref: '#/components/schemas/DraftError' });
+      }
+      if (method === 'post') {
+        expect(op.requestBody.content['application/json'].schema.additionalProperties).toBe(false);
+        for (const status of ['400', '422', '429', '502', '503']) expect(op.responses[status]).toBeDefined();
+      } else {
+        expect(op.parameters[0]).toMatchObject({ name: 'id', in: 'path', required: true });
+      }
+    }
+  });
+
+  it('describes the draft as the API returns it: a signed audio URL, no storage key', () => {
+    const { schemas } = draftOpenApi();
+    const draft = schemas.Draft as { properties: Record<string, unknown>; required: string[] };
+    expect(draft.properties).toHaveProperty('audio_url');
+    expect(draft.properties).toHaveProperty('audio_url_expires_at');
+    expect(draft.properties).not.toHaveProperty('audio_key');
+    expect(draft.required).toContain('audio_url');
+  });
+
+  it('server.ts publishes them in /openapi.json', () => {
+    const server = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'server.ts'), 'utf8');
+    expect(server).toMatch(/const draftSpec = draftOpenApi\(\);/);
+    expect(server).toContain('Object.assign(paths, draftSpec.paths);');
+    expect(server).toContain('...draftSpec.schemas,');
+  });
+});
+
+// ── Glossary (CONTEXT.md) ────────────────────────────────────────────────────
+
+describe('draft vocabulary', () => {
+  it('says Script, never "copy", in the drafts code, the writer prompt and the page', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const files = [
+      join(here, '..', 'drafts/providers.ts'),
+      join(here, '..', 'drafts/product-hero-draft.ts'),
+      join(here, '..', 'routes/v1/drafts.ts'),
+      join(here, '..', '..', '..', '..', 'apps/web/app/(app-dark)/dashboard/product-hero/page.tsx'),
+    ];
+    for (const f of files) expect(readFileSync(f, 'utf8'), f).not.toMatch(/\bcopy\b/i);
   });
 });

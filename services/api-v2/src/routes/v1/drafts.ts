@@ -10,19 +10,28 @@
  *   GET  /v1/drafts/:id                                                   → 200 { draft } | 404
  *
  * Free (no credits) — see the module header. `draftLimiter` runs AFTER auth so
- * it buckets per user.
+ * it buckets per user. Every draft response carries a freshly signed, short-lived
+ * `audio_url`; it is minted only after the ownership check.
+ *
+ * draftOpenApi() describes these routes for /openapi.json (server.ts merges it),
+ * from the same zod schemas the routes validate with.
  */
 
 import type express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
   CreateDraftInputSchema,
+  DIALECTS,
   DraftError,
+  MAX_SPEECH_MS,
+  MIN_SPEECH_MS,
   RevoiceDraftInputSchema,
   createDraftFromBrief,
   revoiceDraft,
   toDraftView,
   type DraftDeps,
+  type DraftRow,
 } from '../../drafts/product-hero-draft.js';
 
 interface DraftRouteMiddleware {
@@ -34,7 +43,7 @@ interface DraftRouteMiddleware {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function fail(res: Response, err: unknown, tag: string): void {
+function sendDraftError(res: Response, err: unknown, tag: string): void {
   if (err instanceof DraftError) {
     res.status(err.status).json({ error: { code: err.code, message: err.message, ...err.details } });
     return;
@@ -49,7 +58,7 @@ function userOf(req: Request): string {
   return (req as { userId?: string }).userId as string;
 }
 
-function invalid(res: Response, issues: { path: (string | number)[]; message: string }[]): void {
+function sendInvalidInput(res: Response, issues: { path: (string | number)[]; message: string }[]): void {
   const first = issues[0];
   res.status(400).json({
     error: {
@@ -60,28 +69,31 @@ function invalid(res: Response, issues: { path: (string | number)[]; message: st
   });
 }
 
-export function registerDraftRoutes(app: express.Express, mw: DraftRouteMiddleware, deps: DraftDeps): void {
-  const { generateLimiter, readLimiter, authMiddleware, draftLimiter } = mw;
+export function registerDraftRoutes(app: express.Express, middleware: DraftRouteMiddleware, deps: DraftDeps): void {
+  const { generateLimiter, readLimiter, authMiddleware, draftLimiter } = middleware;
+
+  /** The owner's view of a draft, with a signed audio URL minted now. */
+  const sendDraft = async (res: Response, status: number, row: DraftRow) => {
+    res.status(status).json({ draft: toDraftView(row, await deps.signAudioUrl(row.audio_key)) });
+  };
 
   app.post('/v1/drafts/product-hero', generateLimiter, authMiddleware, draftLimiter, async (req, res) => {
     const parsed = CreateDraftInputSchema.safeParse(req.body ?? {});
-    if (!parsed.success) return invalid(res, parsed.error.issues);
+    if (!parsed.success) return sendInvalidInput(res, parsed.error.issues);
     try {
-      const row = await createDraftFromBrief(deps, userOf(req), parsed.data);
-      res.status(201).json({ draft: toDraftView(row) });
+      await sendDraft(res, 201, await createDraftFromBrief(deps, userOf(req), parsed.data));
     } catch (err) {
-      fail(res, err, 'create');
+      sendDraftError(res, err, 'create');
     }
   });
 
   app.post('/v1/drafts/product-hero/revoice', generateLimiter, authMiddleware, draftLimiter, async (req, res) => {
     const parsed = RevoiceDraftInputSchema.safeParse(req.body ?? {});
-    if (!parsed.success) return invalid(res, parsed.error.issues);
+    if (!parsed.success) return sendInvalidInput(res, parsed.error.issues);
     try {
-      const row = await revoiceDraft(deps, userOf(req), parsed.data);
-      res.status(201).json({ draft: toDraftView(row) });
+      await sendDraft(res, 201, await revoiceDraft(deps, userOf(req), parsed.data));
     } catch (err) {
-      fail(res, err, 'revoice');
+      sendDraftError(res, err, 'revoice');
     }
   });
 
@@ -93,9 +105,132 @@ export function registerDraftRoutes(app: express.Express, mw: DraftRouteMiddlewa
       // Owner-scoped lookup: another user's draft is indistinguishable from none.
       const row = await deps.repo.getOwned(id, userOf(req));
       if (!row) return void notFound();
-      res.status(200).json({ draft: toDraftView(row) });
+      await sendDraft(res, 200, row);
     } catch (err) {
-      fail(res, err, 'get');
+      sendDraftError(res, err, 'get');
     }
   });
+}
+
+// ── OpenAPI ──────────────────────────────────────────────────────────────────
+
+function bodySchema(schema: unknown, name: string): Record<string, unknown> {
+  const js = zodToJsonSchema(schema as Parameters<typeof zodToJsonSchema>[0], { name, $refStrategy: 'none' });
+  return ((js as { definitions?: Record<string, Record<string, unknown>> }).definitions?.[name] ?? js) as Record<string, unknown>;
+}
+
+const json = (ref: string) => ({ content: { 'application/json': { schema: { $ref: `#/components/schemas/${ref}` } } } });
+const draftError = (description: string) => ({ description, ...json('DraftError') });
+
+const DRAFT_ERRORS = {
+  '401': draftError('Unauthorized'),
+  '404': draftError('NOT_FOUND: no such draft on this account'),
+  '429': draftError('RATE_LIMITED: per-user draft ceiling'),
+  '502': draftError('DRAFT_FAILED / SCRIPT_GENERATION_FAILED: an upstream provider failed; retryable'),
+  '503': draftError('DRAFTING_UNCONFIGURED: this server lacks a provider key'),
+};
+
+/** Paths and component schemas for the draft routes, merged into /openapi.json by server.ts. */
+export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Record<string, unknown> } {
+  const post = (operationId: string, summary: string, body: Record<string, unknown>, unprocessable: string) => ({
+    post: {
+      operationId,
+      summary,
+      tags: ['drafts'],
+      security: [{ bearerAuth: [] }],
+      requestBody: { required: true, content: { 'application/json': { schema: body } } },
+      responses: {
+        '201': { description: 'A new draft', ...json('DraftResponse') },
+        '400': draftError('INVALID_INPUT'),
+        '422': draftError(unprocessable),
+        ...DRAFT_ERRORS,
+      },
+    },
+  });
+  const outOfBand = `SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG: voiced speech outside ${MIN_SPEECH_MS / 1000}–${MAX_SPEECH_MS / 1000} s (carries action, duration_ms and the Script)`;
+  return {
+    paths: {
+      '/v1/drafts/product-hero': post(
+        'createProductHeroDraft',
+        'Product Hero draft: write a diacritized Script for a Brief in a Dialect and voice it. Free (no credits).',
+        bodySchema(CreateDraftInputSchema, 'create_draft_input'),
+        `${outOfBand}; DIALECT_NOT_AVAILABLE; BRIEF_REFUSED`,
+      ),
+      '/v1/drafts/product-hero/revoice': post(
+        'revoiceProductHeroDraft',
+        "Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief and Dialect carry over.",
+        bodySchema(RevoiceDraftInputSchema, 'revoice_draft_input'),
+        `${outOfBand}; DIALECT_MISMATCH (dialect differs from the parent's); DIALECT_NOT_AVAILABLE`,
+      ),
+      '/v1/drafts/{id}': {
+        get: {
+          operationId: 'getDraft',
+          summary: 'Read one of your drafts, with a freshly signed audio URL.',
+          tags: ['drafts'],
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'The draft', ...json('DraftResponse') }, ...DRAFT_ERRORS },
+        },
+      },
+    },
+    schemas: {
+      Draft: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          preset: { type: 'string', enum: ['product_hero'] },
+          dialect: { type: 'string', enum: [...DIALECTS] },
+          brief: { type: ['string', 'null'] },
+          script: { type: 'string', description: 'The diacritized Script that was voiced.' },
+          script_source: { type: 'string', enum: ['generated', 'edited'] },
+          parent_draft_id: { type: ['string', 'null'], format: 'uuid' },
+          voice: {
+            type: 'object',
+            properties: { provider: { type: 'string' }, voice_id: { type: 'string' }, model: { type: 'string' } },
+            required: ['provider', 'voice_id', 'model'],
+          },
+          audio_url: { type: 'string', format: 'uri', description: 'Short-lived signed URL for the private audio; re-read the draft for a fresh one.' },
+          audio_url_expires_at: { type: 'string', format: 'date-time' },
+          audio_mime: { type: 'string' },
+          duration_ms: { type: 'integer', minimum: MIN_SPEECH_MS, maximum: MAX_SPEECH_MS, description: 'Measured from the audio.' },
+          alignment: {
+            type: 'object',
+            properties: {
+              characters: { type: 'array', items: { type: 'string' } },
+              character_start_times_seconds: { type: 'array', items: { type: 'number' } },
+              character_end_times_seconds: { type: 'array', items: { type: 'number' } },
+            },
+            required: ['characters', 'character_start_times_seconds', 'character_end_times_seconds'],
+          },
+          created_at: { type: 'string', format: 'date-time' },
+          rendered_at: { type: ['string', 'null'], format: 'date-time' },
+        },
+        required: ['id', 'preset', 'dialect', 'script', 'script_source', 'voice', 'audio_url', 'audio_url_expires_at', 'audio_mime', 'duration_ms', 'alignment', 'created_at'],
+      },
+      DraftResponse: { type: 'object', properties: { draft: { $ref: '#/components/schemas/Draft' } }, required: ['draft'] },
+      DraftError: {
+        type: 'object',
+        properties: {
+          error: {
+            type: 'object',
+            properties: {
+              code: { type: 'string' },
+              message: { type: 'string' },
+              action: { type: 'string', enum: ['shorten', 'lengthen'] },
+              duration_ms: { type: 'integer' },
+              min_ms: { type: 'integer' },
+              max_ms: { type: 'integer' },
+              script: { type: 'string', description: 'On SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG: the Script, to edit and re-voice.' },
+              dialect: { type: 'string' },
+              parent_dialect: { type: 'string' },
+              available: { type: 'array', items: { type: 'string' } },
+              issues: { type: 'array', items: { type: 'object' } },
+            },
+            required: ['code', 'message'],
+          },
+        },
+        required: ['error'],
+      },
+    },
+  };
 }

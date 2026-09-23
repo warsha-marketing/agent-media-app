@@ -27,6 +27,9 @@ interface R2Env {
   accessKeyId: string;
   secretAccessKey: string;
   bucket: string;
+  /** Bucket for objects that must never be publicly readable (draft audio). */
+  privateBucket: string;
+  /** Public URL prefix, without a trailing slash. */
   publicUrl: string;
 }
 
@@ -54,9 +57,15 @@ function readEnv(): R2Env {
     accessKeyId: accessKeyId!,
     secretAccessKey: secretAccessKey!,
     bucket: process.env.R2_BUCKET || 'agent-media-outputs',
-    publicUrl:
+    // R2 grants public access per bucket, not per object, so an object is only
+    // really private in a bucket with public access off. Unset → the main
+    // bucket, where a private object is still reachable by anyone who learns
+    // its key (the key is unguessable and never leaves the server).
+    privateBucket: process.env.R2_PRIVATE_BUCKET?.trim() || process.env.R2_BUCKET || 'agent-media-outputs',
+    publicUrl: (
       process.env.R2_PUBLIC_URL ||
-      'https://pub-16e2ed8f6be84691845e91436920ce0a.r2.dev',
+      'https://pub-16e2ed8f6be84691845e91436920ce0a.r2.dev'
+    ).replace(/\/+$/, ''),
   };
   return _env;
 }
@@ -85,18 +94,36 @@ function getClient(): S3Client {
 
 /** Returns the R2 public URL prefix (no trailing slash). */
 export function getR2PublicUrlPrefix(): string {
-  return readEnv().publicUrl.replace(/\/+$/, '');
+  return readEnv().publicUrl;
 }
 
 /**
  * Store server-produced bytes (not user uploads: no sniffing or moderation
- * applies) under `key` and return their public URL. Used for draft voice audio,
- * which the render phase must later fetch as an R2-hosted URL.
+ * applies) under `key` in the private bucket. Nothing public points at it:
+ * readers get a presignPrivateGet() URL, and only after an ownership check.
+ * Used for draft voice audio.
  */
-export async function putPublicObject(key: string, body: Buffer, contentType: string): Promise<string> {
+export async function putPrivateObject(key: string, body: Buffer, contentType: string): Promise<void> {
   const env = readEnv();
-  await getClient().send(new PutObjectCommand({ Bucket: env.bucket, Key: key, Body: body, ContentType: contentType }));
-  return `${env.publicUrl.replace(/\/+$/, '')}/${key}`;
+  await getClient().send(new PutObjectCommand({ Bucket: env.privateBucket, Key: key, Body: body, ContentType: contentType }));
+}
+
+/** A read capability for one private object, minted per request. */
+export interface SignedGet {
+  url: string;
+  expires_at: string;
+}
+
+/** Sign a GET for one private object, valid for `ttlSeconds`. */
+export async function presignPrivateGet(key: string, ttlSeconds: number): Promise<SignedGet> {
+  const env = readEnv();
+  const url = await getSignedUrl(
+    // Same version-skew cast as presignUpload() below.
+    getPresignClient() as unknown as Parameters<typeof getSignedUrl>[0],
+    new GetObjectCommand({ Bucket: env.privateBucket, Key: key }) as unknown as Parameters<typeof getSignedUrl>[1],
+    { expiresIn: ttlSeconds },
+  );
+  return { url, expires_at: new Date(Date.now() + ttlSeconds * 1000).toISOString() };
 }
 
 export interface UploadedImage {
@@ -206,7 +233,7 @@ export async function uploadUserImageBase64(
     }),
   );
   return {
-    url: `${env.publicUrl.replace(/\/+$/, '')}/${key}`,
+    url: `${env.publicUrl}/${key}`,
     key,
     bytes: bytes.byteLength,
     mime,
@@ -346,7 +373,7 @@ export async function confirmUpload(userId: string, uploadKey: string): Promise<
       new PutObjectCommand({ Bucket: env.bucket, Key: key, Body: bytes, ContentType: mime }),
     );
     await cleanup();
-    return { url: `${env.publicUrl.replace(/\/+$/, '')}/${key}`, key, bytes: bytes.byteLength, mime };
+    return { url: `${env.publicUrl}/${key}`, key, bytes: bytes.byteLength, mime };
   } catch (err) {
     await cleanup();
     throw err;
@@ -527,7 +554,7 @@ export async function uploadUserImageFromUrl(
   rawUrl: string,
 ): Promise<UploadedImage> {
   const env = readEnv();
-  const r2Prefix = env.publicUrl.replace(/\/+$/, '') + '/';
+  const r2Prefix = `${env.publicUrl}/`;
   // Already on our R2 — passthrough (still validate it's a sane https URL).
   if (rawUrl.startsWith(r2Prefix)) {
     return { url: rawUrl, key: rawUrl.slice(r2Prefix.length), bytes: 0, mime: 'image/png' };
@@ -553,7 +580,7 @@ export async function uploadUserImageFromUrl(
     new PutObjectCommand({ Bucket: env.bucket, Key: key, Body: bytes, ContentType: mime }),
   );
   return {
-    url: `${env.publicUrl.replace(/\/+$/, '')}/${key}`,
+    url: `${env.publicUrl}/${key}`,
     key,
     bytes: bytes.byteLength,
     mime,
@@ -583,7 +610,7 @@ export async function uploadUserVideoFromUrl(
   rawUrl: string,
 ): Promise<UploadedVideo> {
   const env = readEnv();
-  const r2Prefix = env.publicUrl.replace(/\/+$/, '') + '/';
+  const r2Prefix = `${env.publicUrl}/`;
   if (rawUrl.startsWith(r2Prefix)) {
     return { url: rawUrl, key: rawUrl.slice(r2Prefix.length), bytes: 0, mime: 'video/mp4' };
   }
@@ -605,7 +632,7 @@ export async function uploadUserVideoFromUrl(
     new PutObjectCommand({ Bucket: env.bucket, Key: key, Body: bytes, ContentType: mime }),
   );
   return {
-    url: `${env.publicUrl.replace(/\/+$/, '')}/${key}`,
+    url: `${env.publicUrl}/${key}`,
     key,
     bytes: bytes.byteLength,
     mime,

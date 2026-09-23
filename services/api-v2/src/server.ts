@@ -59,7 +59,7 @@ import {
   rollbackMarketplaceSkillRoute,
 } from './routes/v1/tooling.js';
 import { registerToolingMarketplaceRoutes } from './routes/v1/tooling-marketplace-routes.js';
-import { registerDraftRoutes } from './routes/v1/drafts.js';
+import { registerDraftRoutes, draftOpenApi } from './routes/v1/drafts.js';
 import { productionDraftDeps } from './drafts/providers.js';
 import {
   isPrimitivesRouteEnabled,
@@ -702,6 +702,10 @@ function buildOpenApiSpec() {
       },
     },
   };
+  // Product Hero drafts (#4). Described next to the routes, from the same zod
+  // they validate with, so the spec cannot drift from what the server accepts.
+  const draftSpec = draftOpenApi();
+  Object.assign(paths, draftSpec.paths);
   // ── The loose surface (P2/P3) — what the MCP connector exposes ────────
   // Same zod as the routes and the tools, so the spec cannot describe a
   // field the server does not accept.
@@ -822,6 +826,7 @@ function buildOpenApiSpec() {
           properties: { actor: { $ref: '#/components/schemas/Actor' } },
           required: ['actor'],
         },
+        ...draftSpec.schemas,
       },
     },
   };

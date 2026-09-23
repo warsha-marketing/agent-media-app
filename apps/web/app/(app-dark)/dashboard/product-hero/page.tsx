@@ -13,6 +13,10 @@
  * When the voiced Script falls outside 5–15 s the server refuses the draft
  * (SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG) and returns the Script, which lands in
  * the editor so the user can lengthen or shorten it and re-voice.
+ *
+ * Draft audio is private: each response carries a short-lived signed
+ * `audio_url`. When a player's URL has lapsed it fails to load, and the page
+ * re-reads that draft (GET /v1/drafts/:id) for a fresh one.
  */
 
 import { useState } from 'react';
@@ -25,7 +29,9 @@ interface Draft {
   dialect: Dialect;
   brief: string | null;
   script: string;
+  /** Short-lived signed URL; re-read the draft for a fresh one. */
   audio_url: string;
+  audio_url_expires_at: string;
   duration_ms: number;
   created_at: string;
 }
@@ -75,6 +81,21 @@ export default function ProductHeroPage() {
     setHistory((h) => [d, ...h]);
   }
 
+  /** Swap in a freshly signed audio URL for a draft whose URL has expired. */
+  async function refreshAudio(id: string) {
+    const r = await fetch(`/api/v1/drafts/${encodeURIComponent(id)}`, { credentials: 'include' }).catch(() => null);
+    const fresh = r?.ok ? ((await r.json().catch(() => ({}))) as { draft?: Draft }).draft : undefined;
+    if (!fresh) return;
+    const withFreshUrl = (d: Draft) => (d.id === id ? { ...d, audio_url: fresh.audio_url, audio_url_expires_at: fresh.audio_url_expires_at } : d);
+    setDraft((d) => (d ? withFreshUrl(d) : d));
+    setHistory((h) => h.map(withFreshUrl));
+  }
+
+  /** An expired signed URL fails to load; fetch a new one (once per URL). */
+  function onAudioError(d: Draft) {
+    if (Date.parse(d.audio_url_expires_at) <= Date.now()) void refreshAudio(d.id);
+  }
+
   function refuse(e: ApiError) {
     setError(e);
     // A duration refusal still hands back the Script: put it in the editor.
@@ -103,7 +124,8 @@ export default function ProductHeroPage() {
     try {
       const r = await post('/api/v1/drafts/product-hero/revoice', {
         script: script.trim(),
-        dialect,
+        // A re-voice keeps its parent's Dialect; the server refuses any other.
+        dialect: draft ? draft.dialect : dialect,
         ...(draft ? { parent_draft_id: draft.id } : brief.trim() ? { brief: brief.trim() } : {}),
       });
       if (r.draft) accept(r.draft);
@@ -205,7 +227,7 @@ export default function ProductHeroPage() {
           />
           {draft && !edited ? (
             // key: a new draft swaps the source, so remount the player.
-            <audio key={draft.id} controls src={draft.audio_url} className="w-full" />
+            <audio key={draft.id} controls src={draft.audio_url} onError={() => onAudioError(draft)} className="w-full" />
           ) : null}
           <div>
             <button
@@ -230,7 +252,7 @@ export default function ProductHeroPage() {
               <li key={d.id} className="flex items-center gap-3 rounded-xl px-3 py-2" style={card}>
                 <span dir="rtl" lang="ar" className="flex-1 truncate text-sm" style={{ color: 'rgba(255,255,255,0.75)' }}>{d.script}</span>
                 <span className="text-xs" style={muted}>{(d.duration_ms / 1000).toFixed(1)} s</span>
-                <audio controls src={d.audio_url} className="h-8 w-48" />
+                <audio controls src={d.audio_url} onError={() => onAudioError(d)} className="h-8 w-48" />
               </li>
             ))}
           </ul>

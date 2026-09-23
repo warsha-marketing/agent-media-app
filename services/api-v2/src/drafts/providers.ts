@@ -2,8 +2,9 @@
 
 /**
  * The real providers behind DraftDeps: Claude writes the Script, ElevenLabs
- * voices it with character timestamps, R2 stores the audio, Supabase keeps the
- * draft row. Wired in server.ts; the route tests use fakes instead.
+ * voices it with character timestamps, R2 stores the audio as a private object
+ * (read back through short-lived signed URLs), Supabase keeps the draft row.
+ * Wired in server.ts; the route tests use fakes instead.
  *
  * Env:
  *   ANTHROPIC_API_KEY            (existing)
@@ -12,10 +13,11 @@
  *   ELEVENLABS_API_BASE          (existing, optional)
  *   PRODUCT_HERO_VOICE_ID        the one pre-configured Voice until the catalog (#7)
  *   PRODUCT_HERO_TTS_MODEL       ElevenLabs model (default eleven_v3, as media-worker-v2)
+ *   R2_PRIVATE_BUCKET            bucket without public access for the audio (default R2_BUCKET)
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { putPublicObject } from '../lib/r2-upload.js';
+import { presignPrivateGet, putPrivateObject } from '../lib/r2-upload.js';
 import {
   DraftError,
   MAX_SPEECH_MS,
@@ -48,11 +50,11 @@ function systemPrompt(dialect: Dialect): string {
 
 Write in ${DIALECT_GUIDE[dialect]}
 
-The Brief may be in any language; it tells you what to sell, never the words to say. Write fresh copy in the dialect.
+The Brief may be in any language; it tells you what to sell, never the words to say. Write a fresh Script in the Dialect.
 
 Length: the voice must speak for 8 to 12 seconds, which is about 18 to 28 words. Never under 5 seconds or over 15.
 
-Diacritics: put full تشكيل on every word (fatha, damma, kasra, sukun, shadda, tanween) so the voice cannot mispronounce anything. Mark the dialect pronunciation, not the فصحى one.
+Diacritics: put full تشكيل on every word (fatha, damma, kasra, sukun, shadda, tanween) so the voice cannot mispronounce anything. Mark the Dialect's pronunciation, not the فصحى one.
 
 Write brand and product names in Arabic letters as they are said. Write numbers and prices as words. No emojis, hashtags, Latin letters, stage directions, speaker labels, quotation marks or line breaks.
 
@@ -74,7 +76,7 @@ ${input.previous.script}`;
 export function anthropicScriptWriter(opts: { apiKey: string; model: string }): DraftDeps['writeScript'] {
   return async (input) => {
     // Opus 5.5: thinking is always on (no `thinking` param, no temperature);
-    // effort is the only dial and short copy does not need more than medium.
+    // effort is the only dial and a short Script does not need more than medium.
     const upstream = await fetch(ANTHROPIC_URL, {
       method: 'POST',
       headers: {
@@ -150,6 +152,7 @@ export function elevenLabsVoicer(opts: {
         character_start_times_seconds: alignment.character_start_times_seconds,
         character_end_times_seconds: alignment.character_end_times_seconds,
       },
+      provider: 'elevenlabs',
       voiceId: opts.voiceId,
       ttsModel: opts.modelId,
     };
@@ -161,9 +164,14 @@ export function elevenLabsVoicer(opts: {
 export const r2DraftAudioStore: DraftDeps['storeAudio'] = async ({ userId, draftId, audio, mime }) => {
   // Same per-user namespace convention as uploads; the draft id makes it unguessable.
   const key = `vnext/drafts/${userId}/${draftId}.mp3`;
-  const url = await putPublicObject(key, audio, mime);
-  return { key, url };
+  await putPrivateObject(key, audio, mime);
+  return { key };
 };
+
+/** Long enough to listen and re-listen; the page re-reads the draft when it lapses. */
+export const DRAFT_AUDIO_URL_TTL_SECONDS = 15 * 60;
+
+export const r2DraftAudioSigner: DraftDeps['signAudioUrl'] = (key) => presignPrivateGet(key, DRAFT_AUDIO_URL_TTL_SECONDS);
 
 const TABLE = 'short_drafts';
 
@@ -219,6 +227,7 @@ export function productionDraftDeps(supabase: SupabaseClient): { deps: DraftDeps
             })
           : unconfigured,
       storeAudio: r2DraftAudioStore,
+      signAudioUrl: r2DraftAudioSigner,
       repo: supabaseDraftRepo(supabase),
       newId: () => randomUUID(),
     },

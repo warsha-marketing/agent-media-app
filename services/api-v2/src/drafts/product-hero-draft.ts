@@ -3,15 +3,17 @@
 /**
  * Product Hero draft — the cheap phase before the cost gate (ADR 0001).
  *
- *   Brief + Dialect → Claude writes a fully diacritized dialect Script
- *                   → an ElevenLabs Voice speaks it, with character alignment
+ *   Brief + Dialect → a writer (Claude) writes a fully diacritized Script in that Dialect
+ *                   → a Voice speaks it, with character alignment
  *                   → the duration is MEASURED from the audio bytes
  *                   → 5–15 s of speech is a draft; anything else is refused.
  *
  * The draft is persisted so the render phase (#5) ships exactly the audio the
- * user heard: Script, audio object, duration and alignment are stored, never
- * recomputed. Re-voicing an edited Script always makes a NEW draft, so a draft
- * a render already used can never change underneath it.
+ * user heard: Script, audio object key, duration and alignment are stored, never
+ * recomputed. The audio is a private object: the owner hears it through a
+ * short-lived signed URL minted on every read, and the render phase reads it by
+ * key. Re-voicing an edited Script always makes a NEW draft (in its parent's
+ * Dialect), so a draft a render already used can never change underneath it.
  *
  * Drafting charges no credits. It costs us one Claude call and one or two TTS
  * calls, which is why it sits behind a per-user rate limit rather than the
@@ -55,8 +57,9 @@ export type CreateDraftInput = z.infer<typeof CreateDraftInputSchema>;
 export const RevoiceDraftInputSchema = z
   .object({
     script: z.string().trim().min(1, 'script is required').max(SCRIPT_MAX_CHARS),
+    /** With a parent, must equal the parent's Dialect (DIALECT_MISMATCH otherwise). */
     dialect: DialectSchema,
-    /** Optional: the draft this edit came from. Its Brief carries over. */
+    /** Optional: the draft this edit came from. Its Brief and Dialect carry over. */
     parent_draft_id: z.string().uuid().optional(),
     /** Only used when there is no parent (a first draft that was refused). */
     brief: z.string().trim().max(BRIEF_MAX_CHARS).optional(),
@@ -64,7 +67,7 @@ export const RevoiceDraftInputSchema = z
   .strict();
 export type RevoiceDraftInput = z.infer<typeof RevoiceDraftInputSchema>;
 
-/** ElevenLabs character-level alignment, stored verbatim for Captions (#6). */
+/** Character-level alignment of the voiced Script, stored verbatim for Captions (#6). */
 export interface Alignment {
   characters: string[];
   character_start_times_seconds: number[];
@@ -80,12 +83,12 @@ export interface DraftRow {
   script: string;
   script_source: 'generated' | 'edited';
   parent_draft_id: string | null;
-  voice_provider: 'elevenlabs';
+  voice_provider: string;
   voice_id: string;
   tts_model: string;
   script_model: string | null;
+  /** Private storage key; never returned to clients (they get a signed URL). */
   audio_key: string;
-  audio_url: string;
   audio_mime: string;
   duration_ms: number;
   alignment: Alignment;
@@ -96,6 +99,12 @@ export interface DraftRow {
 export type NewDraftRow = Omit<DraftRow, 'created_at' | 'rendered_at'>;
 
 // ── Provider seam ────────────────────────────────────────────────────────────
+
+/** A Script and the Dialect it is spoken in: what a Voice is asked to say. */
+export interface SpokenScript {
+  script: string;
+  dialect: Dialect;
+}
 
 export interface WriteScriptInput {
   brief: string;
@@ -108,14 +117,25 @@ export interface VoicedScript {
   audio: Buffer;
   mime: string;
   alignment: Alignment;
+  /** Which voice provider spoke it (e.g. 'elevenlabs'); stored on the draft. */
+  provider: string;
   voiceId: string;
   ttsModel: string;
 }
 
+/** A short-lived read URL for a draft's private audio. */
+export interface SignedAudioUrl {
+  url: string;
+  expires_at: string;
+}
+
 export interface DraftDeps {
   writeScript(input: WriteScriptInput): Promise<{ script: string; model: string }>;
-  voiceScript(input: { script: string; dialect: Dialect }): Promise<VoicedScript>;
-  storeAudio(input: { userId: string; draftId: string; audio: Buffer; mime: string }): Promise<{ key: string; url: string }>;
+  voiceScript(input: SpokenScript): Promise<VoicedScript>;
+  /** Store the audio as a PRIVATE object; returns only its key. */
+  storeAudio(input: { userId: string; draftId: string; audio: Buffer; mime: string }): Promise<{ key: string }>;
+  /** Mint a short-lived GET URL for a stored audio key. Call only for the owner. */
+  signAudioUrl(key: string): Promise<SignedAudioUrl>;
   repo: {
     insert(row: NewDraftRow): Promise<DraftRow>;
     /** The draft only if `userId` owns it; null otherwise (never reveals existence). */
@@ -143,9 +163,8 @@ function outOfBand(durationMs: number, script: string): DraftError {
   return new DraftError(
     422,
     tooShort ? 'SCRIPT_TOO_SHORT' : 'SCRIPT_TOO_LONG',
-    tooShort
-      ? `The voiced Script runs ${secs} s; a Product Hero Short needs 5–15 s of speech. Lengthen the Script and re-voice.`
-      : `The voiced Script runs ${secs} s; a Product Hero Short needs 5–15 s of speech. Shorten the Script and re-voice.`,
+    `The voiced Script runs ${secs} s; a Product Hero Short needs ${MIN_SPEECH_MS / 1000}–${MAX_SPEECH_MS / 1000} s of speech. ` +
+      `${tooShort ? 'Lengthen' : 'Shorten'} the Script and re-voice.`,
     {
       action: tooShort ? 'lengthen' : 'shorten',
       duration_ms: durationMs,
@@ -213,7 +232,7 @@ export function mp3DurationMs(buf: Buffer): number {
   return Math.round(seconds * 1000);
 }
 
-// ── Diacritics sanity check on what Claude wrote ─────────────────────────────
+// ── Diacritics sanity check on what the writer returned ──────────────────────
 
 const ARABIC_LETTER = /[ء-ي]/g;
 const HARAKA = /[ً-ْ]/g;
@@ -231,103 +250,128 @@ export function looksDiacritized(script: string): boolean {
 
 // ── The two draft operations ─────────────────────────────────────────────────
 
-interface Measured { voiced: VoicedScript; durationMs: number }
+/** One voicing of a Script, with the duration measured from its audio. */
+interface VoiceTake { spoken: SpokenScript; voiced: VoicedScript; durationMs: number }
 
-async function voiceAndMeasure(deps: DraftDeps, script: string, dialect: Dialect): Promise<Measured> {
-  const voiced = await deps.voiceScript({ script, dialect });
+async function voiceAndMeasure(deps: DraftDeps, spoken: SpokenScript): Promise<VoiceTake> {
+  const voiced = await deps.voiceScript(spoken);
   let durationMs = mp3DurationMs(voiced.audio);
   if (durationMs === 0) {
     // Not MP3 (a different output format was configured): fall back to the
     // alignment's end, which undercounts trailing silence by a few ms at most.
     durationMs = Math.round((voiced.alignment.character_end_times_seconds.at(-1) ?? 0) * 1000);
   }
-  return { voiced, durationMs };
+  return { spoken, voiced, durationMs };
 }
 
 const inBand = (ms: number) => ms >= MIN_SPEECH_MS && ms <= MAX_SPEECH_MS;
 
+function assertInBand(take: VoiceTake): void {
+  if (!inBand(take.durationMs)) throw outOfBand(take.durationMs, take.spoken.script);
+}
+
 async function persist(
   deps: DraftDeps,
   userId: string,
-  fields: Pick<NewDraftRow, 'dialect' | 'brief' | 'script' | 'script_source' | 'parent_draft_id' | 'script_model'>,
-  m: Measured,
+  fields: Pick<NewDraftRow, 'brief' | 'script_source' | 'parent_draft_id' | 'script_model'>,
+  take: VoiceTake,
 ): Promise<DraftRow> {
   const id = deps.newId();
-  const stored = await deps.storeAudio({ userId, draftId: id, audio: m.voiced.audio, mime: m.voiced.mime });
+  const { voiced } = take;
+  const stored = await deps.storeAudio({ userId, draftId: id, audio: voiced.audio, mime: voiced.mime });
   return deps.repo.insert({
     id,
     user_id: userId,
     preset: PRESET,
     ...fields,
-    voice_provider: 'elevenlabs',
-    voice_id: m.voiced.voiceId,
-    tts_model: m.voiced.ttsModel,
+    dialect: take.spoken.dialect,
+    script: take.spoken.script,
+    voice_provider: voiced.provider,
+    voice_id: voiced.voiceId,
+    tts_model: voiced.ttsModel,
     audio_key: stored.key,
-    audio_url: stored.url,
-    audio_mime: m.voiced.mime,
-    duration_ms: m.durationMs,
-    alignment: m.voiced.alignment,
+    audio_mime: voiced.mime,
+    duration_ms: take.durationMs,
+    alignment: voiced.alignment,
   });
+}
+
+/** Ask the writer for a Script, check its تشكيل, then voice and measure it. */
+async function writeAndVoice(deps: DraftDeps, request: WriteScriptInput): Promise<VoiceTake & { model: string }> {
+  const written = await deps.writeScript(request);
+  const script = written.script.trim();
+  if (!script || script.length > SCRIPT_MAX_CHARS || !looksDiacritized(script)) {
+    throw new DraftError(502, 'SCRIPT_GENERATION_FAILED', 'Could not write a diacritized Script for this Brief. Try again or rephrase the Brief.');
+  }
+  const take = await voiceAndMeasure(deps, { script, dialect: request.dialect });
+  return { ...take, model: written.model };
 }
 
 /**
  * Brief → Script → voice → draft. If the first voicing misses the 5–15 s band,
- * Claude gets ONE rewrite told the measured length and the direction; a second
- * miss is returned to the user (with the Script, so they can edit it).
+ * the writer gets ONE rewrite told the measured length and the direction; a
+ * second miss is returned to the user (with the Script, so they can edit it).
  */
 export async function createDraftFromBrief(deps: DraftDeps, userId: string, input: CreateDraftInput): Promise<DraftRow> {
   assertLive(input.dialect);
-  let request: WriteScriptInput = { brief: input.brief, dialect: input.dialect };
-  let last: { script: string; model: string; m: Measured } | null = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const written = await deps.writeScript(request);
-    const script = written.script.trim();
-    if (!script || script.length > SCRIPT_MAX_CHARS || !looksDiacritized(script)) {
-      throw new DraftError(502, 'SCRIPT_GENERATION_FAILED', 'Could not write a diacritized Script for this Brief. Try again or rephrase the Brief.');
-    }
-    const m = await voiceAndMeasure(deps, script, input.dialect);
-    last = { script, model: written.model, m };
-    if (inBand(m.durationMs)) break;
-    request = {
+  const request: WriteScriptInput = { brief: input.brief, dialect: input.dialect };
+  let take = await writeAndVoice(deps, request);
+  if (!inBand(take.durationMs)) {
+    take = await writeAndVoice(deps, {
       ...request,
-      previous: { script, duration_ms: m.durationMs, direction: m.durationMs > MAX_SPEECH_MS ? 'shorten' : 'lengthen' },
-    };
+      previous: {
+        script: take.spoken.script,
+        duration_ms: take.durationMs,
+        direction: take.durationMs > MAX_SPEECH_MS ? 'shorten' : 'lengthen',
+      },
+    });
   }
-  const { script, model, m } = last!;
-  if (!inBand(m.durationMs)) throw outOfBand(m.durationMs, script);
+  assertInBand(take);
   return persist(deps, userId, {
-    dialect: input.dialect,
     brief: input.brief,
-    script,
     script_source: 'generated',
     parent_draft_id: null,
-    script_model: model,
-  }, m);
+    script_model: take.model,
+  }, take);
 }
 
-/** The user's (edited) Script, voiced verbatim, as a new draft. */
+/**
+ * The user's (edited) Script, voiced verbatim, as a new draft. With a parent,
+ * the Brief and Dialect are the parent's: a request naming another Dialect is
+ * refused rather than silently voiced in the wrong one.
+ */
 export async function revoiceDraft(deps: DraftDeps, userId: string, input: RevoiceDraftInput): Promise<DraftRow> {
-  assertLive(input.dialect);
   let brief = input.brief?.trim() || null;
   if (input.parent_draft_id) {
     const parent = await deps.repo.getOwned(input.parent_draft_id, userId);
     if (!parent) throw new DraftError(404, 'NOT_FOUND', 'Draft not found.');
+    if (input.dialect !== parent.dialect) {
+      throw new DraftError(
+        422,
+        'DIALECT_MISMATCH',
+        `A re-voice keeps its parent draft's Dialect (${parent.dialect}); this request asked for ${input.dialect}. ` +
+          'Send the same Dialect, or write a new Script from the Brief to change Dialect.',
+        { dialect: input.dialect, parent_dialect: parent.dialect },
+      );
+    }
     brief = parent.brief;
   }
-  const m = await voiceAndMeasure(deps, input.script, input.dialect);
-  if (!inBand(m.durationMs)) throw outOfBand(m.durationMs, input.script);
+  assertLive(input.dialect);
+  const take = await voiceAndMeasure(deps, { script: input.script, dialect: input.dialect });
+  assertInBand(take);
   return persist(deps, userId, {
-    dialect: input.dialect,
     brief,
-    script: input.script,
     script_source: 'edited',
     parent_draft_id: input.parent_draft_id ?? null,
     script_model: null,
-  }, m);
+  }, take);
 }
 
-/** Public shape of a draft (what the API returns and the render phase reads). */
-export function toDraftView(row: DraftRow) {
+/**
+ * Public shape of a draft (what the API returns). `audio` is a signed URL for
+ * the owner, minted at read time; the storage key never leaves the server.
+ */
+export function toDraftView(row: DraftRow, audio: SignedAudioUrl) {
   return {
     id: row.id,
     preset: row.preset,
@@ -337,7 +381,8 @@ export function toDraftView(row: DraftRow) {
     script_source: row.script_source,
     parent_draft_id: row.parent_draft_id,
     voice: { provider: row.voice_provider, voice_id: row.voice_id, model: row.tts_model },
-    audio_url: row.audio_url,
+    audio_url: audio.url,
+    audio_url_expires_at: audio.expires_at,
     audio_mime: row.audio_mime,
     duration_ms: row.duration_ms,
     alignment: row.alignment,
@@ -345,3 +390,4 @@ export function toDraftView(row: DraftRow) {
     rendered_at: row.rendered_at,
   };
 }
+export type DraftView = ReturnType<typeof toDraftView>;
