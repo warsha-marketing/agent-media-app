@@ -13,7 +13,8 @@
 import { decideMakeUgcRoute, type MakeUgcProps } from './make-ugc-router.js';
 // Shared take planner — the SAME module the worker plans with, so quote and run
 // cannot disagree. See packages/schema/src/take-planner.ts.
-import { countWords, fitDuration, planTakeDurations, quoteProductHeroCredits, VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
+import { countWords, fitDuration, planTakeDurations, quotePresetCredits, VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
+import { SKILLS } from './registry.js';
 
 // Portraits are free; a character sheet is charged only standalone (a sheet
 // generated inside make_ugc_video is free — see the make_ugc_video case).
@@ -135,6 +136,23 @@ export function quoteSkillCredits(
   input: Record<string, unknown> | null | undefined,
 ): number {
   const i = input ?? {};
+  // A Preset render skill (make_product_hero, …) is priced from its definition.
+  const preset = Object.hasOwn(SKILLS, slug) ? SKILLS[slug].preset : undefined;
+  if (preset) {
+    // Price the planned render: the silent clips that cover the approved
+    // draft's measured speech (the SAME plan the worker renders from, in
+    // @agentmedia/schema). The routes resolve the draft and put its
+    // duration_ms on the input before quoting; the skill_runs row stores it
+    // so the in-flight reservation prices the run identically. The audio
+    // fetch and the mux are free.
+    //
+    // FAILS CLOSED: without a duration in the Preset's speech band there is no
+    // plan to price, and a render is never free — so this throws (RangeError)
+    // rather than quoting 0. The routes resolve the draft first, so only a
+    // bug reaches this; the quote route answers it with 422 unpriceable_input.
+    const raw = (i as { duration_ms?: unknown }).duration_ms;
+    return quotePresetCredits(preset, typeof raw === 'number' ? raw : Number.NaN);
+  }
   switch (slug) {
     case 'make_portrait':
       return PORTRAIT_CREDITS;
@@ -178,21 +196,6 @@ export function quoteSkillCredits(
       }
       const subs = (i as { subtitles?: boolean }).subtitles ? SUBTITLES_CREDITS : 0;
       return cost + subs;
-    }
-    case 'make_product_hero': {
-      // Price the planned render: the silent clips that cover the approved
-      // draft's measured speech (the SAME plan the worker renders from, in
-      // @agentmedia/schema). The routes resolve the draft and put its
-      // duration_ms on the input before quoting; the skill_runs row stores it
-      // so the in-flight reservation prices the run identically. The audio
-      // fetch and the mux are free.
-      //
-      // FAILS CLOSED: without a duration in the 5–15 s contract there is no
-      // plan to price, and a render is never free — so this throws (RangeError)
-      // rather than quoting 0. The routes resolve the draft first, so only a
-      // bug reaches this; the quote route answers it with 422 unpriceable_input.
-      const raw = (i as { duration_ms?: unknown }).duration_ms;
-      return quoteProductHeroCredits(typeof raw === 'number' ? raw : Number.NaN);
     }
     case 'make_ugc_video': {
       // Portrait + character sheet are free inside a video — only the selfie (and
