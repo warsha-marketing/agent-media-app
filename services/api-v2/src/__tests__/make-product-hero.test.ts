@@ -651,7 +651,11 @@ describe('make_product_hero in the OpenAPI spec', () => {
     }).get.responses['200'].content['application/json'].schema;
     expect(runStatus.properties.credits.properties?.refund_status.enum).toEqual(['not_due', 'pending', 'refunded']);
     expect(Object.keys(RENDER_REFUSALS).sort()).toEqual(
-      ['draft_already_rendered', 'draft_not_found', 'draft_out_of_band', 'draft_render_in_flight', 'voice_not_approved'],
+      ['captions_moved', 'draft_already_rendered', 'draft_not_found', 'draft_out_of_band', 'draft_render_in_flight', 'voice_not_approved'],
     );
+    // A render refuses `captions` (#22): the 400 says where Captions went.
+    for (const path of ['/v1/skills/{slug}/run', '/v1/skills/{slug}/quote']) {
+      expect(paths[path].post.responses['400'].description).toContain('POST /v1/shorts/{id}/caption-exports');
+    }
   });
 });

@@ -4,9 +4,10 @@
 // routes. #10's Captions toggle is gone: the render input has no `captions`, the
 // workflow is never handed an alignment, and the quote and run say nothing
 // about Captions. Captions are added after the render (routes/v1/shorts.ts).
-// An old client that still sends `captions: true` gets a clean Short, the same
-// request as without it. The edges (database, photo re-hosting, Temporal) are
-// faked as in make-product-hero-music.test.ts.
+// A client that still sends `captions` (any value) is refused with 400
+// captions_moved, pointing at the Caption editor, on both quote and run, before
+// anything is looked up or started. The edges (database, photo re-hosting,
+// Temporal) are faked as in make-product-hero-music.test.ts.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Request, Response } from 'express';
@@ -79,7 +80,7 @@ vi.mock('../orchestrator/temporal/client.js', () => ({
 }));
 
 const { quoteSkillRoute, runSkillRoute } = await import('../routes/v1/skills.js');
-const { MakeProductHeroSkillInputSchema } = await import('../skills/registry.js');
+const { MakeProductHeroSkillInputSchema, SKILLS } = await import('../skills/registry.js');
 
 const OWNER = 'aaaaaaaa-0000-4000-8000-000000000001';
 const VOICE = 'ffffffff-0000-4000-8000-000000000001';
@@ -141,17 +142,35 @@ afterEach(() => {
   delete process.env.BILLING_MODE;
 });
 
+const CAPTIONS_MOVED = {
+  error: 'captions_moved',
+  skill: 'make_product_hero',
+  detail: 'Captions are added after the render with the Caption editor (GET /v1/shorts/{id}/captions, POST /v1/shorts/{id}/caption-exports).',
+};
+
 describe('make_product_hero: no Captions in the render', () => {
-  it('the input schema has no captions field (an old `captions: true` is dropped)', () => {
+  it('the input schema refuses a captions field with the Caption editor pointer', () => {
     const base = { draft_id: seedDraft(), product_image_url: PHOTO };
-    expect(MakeProductHeroSkillInputSchema.parse({ ...base, captions: true })).not.toHaveProperty('captions');
+    expect(MakeProductHeroSkillInputSchema.safeParse(base).success).toBe(true);
+    for (const captions of [true, false, { on: true }]) {
+      const r = MakeProductHeroSkillInputSchema.safeParse({ ...base, captions });
+      expect(r.success).toBe(false);
+      expect(r.error!.issues).toEqual([expect.objectContaining({ path: ['captions'], message: CAPTIONS_MOVED.detail })]);
+    }
   });
 
-  it.each([
-    ['without captions', {}],
-    ['with an old captions: true', { captions: true }],
-  ])('run %s: the workflow gets no alignment, the run records nothing about Captions', async (_label, extra) => {
-    const r = await call(runSkillRoute, { draft_id: seedDraft(), product_image_url: PHOTO, ...extra });
+  it('every Preset render schema refuses a captions field', () => {
+    const presets = Object.values(SKILLS).filter((s) => s.preset);
+    expect(presets.map((s) => s.slug)).toContain('make_product_hero');
+    for (const skill of presets) {
+      const r = skill.inputSchema.safeParse({ draft_id: seedDraft(), product_image_url: PHOTO, captions: true });
+      expect(r.success, skill.slug).toBe(false);
+      expect(JSON.stringify(r.error?.issues), skill.slug).toContain(CAPTIONS_MOVED.detail);
+    }
+  });
+
+  it('a run without captions: the workflow gets no alignment, the run records nothing about Captions', async () => {
+    const r = await call(runSkillRoute, { draft_id: seedDraft(), product_image_url: PHOTO });
     expect(r.status).toBe(202);
     expect(workflowInput()).not.toHaveProperty('captions');
     expect(JSON.stringify(workflowInput())).not.toContain('character_start_times_seconds');
@@ -160,18 +179,31 @@ describe('make_product_hero: no Captions in the render', () => {
   });
 
   it('the quote says nothing about Captions', async () => {
-    const q = await call(quoteSkillRoute, { draft_id: seedDraft(), product_image_url: PHOTO, captions: true });
+    const q = await call(quoteSkillRoute, { draft_id: seedDraft(), product_image_url: PHOTO });
     expect(q.status).toBe(200);
     expect(q.body).not.toHaveProperty('captions');
   });
 
-  it('an Idempotency-Key replayed with an old captions flag is the same request (a replay, not a second render)', async () => {
+  it.each([
+    ['captions: true', true],
+    ['captions: false', false],
+    ['captions: null', null],
+  ])('run and quote with %s are refused 400 captions_moved, and nothing starts', async (_label, captions) => {
+    const body = { draft_id: seedDraft(), product_image_url: PHOTO, captions };
+    const run = await call(runSkillRoute, body, { 'Idempotency-Key': `captions-${String(captions)}` });
+    expect(run).toEqual({ status: 400, body: CAPTIONS_MOVED });
+    expect(await call(quoteSkillRoute, body)).toEqual({ status: 400, body: CAPTIONS_MOVED });
+    expect(started).toHaveLength(0);
+    expect(TABLES.skill_runs ?? []).toHaveLength(0);
+  });
+
+  it('an Idempotency-Key replayed with captions added is refused, not replayed', async () => {
     const id = seedDraft();
     const headers = { 'Idempotency-Key': 'render-no-captions' };
     const first = await call(runSkillRoute, { draft_id: id, product_image_url: PHOTO }, headers);
+    expect(first.status).toBe(202);
     const again = await call(runSkillRoute, { draft_id: id, product_image_url: PHOTO, captions: true }, headers);
-    expect(again.status).toBe(202);
-    expect(again.body).toMatchObject({ skill_run_id: first.body.skill_run_id, idempotent_replay: true });
+    expect(again).toEqual({ status: 400, body: CAPTIONS_MOVED });
     expect(started).toHaveLength(1);
   });
 });

@@ -85,6 +85,10 @@ export class RenderRefusal extends Error {
  * one table the refusals below and the OpenAPI entry (skills-openapi.ts) read.
  */
 export const RENDER_REFUSALS = {
+  captions_moved: {
+    status: 400,
+    when: 'the body has a `captions` field (any value): a render never burns Captions; they are added after the render with the Caption editor (GET /v1/shorts/{id}/captions, POST /v1/shorts/{id}/caption-exports)',
+  },
   draft_not_found: { status: 404, when: 'no such draft on this account' },
   draft_render_in_flight: { status: 409, when: 'a render of this draft is in flight; if it fails, the draft can be rendered again' },
   draft_already_rendered: { status: 409, when: 'this draft was already rendered into a Short; re-voice to make a new draft' },
@@ -97,6 +101,20 @@ export const RENDER_REFUSALS = {
 export type RenderRefusalCode = keyof typeof RENDER_REFUSALS;
 
 const refusal = (code: RenderRefusalCode, message: string) => new RenderRefusal(RENDER_REFUSALS[code].status, code, message);
+
+/** Where Captions went (#22): the message of every `captions_moved` refusal. */
+export const CAPTIONS_MOVED_MESSAGE =
+  'Captions are added after the render with the Caption editor (GET /v1/shorts/{id}/captions, POST /v1/shorts/{id}/caption-exports).';
+
+/**
+ * Whether a Preset render body still carries #10's `captions` field. Any value
+ * counts, even false: the field no longer exists, and a client sending it
+ * should learn where Captions went instead of having it silently dropped.
+ */
+export const hasCaptionsField = (body: unknown): boolean =>
+  typeof body === 'object' && body !== null && !Array.isArray(body) && Object.prototype.hasOwnProperty.call(body, 'captions');
+
+export const captionsMoved = () => refusal('captions_moved', CAPTIONS_MOVED_MESSAGE);
 
 export const draftNotFound = () =>
   refusal('draft_not_found', 'No such draft on this account. Make a draft first (POST /v1/drafts/product-hero).');

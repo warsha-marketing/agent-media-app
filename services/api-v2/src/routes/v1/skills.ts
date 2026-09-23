@@ -14,6 +14,8 @@ import { quoteSkillCredits, quoteInFlightPrimitiveRun } from '../../skills/credi
 import { decideMakeUgcRoute, type MakeUgcProps } from '../../skills/make-ugc-router.js';
 import {
   RenderRefusal,
+  captionsMoved,
+  hasCaptionsField,
   draftRenderInFlight,
   resolveRenderableDraft,
   supabaseProductHeroDraftStore,
@@ -182,6 +184,8 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     res.status(404).json({ error: 'unknown_skill', slug });
     return;
   }
+  // #22: a Preset render never burns Captions; say where they went (same as the run).
+  if (skill.preset && hasCaptionsField(req.body)) return sendRenderRefusal(res, slug, captionsMoved());
   // A12: validate with the SAME schema the run path uses, so a quote can never
   // accept (or price) a body the run would reject with 400 invalid_input.
   const parsed = skill.inputSchema.safeParse(req.body ?? {});
@@ -412,6 +416,10 @@ export async function runSkillRoute(req: Request, res: Response): Promise<void> 
     res.status(404).json({ error: 'unknown_skill', detail: { slug } });
     return;
   }
+
+  // #22: a Preset render never burns Captions. Refused before the Idempotency-Key
+  // is looked at, so a replay that adds `captions` is refused, not replayed.
+  if (skill.preset && hasCaptionsField(req.body)) return sendRenderRefusal(res, slug, captionsMoved());
 
   const parsed = skill.inputSchema.safeParse(req.body);
   if (!parsed.success) {

@@ -57,7 +57,9 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
           description:
             'Workflow submitted, or the original run on an Idempotency-Key replay (idempotent_replay: true). For make_product_hero also music_bed (as in the quote). A render never burns Captions: its Short is clean, and Captions are added afterwards (GET /v1/shorts/{short_id}/captions, POST /v1/shorts/{short_id}/caption-exports).',
         },
-        '400': skillError(sentences('`invalid_input`: the body fails the skill schema', '`image_upload_failed`: the photo could not be re-hosted')),
+        '400': skillError(
+          sentences('`invalid_input`: the body fails the skill schema', '`image_upload_failed`: the photo could not be re-hosted', ...refusalLines(400)),
+        ),
         '402': skillError('`insufficient_credits`: the balance, minus credits reserved by runs in flight, does not cover the quote'),
         '404': skillError(sentences('`unknown_skill`', ...refusalLines(404))),
         '409': skillError(sentences(IDEMPOTENCY_KEY_REUSED, ...refusalLines(409))),
@@ -76,7 +78,7 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
       parameters: [SLUG],
       responses: {
         '200': { description: 'The quote: credits, available (after reservations), committed, sufficient; for a Preset render also music_bed (on, track_id, mood, reason off|no_tracks, detail)' },
-        '400': skillError('`invalid_input`: the body fails the skill schema'),
+        '400': skillError(sentences('`invalid_input`: the body fails the skill schema', ...refusalLines(400))),
         '404': skillError(sentences('`unknown_skill`', ...refusalLines(404))),
         '409': skillError(sentences(...refusalLines(409))),
         '422': skillError(sentences(...refusalLines(422), PRESET_NOT_QUALIFIED, '`unpriceable_input`: pricing fails closed on an input it cannot price')),
