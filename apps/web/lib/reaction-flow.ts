@@ -17,7 +17,9 @@
 /** The Preset this file is for (GET /v1/presets slug). */
 export const REACTION_PRESET = 'reaction';
 
-export type CharacterGender = 'female' | 'male';
+/** A mirror of PERSON_GENDERS in @agentmedia/schema (held equal by the test). */
+export const CHARACTER_GENDERS = ['female', 'male'] as const;
+export type CharacterGender = (typeof CHARACTER_GENDERS)[number];
 
 /** A saved character as the page lists it (GET /api/dashboard/characters). */
 export interface SavedCharacter {

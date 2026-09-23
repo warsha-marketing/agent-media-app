@@ -37,6 +37,7 @@ import {
   type Modesty,
   type ModestyChoice,
   type ModestyErrorCode,
+  type PersonGender,
   type PresetDefinition,
 } from '@agentmedia/schema';
 import { RenderRefusal, refuseCaptionsField, type RenderableDraft } from './product-hero-render.js';
@@ -95,7 +96,7 @@ export const MODESTY_REFUSALS: Readonly<Record<ModestyErrorCode, { status: 400; 
 export function resolvePresetModesty(
   preset: Pick<PresetDefinition, 'name' | 'shotKinds' | 'modesty'>,
   draft: Pick<RenderableDraft, 'dialect'>,
-  gender: 'female' | 'male' | undefined,
+  gender: PersonGender | undefined,
   choice: ModestyChoice | undefined,
 ): Modesty {
   try {

@@ -5,9 +5,10 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { STANDARD_MODESTY } from '../../packages/schema/src/modesty.ts';
+import { PERSON_GENDERS, STANDARD_MODESTY } from '../../packages/schema/src/modesty.ts';
 import { DIALECTS } from '../../packages/schema/src/dialects.ts';
 import {
+  CHARACTER_GENDERS,
   defaultHijab,
   emptyReactionPick,
   hijabOffered,
@@ -47,6 +48,10 @@ describe('Reaction has a web flow', () => {
 });
 
 describe('saved characters', () => {
+  it('offers the shared person genders (mirror of PERSON_GENDERS)', () => {
+    assert.deepEqual([...CHARACTER_GENDERS], [...PERSON_GENDERS]);
+  });
+
   it('reads GET /api/dashboard/characters, dropping malformed rows and non-https thumbnails', () => {
     const list = parseCharacters({
       characters: [

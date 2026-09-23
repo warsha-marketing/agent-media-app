@@ -19,6 +19,14 @@ import { z } from 'zod';
 import type { Dialect } from './dialects.js';
 import type { PresetDefinition } from './preset-definition.js';
 
+/**
+ * The gender of a person (or hands) on screen: female or male only — no
+ * gender-neutral option, as for Voices (CONTEXT.md). The one list every Preset
+ * input that names a gender uses (Hands-on's hand gender, Reaction's person).
+ */
+export const PERSON_GENDERS = ['female', 'male'] as const;
+export type PersonGender = (typeof PERSON_GENDERS)[number];
+
 /** What a shot shows besides the product. Only `hands` and `person` shots carry the Modesty Default. */
 export type ShotSubject = 'product' | 'hands' | 'person';
 
@@ -109,7 +117,7 @@ export function armsAtLeast(arms: ArmCoverage, least: ArmCoverage): boolean {
  */
 export function resolveModesty(
   preset: Pick<PresetDefinition, 'name' | 'shotKinds' | 'modesty'>,
-  ctx: { dialect: Dialect; gender?: 'female' | 'male'; choice?: ModestyChoice },
+  ctx: { dialect: Dialect; gender?: PersonGender; choice?: ModestyChoice },
 ): Modesty {
   const { arms: armRule, hijab: hijabRules } = preset.modesty;
   const choice = ctx.choice ?? {};

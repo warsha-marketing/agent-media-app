@@ -25,11 +25,9 @@
  */
 
 import { z } from 'zod';
-import { REACTION } from '@agentmedia/schema';
+import { PERSON_GENDERS, REACTION, type ModestyChoice, type PersonGender } from '@agentmedia/schema';
 import { RenderRefusal } from './product-hero-render.js';
 import { MODESTY_REFUSALS, presetRenderInputSchema, resolvePresetModesty, type PresetInputResolver } from './preset-inputs.js';
-
-export const CHARACTER_GENDERS = ['female', 'male'] as const;
 
 export const MakeReactionSkillInputSchema = presetRenderInputSchema(REACTION, {
   character_id: z
@@ -39,7 +37,7 @@ export const MakeReactionSkillInputSchema = presetRenderInputSchema(REACTION, {
     .max(100)
     .describe('The saved character who reacts: its character_id (char_…) from list_characters. Must be one of the user’s own characters.'),
   character_gender: z
-    .enum(CHARACTER_GENDERS)
+    .enum(PERSON_GENDERS)
     .describe('The saved character’s gender, "female" or "male" (saved characters do not record it). A hijab is offered only for a woman.'),
 });
 
@@ -72,8 +70,8 @@ export const resolveReactionInputs: PresetInputResolver = async ({ userId, body,
   const modesty = resolvePresetModesty(
     preset,
     draft,
-    body.character_gender as (typeof CHARACTER_GENDERS)[number],
-    body.modesty as Parameters<typeof resolvePresetModesty>[3],
+    body.character_gender as PersonGender,
+    body.modesty as ModestyChoice | undefined,
   );
 
   const ref = String(body.character_id ?? '').trim();

@@ -17,11 +17,11 @@
 
 import type { PresetDefinition } from '../preset-definition.js';
 import { musicBedSet } from '../music-bed/index.js';
-import { STANDARD_MODESTY } from '../modesty.js';
+import { PERSON_GENDERS, STANDARD_MODESTY, type PersonGender } from '../modesty.js';
 
-/** Whose hands are on screen. Male or female only (no gender-neutral option: CONTEXT.md, Voice). */
-export const HAND_GENDERS = ['female', 'male'] as const;
-export type HandGender = (typeof HAND_GENDERS)[number];
+/** Whose hands are on screen: the shared person genders (female or male only). */
+export const HAND_GENDERS = PERSON_GENDERS;
+export type HandGender = PersonGender;
 
 /** Where the hands use the product: a short list, each a place a MENA viewer knows. */
 export const HANDS_ON_SETTINGS = ['dressing_table', 'car', 'majlis', 'kitchen', 'desk', 'outdoors'] as const;

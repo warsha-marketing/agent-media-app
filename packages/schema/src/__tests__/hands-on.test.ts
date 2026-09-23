@@ -15,7 +15,7 @@ import {
 import { PRESETS } from '../preset-registry.js';
 import { STARTING_FRAME_CREDITS, STARTING_FRAME_USD } from '../starting-frames.js';
 import { VIDEO_CLIP_CREDITS, VIDEO_CLIP_USD } from '../video-pricing.js';
-import { resolveModesty, ModestyError } from '../modesty.js';
+import { PERSON_GENDERS, resolveModesty, ModestyError } from '../modesty.js';
 import { HAND_GENDERS, HANDS_ON, HANDS_ON_SETTINGS } from '../presets/hands-on.js';
 
 describe('the Hands-on definition', () => {
@@ -41,6 +41,7 @@ describe('the Hands-on definition', () => {
 
   it('offers male or female hands only, and the short list of settings', () => {
     expect([...HAND_GENDERS]).toEqual(['female', 'male']);
+    expect(HAND_GENDERS).toBe(PERSON_GENDERS); // one gender list for every Preset input
     expect([...HANDS_ON_SETTINGS]).toEqual(['dressing_table', 'car', 'majlis', 'kitchen', 'desk', 'outdoors']);
   });
 });
