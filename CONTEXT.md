@@ -46,12 +46,24 @@ Arabic speech recorded by a real person (the user or a voice actor) for one Shor
 What the user asks for, in any language; not what gets spoken.
 _Avoid_: prompt, script
 
+**Product Details**:
+The facts about the product being sold (name, description, notes or ingredients, benefits), given separately from the Brief; the Script sells these, never invents them.
+_Avoid_: product copy, description (alone)
+
 **Script**:
-The exact dialect text spoken in a Short, fully diacritized (with تشكيل), and reviewed by the user before voicing.
+The exact dialect text spoken in a Short, in plain dialect spelling with Targeted Diacritics and optional Delivery Tags, reviewed by the user before voicing.
 _Avoid_: copy, text, prompt
 
+**Targeted Diacritics**:
+تشكيل placed only on words the voice could misread (product nouns, notes, ingredients, and words with a common second reading, e.g. جِلد, مِسك); everything else stays unmarked.
+_Avoid_: full diacritics, tashkeel (alone)
+
+**Delivery Tag**:
+A bracketed direction inside a Script that shapes how the next words are spoken (e.g. [softly], [excited]); it is never spoken and never shown in Captions.
+_Avoid_: audio tag, emotion tag
+
 **Captions**:
-Right-to-left Arabic text burned into a Short, timed from the voiced Script. Opt-in.
+Right-to-left Arabic text burned into a Short, timed from the voiced Script, without its Delivery Tags. Opt-in.
 _Avoid_: subtitles
 
 **Qualified Preset**:
