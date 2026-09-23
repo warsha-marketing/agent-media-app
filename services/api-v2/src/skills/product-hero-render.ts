@@ -25,6 +25,7 @@
  * treated as free and replaced in one step. A succeeded run's claim is permanent.
  */
 
+import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { CharacterAlignment, PresetDefinition } from '@agentmedia/schema';
 
@@ -115,6 +116,20 @@ export const hasCaptionsField = (body: unknown): boolean =>
   typeof body === 'object' && body !== null && !Array.isArray(body) && Object.prototype.hasOwnProperty.call(body, 'captions');
 
 export const captionsMoved = () => refusal('captions_moved', CAPTIONS_MOVED_MESSAGE);
+
+/**
+ * Wrap a Preset render's input schema so #10's old `captions` field (any value)
+ * is refused with the Caption editor pointer instead of being silently dropped.
+ * The run and quote routes answer the same case first, as 400 captions_moved;
+ * this keeps the schema itself honest for anyone else validating with it.
+ * Every Preset render skill's schema (make_product_hero, make_reaction, …) uses it.
+ */
+export function refuseCaptionsField<T extends z.ZodTypeAny>(schema: T): z.ZodEffects<T, z.output<T>, unknown> {
+  return z.preprocess((raw, ctx) => {
+    if (hasCaptionsField(raw)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['captions'], message: CAPTIONS_MOVED_MESSAGE });
+    return raw;
+  }, schema);
+}
 
 export const draftNotFound = () =>
   refusal('draft_not_found', 'No such draft on this account. Make a draft first (POST /v1/drafts/product-hero).');

@@ -23,6 +23,8 @@ export * from './product-hero.js';
 // pricing, and the registry of every Preset. See src/preset-definition.ts.
 export * from './preset-definition.js';
 export * from './preset-registry.js';
+// Reaction Preset (#19): a silent reacting face intercut with the product.
+export * from './presets/reaction.js';
 // Modesty Default (#17): levels, the per-Preset rule, the user-facing choice and its resolution.
 export * from './modesty.js';
 // Delivery Tags — the allowed list and the strip helpers (Captions, viewer display).

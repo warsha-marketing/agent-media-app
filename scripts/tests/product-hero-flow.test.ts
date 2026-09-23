@@ -83,7 +83,7 @@ describe('quote and run bodies', () => {
   it('maps workflow steps to progress', () => {
     assert.deepEqual(viewOfRun({ status: 'submitted', current_step: 'pending' }), { kind: 'rendering', stage: 'queued', shot: null, label: 'Queued' });
     assert.equal((viewOfRun({ status: 'running', current_step: 'audio' }) as { stage: string }).stage, 'voice');
-    assert.deepEqual(viewOfRun({ status: 'running', current_step: 'clip_2' }), { kind: 'rendering', stage: 'visuals', shot: 2, label: 'Generating product shot 2' });
+    assert.deepEqual(viewOfRun({ status: 'running', current_step: 'clip_2' }), { kind: 'rendering', stage: 'visuals', shot: 2, label: 'Generating shot 2' });
     assert.equal((viewOfRun({ status: 'running', current_step: 'mux' }) as { stage: string }).stage, 'cut');
   });
   it('a succeeded run is the Short', () => {

@@ -199,9 +199,11 @@ flowchart LR
 ```
 
 The agent-facing surface is deliberately curated. Of the internal skills, the
-hosted connector lists exactly six: `make_ugc`, `make_podcast`,
+hosted connector lists exactly seven: `make_ugc`, `make_podcast`,
 `make_subtitles`, `make_product_hero` (renders an approved Product Hero draft
-into a Short; see ADR 0001), `create_character`, `list_characters`. The set of
+into a Short; see ADR 0001), `make_reaction` (renders an approved draft as a
+Reaction Short: a saved character reacting silently, intercut with the
+product), `create_character`, `list_characters`. The set of
 `agentFacing` skills is pinned by `agent-facing-surface.test.ts`. Fewer,
 well-described tools beat a large catalog for agent context.
 

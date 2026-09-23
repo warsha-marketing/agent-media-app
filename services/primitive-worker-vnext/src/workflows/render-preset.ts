@@ -24,7 +24,10 @@
  *                        shot that shows a person or hands, #17). Shots
  *                        come from the SAME plan the quote priced (planPresetShots
  *                        over the draft's duration), so the charge is the quote.
- *   3. muxProductHero  — hard-cuts the clips on the 9:16 canvas, trims (or, if a
+ *                        A shot showing a person also gets the person's reference
+ *                        (character_image_url, Reaction #19).
+ *   3. muxProductHero  — hard-cuts the clips on the 9:16 canvas (an intercut
+ *                        Preset's shots each cut to their planned share), trims (or, if a
  *                        clip ran a few ms short, holds) the visuals to the audio's
  *                        exact length, and muxes the draft audio in whole. Audio is
  *                        never trimmed or stretched.
@@ -79,6 +82,12 @@ export interface PresetRenderInput {
   duration_ms: number;
   /** R2-hosted, moderated product photo. */
   product_image_url: string;
+  /**
+   * R2-hosted, moderated reference of the person on screen (Reaction, #19: the
+   * saved character's portrait or sheet, re-hosted by api-v2). Passed to the
+   * shots whose kind shows a person, and to no other shot.
+   */
+  character_image_url?: string;
   aspect_ratio: '9:16';
   /**
    * Music Bed (#9): the track api-v2 chose from the Preset's set
@@ -110,6 +119,7 @@ export interface PresetRenderResult {
 /** Where each input a Preset can require is carried on the render input. */
 const PRESET_INPUT_FIELDS: Record<PresetInput, keyof PresetRenderInput> = {
   product_image: 'product_image_url',
+  character: 'character_image_url',
 };
 
 /** A finished cut may differ from the audio by at most about one frame. */
@@ -211,6 +221,10 @@ export async function renderPreset(
         shot_kind: shots[i].kind,
         prompt: presetShotPrompt(preset, shots[i].kind, modesty),
         generate_audio: false,
+        // The person's reference only where the shot shows that person (#19).
+        ...(preset.shotKinds[shots[i].kind].shows === 'person' && input.character_image_url
+          ? { character_image_url: input.character_image_url }
+          : {}),
       });
       clipUrls.push(clip.video_url);
       totalUsd += clip.credits_actual_usd;
@@ -227,6 +241,8 @@ export async function renderPreset(
       audio_duration_ms: audio.duration_ms,
       aspect_ratio: preset.aspectRatio,
       preset: preset.id,
+      // Intercut Presets (#19) cut each shot to its planned share of the audio.
+      ...(shots.every((s) => s.onScreenMs !== undefined) ? { shot_ms: shots.map((s) => s.onScreenMs!) } : {}),
     });
     // ── 3b. Music Bed (#9): ducked under the voice; never lengthens the Short ─
     const musicBed = input.music_bed ?? null;

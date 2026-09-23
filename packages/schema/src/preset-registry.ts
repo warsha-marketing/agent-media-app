@@ -8,9 +8,11 @@
 
 import type { PresetDefinition } from './preset-definition.js';
 import { PRODUCT_HERO } from './product-hero.js';
+import { REACTION } from './presets/reaction.js';
 
 export const PRESETS = {
   product_hero: PRODUCT_HERO,
+  reaction: REACTION,
 } as const satisfies Record<string, PresetDefinition>;
 
 export type PresetId = keyof typeof PRESETS;

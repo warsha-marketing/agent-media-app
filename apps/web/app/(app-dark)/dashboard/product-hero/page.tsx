@@ -3,9 +3,15 @@
 'use client';
 
 /**
- * /dashboard/product-hero — a Product Hero Short, end to end (#4, #6, #7, #8).
+ * /dashboard/product-hero — a Preset Short, end to end (#4, #6, #7, #8; Reaction #19).
  *
- *   Preset → Dialect → Photo → Brief → Script review + voice preview → cost confirmation → render → Short
+ *   Preset → Dialect → Photo → [Preset inputs] → Brief → Script review + voice preview → cost confirmation → render → Short
+ *
+ * Every Preset with a web flow (lib/preset-picker.ts WEB_FLOWS) runs through
+ * this page and renders with its own skill (the picker's `skill`). Reaction adds
+ * only its own inputs — the saved character who reacts, their gender and the
+ * hijab option (components/reaction-character-picker.tsx, lib/reaction-flow.ts)
+ * — which join the render request.
  *
  * The flow starts with the Preset picker (GET /v1/presets): each Preset with
  * every Dialect marked available (a Qualified Preset) or coming soon. Only
@@ -61,6 +67,7 @@ import {
   renderBody, // #9 Music Bed
   renderReducer,
   runToResume,
+  skillOf,
   startedRunId,
   unknownDeliveryTagMessage,
   unknownDeliveryTags,
@@ -80,6 +87,16 @@ import {
 } from '@/lib/preset-picker';
 import { PHOTO_ACCEPT, uploadProductPhoto } from '@/lib/product-hero-upload';
 import { RenderPanel, Stepper } from '@/components/product-hero-render';
+import { ReactionCharacterPicker } from '@/components/reaction-character-picker';
+import {
+  REACTION_PRESET,
+  emptyReactionPick,
+  parseCharacters,
+  reactionInputs,
+  reactionRefusalLine,
+  type ReactionPick,
+  type SavedCharacter,
+} from '@/lib/reaction-flow';
 
 /** A Dialect id as GET /v1/presets names it (levantine, gulf, …). */
 type Dialect = string;
@@ -108,7 +125,6 @@ interface Photo {
 
 const PHOTO_KEY = 'product-hero:photo';
 const POLL_MS = 4000;
-const SKILL = 'make_product_hero';
 
 function savedPhoto(): Photo | null {
   try {
@@ -203,7 +219,28 @@ export default function ProductHeroPage() {
   const scriptInput = useRef<HTMLTextAreaElement>(null);
 
   const preset = picker?.presets.find((p) => p.slug === presetSlug) ?? null;
+  const isReaction = preset?.slug === REACTION_PRESET;
   const choices = dialectChoices(preset, picker?.operator ?? false);
+
+  // Reaction (#19): the saved character who reacts, their gender, the hijab option.
+  const [reactionPick, setReactionPick] = useState<ReactionPick>(emptyReactionPick);
+  const [characters, setCharacters] = useState<SavedCharacter[] | null>(null);
+  const [charactersError, setCharactersError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isReaction || characters !== null) return;
+    void (async () => {
+      try {
+        const r = await fetch('/api/dashboard/characters', { credentials: 'include', cache: 'no-store' });
+        const j = (await r.json().catch(() => ({}))) as unknown;
+        const list = r.ok ? parseCharacters(j) : null;
+        if (!list) throw new Error((j as { error?: ApiError })?.error?.message ?? `HTTP ${r.status}`);
+        setCharacters(list);
+      } catch (e) {
+        setCharacters([]);
+        setCharactersError((e as Error).message);
+      }
+    })();
+  }, [isReaction, characters]);
   const sampleDialect = choices.find((c) => c.dialect === dialect)?.sample ?? false;
 
   /** The Preset picker: Presets and their Dialects, read fresh (a pair may be qualified or withdrawn any time). */
@@ -462,7 +499,11 @@ export default function ProductHeroPage() {
 
   const handleRefusal = useCallback((draftId: string, outcome: ApiOutcome) => {
     if (outcome.kind === 'resume_in_flight' || outcome.kind === 'already_rendered') void followDraftRun(draftId, outcome);
-    else dispatch({ type: 'refused', outcome });
+    else {
+      // Reaction's own refusals (#19) in the page's words.
+      const line = outcome.kind === 'error' ? reactionRefusalLine(outcome.code) : null;
+      dispatch({ type: 'refused', outcome: line && outcome.kind === 'error' ? { ...outcome, message: line } : outcome });
+    }
   }, [followDraftRun]);
 
   // Only the latest quote request may land (a toggle can race an answer).
@@ -470,7 +511,7 @@ export default function ProductHeroPage() {
   const requestQuote = useCallback(async (choice: RenderChoice) => {
     const seq = ++quoteSeq.current;
     dispatch({ type: 'quote_requested' });
-    const r = await postJson(`/api/v1/skills/${SKILL}/quote`, quoteBody(choice));
+    const r = await postJson(`/api/v1/skills/${skillOf(choice)}/quote`, quoteBody(choice));
     if (seq !== quoteSeq.current) return;
     const quote = r.status === 200 ? parseQuote(r.body) : null;
     if (quote) dispatch({ type: 'quote_loaded', quote });
@@ -481,10 +522,27 @@ export default function ProductHeroPage() {
   // quote, the Confirm and the run request all take this one object.
   const draftId = draft?.id ?? null;
   const photoUrl = photo?.url ?? null;
+  // The Preset's skill and own fields (Reaction: character, gender, hijab) are
+  // part of the request; a Reaction pick that is not complete cannot be priced.
+  const skill = preset?.skill || undefined;
+  const presetInputs = isReaction ? reactionInputs(reactionPick) : null;
+  const presetInputsKey = JSON.stringify(presetInputs);
   const choice = useMemo<RenderChoice | null>(
-    () => (draftId && photoUrl ? { draftId, photoUrl, music } : null),
-    [draftId, photoUrl, music],
+    () => {
+      if (!draftId || !photoUrl) return null;
+      if (isReaction && !presetInputs) return null;
+      return { draftId, photoUrl, music, skill, presetInputs };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- presetInputsKey stands for presetInputs
+    [draftId, photoUrl, music, skill, isReaction, presetInputsKey],
   );
+
+  // A different Preset or Reaction pick is a different request: withdraw the
+  // quote on screen and re-quote (the reducer leaves a running render alone).
+  const requestKey = `${skill ?? ''}|${presetInputsKey}`;
+  useEffect(() => {
+    dispatch({ type: 'invalidate_quote' });
+  }, [requestKey]);
 
   // Price the render as soon as there is a voiced draft and a photo. Only a
   // quote is fetched here: nothing is charged until Confirm.
@@ -515,7 +573,7 @@ export default function ProductHeroPage() {
     const { choice: started, key } = starting;
     void (async () => {
       // aspect_ratio is left to the server's default: Product Hero is always 9:16.
-      const r = await postJson(`/api/v1/skills/${SKILL}/run`, renderBody(started), { 'Idempotency-Key': key });
+      const r = await postJson(`/api/v1/skills/${skillOf(started)}/run`, renderBody(started), { 'Idempotency-Key': key });
       const runId = r.status === 202 ? startedRunId(r.body) : null;
       if (runId) {
         dispatch({ type: 'run_started', runId });
@@ -711,6 +769,17 @@ export default function ProductHeroPage() {
           </p>
         ) : null}
       </section>
+
+      {isReaction ? (
+        <ReactionCharacterPicker
+          characters={characters}
+          error={charactersError}
+          pick={reactionPick}
+          dialect={draft?.dialect ?? dialect}
+          disabled={renderLocked}
+          onChange={setReactionPick}
+        />
+      ) : null}
 
       {/* Brief */}
       <section className="mt-8 flex flex-col gap-3 rounded-2xl p-5" style={card}>
@@ -908,6 +977,13 @@ export default function ProductHeroPage() {
         onNewPhoto={choosePhotoAgain}
         music={music}
         onMusicChange={setMusicOn}
+        presetTodo={
+          isReaction
+            ? [!reactionPick.characterId ? 'pick a saved character' : null, !reactionPick.gender ? 'choose their gender' : null].filter(
+                (t): t is string => !!t,
+              )
+            : undefined
+        }
       />
 
       {history.length > 1 ? (

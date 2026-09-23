@@ -27,6 +27,7 @@ import { readIdempotencyKey, replayMatches, requestFingerprint, sendIdempotencyK
 import type { PresetDefinition } from '@agentmedia/schema';
 import { PresetError, assertPresetAvailable } from '../../presets/qualification.js';
 import { supabasePresetAccess } from '../../presets/providers.js';
+import type { PresetInputs } from '../../skills/preset-inputs.js'; // #19
 
 /**
  * Credits already COMMITTED to the user's in-flight (submitted/running) jobs.
@@ -203,9 +204,13 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
   if (skill.preset) {
     const draft = await resolveDraftOrRespond(res, userId, slug, skill.preset, input);
     if (!draft) return;
+    // A Preset's own inputs (Reaction: character, Modesty Default) refuse here as on the run.
+    const own = await presetInputsOrRespond(res, userId, slug, skill.preset, input, draft, 'quote');
+    if (!own) return;
     input = { ...input, duration_ms: draft.duration_ms };
     quoteExtras = {
       music_bed: musicBedView(presetMusicBed(skill.preset, input.music, draft.id)),
+      ...own.quote,
     };
   }
   // Match the run preflight and worker ledger in self-hosted billing mode.
@@ -761,6 +766,33 @@ async function resolveDraftOrRespond(
 }
 
 /**
+ * The Preset skill's own inputs (SkillEntry.presetInputs, e.g. Reaction's saved
+ * character and Modesty Default, #19), or none. Called by the quote and the run
+ * after the draft is resolved; a refusal is sent and null returned.
+ */
+async function presetInputsOrRespond(
+  res: Response,
+  userId: string,
+  slug: string,
+  preset: PresetDefinition,
+  body: Record<string, unknown>,
+  draft: RenderableDraft,
+  stage: 'quote' | 'run',
+): Promise<PresetInputs | null> {
+  const resolve = SKILLS[slug].presetInputs;
+  if (!resolve) return { run: {}, workflow: {}, quote: {} };
+  try {
+    return await resolve({ userId, body, draft, preset, stage, db: supabase, rehostImage: uploadUserImageFromUrl });
+  } catch (err) {
+    if (err instanceof RenderRefusal) sendRenderRefusal(res, slug, err);
+    else if (!respondIfModerationBlocked(res, err, slug)) {
+      res.status(500).json({ error: 'preset_inputs_failed', skill: slug, detail: errorMessage(err) });
+    }
+    return null;
+  }
+}
+
+/**
  * A Preset render (make_product_hero, …): render an approved draft into a Short
  * of that Preset. Reads the Preset's definition; never branches on its name.
  *
@@ -826,6 +858,9 @@ async function dispatchPresetRender(
 
   const draft = await resolveDraftOrRespond(res, userId, slug, preset, body);
   if (!draft) return;
+  // The Preset's own inputs (Reaction #19: saved character, Modesty Default).
+  const own = await presetInputsOrRespond(res, userId, slug, preset, body, draft, 'run');
+  if (!own) return;
 
   let productImageUrl: string;
   try {
@@ -850,6 +885,7 @@ async function dispatchPresetRender(
     duration_ms: draft.duration_ms,
     music: body.music !== false,
     music_bed: musicBed.on ? musicBed.track.id : null,
+    ...own.run,
   };
 
   const preflight = await preflightCreditCheck(userId, slug, runInput);
@@ -930,6 +966,7 @@ async function dispatchPresetRender(
     product_image_url: productImageUrl,
     aspect_ratio: preset.aspectRatio,
     music_bed: musicBedWorkflowInput(musicBed), // #9
+    ...own.workflow,
   };
 
   try {

@@ -34,6 +34,7 @@ import { SKILLS } from '../skills/registry.js';
  *  in the registry does not compile until it has its picker line. */
 const PICKER_SUMMARIES: Record<PresetId, string> = {
   product_hero: 'Silent product shots cut to an Arabic voice-over. Only your product on screen.',
+  reaction: 'Your saved character reacts silently to your product, intercut with product shots, under an Arabic voice-over.',
 };
 
 /**
