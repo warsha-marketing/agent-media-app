@@ -64,6 +64,8 @@ import { skillRouteOpenApi } from './routes/v1/skills-openapi.js';
 import { productionDraftDeps } from './drafts/providers.js';
 import { registerVoiceRoutes, voiceOpenApi } from './routes/v1/voices.js';
 import { productionVoiceDeps } from './voices/providers.js';
+import { registerPresetRoutes, presetOpenApi } from './routes/v1/presets.js';
+import { productionPresetDeps } from './presets/providers.js';
 import {
   isPrimitivesRouteEnabled,
   portraitGpt2PrimitiveRoute,
@@ -687,6 +689,9 @@ function buildOpenApiSpec() {
   // Voice catalog (#7): the picker and the operator approve/revoke routes.
   const voiceSpec = voiceOpenApi();
   Object.assign(paths, voiceSpec.paths);
+  // Preset picker and Qualified Presets (#8).
+  const presetSpec = presetOpenApi();
+  Object.assign(paths, presetSpec.paths);
   // ── The loose surface (P2/P3) — what the MCP connector exposes ────────
   // Same zod as the routes and the tools, so the spec cannot describe a
   // field the server does not accept.
@@ -810,6 +815,7 @@ function buildOpenApiSpec() {
         ...skillSpec.schemas,
         ...draftSpec.schemas,
         ...voiceSpec.schemas,
+        ...presetSpec.schemas,
       },
     },
   };
@@ -923,6 +929,11 @@ const draftLimiter = rateLimit({
 // ── Voice catalog (#7): Approved Voices per Dialect ────────────────────────
 // Users list Approved Voices; operators (ADMIN_EMAILS) add, approve and revoke.
 registerVoiceRoutes(app, { generateLimiter, readLimiter, authMiddleware }, productionVoiceDeps(supabase));
+
+// ── Preset picker and Qualified Presets (#8) ───────────────────────────────
+// Users see the Presets and Dialects they are offered; operators qualify and
+// withdraw Preset–Dialect pairs. Drafts and renders refuse unqualified pairs.
+registerPresetRoutes(app, { generateLimiter, readLimiter, authMiddleware }, productionPresetDeps(supabase));
 
 // ── vNext primitive routes (feature-flagged off by default) ────────────────
 // Enabled when VNEXT_PRIMITIVES_ENABLED=true. Dispatches to a fresh

@@ -27,6 +27,11 @@
  * is refused with VOICE_NOT_APPROVED before any provider is paid. The draft
  * stores which catalog Voice spoke it.
  *
+ * Only a Qualified Preset (presets/, #8) is drafted: a Dialect Product Hero is
+ * not qualified for is refused with PRESET_NOT_QUALIFIED before any provider is
+ * paid, on create and re-voice alike, unless the caller is an operator making
+ * reviewer samples.
+ *
  * Product Details are the facts the Script sells (name, notes, ingredients,
  * benefits); they are stored on the draft and carried over on re-voice.
  * Delivery Tags are voiced only by a TTS model that honours them (eleven_v3);
@@ -41,17 +46,15 @@ import { z } from 'zod';
 import { DELIVERY_TAGS, formatDeliveryTags, modelHonoursDeliveryTags, stripDeliveryTags } from '@agentmedia/schema';
 import { generatedScriptIssues, scriptTextIssues, type ScriptIssue } from './script-check.js';
 import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
+import { PresetError, assertPresetAvailable, type PresetAccess } from '../presets/qualification.js';
 
 // ── Vocabulary (CONTEXT.md) ──────────────────────────────────────────────────
 
-/** Dialects a Product Hero draft can be requested in. Gulf is modelled now so
- *  it can be switched on (#8) without a schema change; it is refused until then. */
+/** Dialects a Script can be written in (each has a Dialect guide). Which of them
+ *  a user may draft is a Qualified Preset question (presets/, #8). */
 export const DIALECTS = ['levantine', 'gulf'] as const;
 export type Dialect = (typeof DIALECTS)[number];
 export const DialectSchema = z.enum(DIALECTS);
-
-/** Dialects whose Script writing + Voice are live today. */
-export const LIVE_DIALECTS: ReadonlySet<Dialect> = new Set<Dialect>(['levantine']);
 
 export const PRESET = 'product_hero' as const;
 
@@ -210,6 +213,8 @@ export interface DraftDeps {
   };
   /** The Voice catalog, read at voicing time so a revoked Voice is refused at once. */
   voices: Pick<VoiceDeps['repo'], 'get'>;
+  /** Qualified Presets (#8), read per draft so a withdrawn pair is refused at once. */
+  presets: PresetAccess;
   newId(): string;
 }
 
@@ -258,14 +263,16 @@ function voiceRef(voice: VoiceRow): VoiceRef {
   return { provider: voice.provider, provider_voice_id: voice.provider_voice_id };
 }
 
-function assertLive(dialect: Dialect): void {
-  if (!LIVE_DIALECTS.has(dialect)) {
-    throw new DraftError(
-      422,
-      'DIALECT_NOT_AVAILABLE',
-      `The ${dialect} Dialect is coming soon and cannot be drafted yet. Available: ${[...LIVE_DIALECTS].join(', ')}.`,
-      { dialect, available: [...LIVE_DIALECTS] },
-    );
+/**
+ * Only a Qualified Preset may be drafted (PRESET_NOT_QUALIFIED otherwise); an
+ * operator may draft any pair, to make the sample Shorts native reviewers judge.
+ */
+async function assertQualified(deps: DraftDeps, userId: string, dialect: Dialect): Promise<void> {
+  try {
+    await assertPresetAvailable(deps.presets, userId, PRESET, dialect);
+  } catch (err) {
+    if (err instanceof PresetError) throw new DraftError(err.status, err.code, err.message, err.details);
+    throw err;
   }
 }
 
@@ -438,7 +445,7 @@ async function writeAndVoice(deps: DraftDeps, request: WriteScriptInput, voice: 
  * second miss is returned to the user (with the Script, so they can edit it).
  */
 export async function createDraftFromBrief(deps: DraftDeps, userId: string, input: CreateDraftInput): Promise<DraftRow> {
-  assertLive(input.dialect);
+  await assertQualified(deps, userId, input.dialect);
   const voice = await approvedVoice(deps, input.voice_id, input.dialect);
   const productDetails = input.product_details?.trim() || null;
   const request: WriteScriptInput = {
@@ -501,7 +508,7 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
     productDetails = parent.product_details ?? null;
     voiceId ??= parent.voice_catalog_id;
   }
-  assertLive(input.dialect);
+  await assertQualified(deps, userId, input.dialect);
   const issues = scriptTextIssues(input.script);
   if (issues.length) throw refuseEditedScript(issues);
   if (!voiceId) {

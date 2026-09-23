@@ -25,6 +25,10 @@ function refusalLines(status: number): string[] {
 
 const sentences = (...parts: string[]) => parts.join('. ');
 
+/** The Qualified Preset gate (#8, presets/qualification.ts), checked after the draft refusals. */
+const PRESET_NOT_QUALIFIED =
+  "`preset_not_qualified` (make_product_hero): Product Hero is not a Qualified Preset in the draft's Dialect (carries preset, dialect and available; see GET /v1/presets)";
+
 const SLUG = { name: 'slug', in: 'path', required: true, schema: { type: 'string' } };
 
 export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: Record<string, unknown> } {
@@ -51,7 +55,7 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
         '402': skillError('`insufficient_credits`: the balance, minus credits reserved by runs in flight, does not cover the quote'),
         '404': skillError(sentences('`unknown_skill`', ...refusalLines(404))),
         '409': skillError(sentences(...refusalLines(409))),
-        '422': skillError(sentences(...refusalLines(422), '`unsafe_content`: the photo failed moderation')),
+        '422': skillError(sentences(...refusalLines(422), PRESET_NOT_QUALIFIED, '`unsafe_content`: the photo failed moderation')),
         '502': skillError('`temporal_dispatch_failed`: the workflow could not be started; nothing was charged and a Product Hero draft stays renderable'),
         '503': skillError('`temporal_unconfigured`'),
       },
@@ -69,7 +73,7 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
         '400': skillError('`invalid_input`: the body fails the skill schema'),
         '404': skillError(sentences('`unknown_skill`', ...refusalLines(404))),
         '409': skillError(sentences(...refusalLines(409))),
-        '422': skillError(sentences(...refusalLines(422), '`unpriceable_input`: pricing fails closed on an input it cannot price')),
+        '422': skillError(sentences(...refusalLines(422), PRESET_NOT_QUALIFIED, '`unpriceable_input`: pricing fails closed on an input it cannot price')),
       },
     },
   };

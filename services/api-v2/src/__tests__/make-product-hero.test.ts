@@ -77,7 +77,14 @@ function query(table: string) {
   return qb;
 }
 
-vi.mock('../server.js', () => ({ supabase: { from: (t: string) => query(t) } }));
+/** Auth users the operator check reads (ADMIN_EMAILS + a confirmed address). */
+const AUTH_USERS: Record<string, { email: string; email_confirmed_at: string | null }> = {};
+vi.mock('../server.js', () => ({
+  supabase: {
+    from: (t: string) => query(t),
+    auth: { admin: { getUserById: async (id: string) => ({ data: { user: AUTH_USERS[id] ?? null }, error: null }) } },
+  },
+}));
 
 const uploads: string[] = [];
 const UPLOAD: { fails?: string } = {};
@@ -184,6 +191,9 @@ const PHOTO = 'https://cdn.example.com/bottle.jpg';
 
 beforeEach(() => {
   for (const k of Object.keys(TABLES)) delete TABLES[k];
+  for (const k of Object.keys(AUTH_USERS)) delete AUTH_USERS[k];
+  // Product Hero × Levantine is a Qualified Preset, as the migration seeds it.
+  TABLES.qualified_presets = [{ preset: 'product_hero', dialect: 'levantine', state: 'qualified' }];
   delete UPLOAD.fails;
   delete HOOKS.failInsert;
   delete HOOKS.beforeUpdate;
@@ -507,6 +517,66 @@ describe('make_product_hero run status reports what was charged and refunded', (
   });
 });
 
+// ── Qualified Presets (#8) ──────────────────────────────────────────────────
+
+describe('make_product_hero renders only a Qualified Preset', () => {
+  const OPERATOR = 'cccccccc-0000-4000-8000-000000000003';
+  const gulfVoice = () => seedVoice({ dialect: 'gulf' });
+
+  beforeEach(() => {
+    process.env.ADMIN_EMAILS = 'ops@agentmedia.test';
+    AUTH_USERS[OPERATOR] = { email: 'ops@agentmedia.test', email_confirmed_at: '2026-09-01T00:00:00Z' };
+  });
+  afterEach(() => {
+    delete process.env.ADMIN_EMAILS;
+  });
+
+  it('refuses a user’s draft in a Dialect Product Hero is not qualified for, on quote and run, before anything is spent', async () => {
+    const id = seedDraft({ dialect: 'gulf', voice_catalog_id: gulfVoice() });
+    for (const route of [quoteSkillRoute, runSkillRoute]) {
+      const r = await call(route, OWNER, { draft_id: id, product_image_url: PHOTO });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ error: 'preset_not_qualified', skill: 'make_product_hero', preset: 'product_hero', dialect: 'gulf' });
+    }
+    expect(uploads).toHaveLength(0);
+    expect(started).toHaveLength(0);
+    expect(draft(id).render_run_id).toBeNull();
+  });
+
+  it('refuses a withdrawn pair at once, even Levantine', async () => {
+    TABLES.qualified_presets[0].state = 'withdrawn';
+    const id = seedDraft();
+    const r = await call(runSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toBe('preset_not_qualified');
+    expect(started).toHaveLength(0);
+  });
+
+  it('renders a Gulf draft once Gulf is qualified', async () => {
+    TABLES.qualified_presets.push({ preset: 'product_hero', dialect: 'gulf', state: 'qualified' });
+    const id = seedDraft({ dialect: 'gulf', voice_catalog_id: gulfVoice() });
+    expect((await call(quoteSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO })).status).toBe(200);
+    expect((await call(runSkillRoute, OWNER, { draft_id: id, product_image_url: PHOTO })).status).toBe(202);
+    expect(started).toHaveLength(1);
+  });
+
+  it('an operator renders an unqualified pair (a reviewer sample Short)', async () => {
+    const id = seedDraft({ user_id: OPERATOR, dialect: 'gulf', voice_catalog_id: gulfVoice() });
+    expect((await call(quoteSkillRoute, OPERATOR, { draft_id: id, product_image_url: PHOTO })).status).toBe(200);
+    const r = await call(runSkillRoute, OPERATOR, { draft_id: id, product_image_url: PHOTO });
+    expect(r.status).toBe(202);
+    expect(draft(id).render_run_id).toBe(r.body.skill_run_id);
+  });
+
+  it('an operator whose address is not confirmed is a regular user', async () => {
+    AUTH_USERS[OPERATOR].email_confirmed_at = null;
+    const id = seedDraft({ user_id: OPERATOR, dialect: 'gulf', voice_catalog_id: gulfVoice() });
+    const r = await call(runSkillRoute, OPERATOR, { draft_id: id, product_image_url: PHOTO });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toBe('preset_not_qualified');
+  });
+});
+
 // ── OpenAPI ─────────────────────────────────────────────────────────────────
 
 describe('make_product_hero in the OpenAPI spec', () => {
@@ -524,6 +594,9 @@ describe('make_product_hero in the OpenAPI spec', () => {
     }
     expect(paths['/v1/skills/{slug}/run'].post.parameters.map((p) => p.name)).toContain('Idempotency-Key');
     expect(paths['/v1/skills/{slug}/quote'].post.responses['422'].description).toContain('`unpriceable_input`');
+    for (const path of ['/v1/skills/{slug}/run', '/v1/skills/{slug}/quote']) {
+      expect(paths[path].post.responses['422'].description).toContain('`preset_not_qualified`');
+    }
     const runStatus = (skillRouteOpenApi().paths['/v1/skills/runs/{skill_run_id}'] as {
       get: { responses: { '200': { content: { 'application/json': { schema: { properties: Record<string, { properties?: Record<string, { enum?: string[] }> }> } } } } } };
     }).get.responses['200'].content['application/json'].schema;
