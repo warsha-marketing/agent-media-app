@@ -24,7 +24,8 @@
       "dependsOn": ["^build"]
     },
     "test": {
-      "dependsOn": ["build"]
+      "dependsOn": ["build"],
+      "passThroughEnv": ["TEMPORAL_TEST_SERVER_PATH"]
     },
     "dev": {
       "cache": false,

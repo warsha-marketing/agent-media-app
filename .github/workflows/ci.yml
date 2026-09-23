@@ -179,6 +179,40 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The worker's workflow tests run Temporal's time-skipping test server, a
+      # native binary the SDK would otherwise download from temporal.download on
+      # every run (into the OS temp dir, with a 1-day TTL keyed on file mtime,
+      # so caching that dir would not stick). Instead: fetch the same binary the
+      # SDK would pick once per @temporalio/testing version, cache it, and hand
+      # it to the harness via TEMPORAL_TEST_SERVER_PATH (an existing path, no TTL).
+      - name: Resolve Temporal test server version
+        id: temporal
+        shell: bash
+        run: |
+          version=$(node -p "require('./services/primitive-worker-vnext/node_modules/@temporalio/testing/package.json').version")
+          echo "sdk_version=$version" >> "$GITHUB_OUTPUT"
+          echo "TEMPORAL_TEST_SERVER_PATH=$HOME/.cache/temporal-test-server/temporal-test-server" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        id: temporal-cache
+        with:
+          path: ~/.cache/temporal-test-server
+          key: ${{ runner.os }}-temporal-test-server-${{ steps.temporal.outputs.sdk_version }}
+
+      - name: Fetch Temporal test server
+        if: steps.temporal-cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          SDK_VERSION: ${{ steps.temporal.outputs.sdk_version }}
+        run: |
+          # Same lookup the SDK does: which test server this SDK version uses.
+          info=$(curl -fsSL "https://temporal.download/temporal-test-server/default?arch=amd64&platform=linux&sdk-name=sdk-typescript&sdk-version=${SDK_VERSION}")
+          archive=$(echo "$info" | jq -r .archiveUrl)
+          file=$(echo "$info" | jq -r .fileToExtract)
+          curl -fsSL "$archive" | tar -xz -C "$RUNNER_TEMP" "$file"
+          mkdir -p "$(dirname "$TEMPORAL_TEST_SERVER_PATH")"
+          install -m 755 "$RUNNER_TEMP/$file" "$TEMPORAL_TEST_SERVER_PATH"
+
       - name: Build all packages
         run: pnpm build
 

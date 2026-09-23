@@ -20,6 +20,31 @@ legacy `media-worker-v2` — runs alongside on its own task queue.
 pnpm --filter primitive-worker-vnext dev
 ```
 
+## Workflow tests
+
+`pnpm --filter primitive-worker-vnext test` runs workflows against fake
+activities in Temporal's time-skipping test server
+(`src/__tests__/support/workflow-harness.ts`). That server is a native binary:
+by default the SDK downloads it from `temporal.download` on first use and
+caches it in the OS temp dir for a day.
+
+To run offline (or pin the binary), fetch it once and point
+`TEMPORAL_TEST_SERVER_PATH` at it; the harness then uses it as-is and never
+downloads:
+
+```bash
+v=$(node -p "require('./node_modules/@temporalio/testing/package.json').version")
+os=$(uname -s | tr A-Z a-z); arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+info=$(curl -fsSL "https://temporal.download/temporal-test-server/default?arch=$arch&platform=$os&sdk-name=sdk-typescript&sdk-version=$v")
+curl -fsSL "$(echo "$info" | jq -r .archiveUrl)" | tar -xz -C /tmp "$(echo "$info" | jq -r .fileToExtract)"
+export TEMPORAL_TEST_SERVER_PATH=/tmp/$(echo "$info" | jq -r .fileToExtract)
+chmod +x "$TEMPORAL_TEST_SERVER_PATH"   # the archive does not keep the exec bit
+```
+
+CI does the same, cached per `@temporalio/testing` version
+(`.github/workflows/ci.yml`, test job). `turbo.json` passes the variable
+through to the test task.
+
 ## Cost guardrails
 
 Three caps enforced in code before any provider call:
