@@ -59,6 +59,8 @@ import {
   rollbackMarketplaceSkillRoute,
 } from './routes/v1/tooling.js';
 import { registerToolingMarketplaceRoutes } from './routes/v1/tooling-marketplace-routes.js';
+import { registerDraftRoutes } from './routes/v1/drafts.js';
+import { productionDraftDeps } from './drafts/providers.js';
 import {
   isPrimitivesRouteEnabled,
   portraitGpt2PrimitiveRoute,
@@ -906,6 +908,29 @@ registerToolingMarketplaceRoutes(
     rollbackMarketplaceSkillRoute,
   },
 );
+
+// ── Product Hero drafts (#4): Brief → diacritized Script → voice preview ────
+// Free to the user (no credits, before the cost gate) but each draft costs us a
+// Claude call and one or two TTS calls, so it gets its own per-user ceiling on
+// top of the generate tier. Runs after authMiddleware, so it keys on userId.
+const draftLimiter = rateLimit({
+  windowMs: 60 * 60_000,
+  max: Number(process.env.DRAFTS_PER_HOUR ?? 30),
+  keyGenerator: rateLimitKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'RATE_LIMITED',
+      message: 'Too many drafts this hour. Edit and re-voice an existing draft, or try again later.',
+    },
+  },
+});
+{
+  const { deps, missing } = productionDraftDeps(supabase);
+  if (missing.length) logger.warn({ missing }, 'Product Hero drafting unconfigured; draft routes will answer 503');
+  registerDraftRoutes(app, { generateLimiter, readLimiter, authMiddleware, draftLimiter }, deps);
+}
 
 // ── vNext primitive routes (feature-flagged off by default) ────────────────
 // Enabled when VNEXT_PRIMITIVES_ENABLED=true. Dispatches to a fresh

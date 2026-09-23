@@ -88,6 +88,17 @@ export function getR2PublicUrlPrefix(): string {
   return readEnv().publicUrl.replace(/\/+$/, '');
 }
 
+/**
+ * Store server-produced bytes (not user uploads: no sniffing or moderation
+ * applies) under `key` and return their public URL. Used for draft voice audio,
+ * which the render phase must later fetch as an R2-hosted URL.
+ */
+export async function putPublicObject(key: string, body: Buffer, contentType: string): Promise<string> {
+  const env = readEnv();
+  await getClient().send(new PutObjectCommand({ Bucket: env.bucket, Key: key, Body: body, ContentType: contentType }));
+  return `${env.publicUrl.replace(/\/+$/, '')}/${key}`;
+}
+
 export interface UploadedImage {
   url: string;
   key: string;
