@@ -12,7 +12,8 @@
  * One shape for every Preset:
  *   presetRenderInputSchema(preset, extra) — the skill input of a Preset render:
  *       draft_id, the product photo (exactly one), aspect_ratio, music, the
- *       Modesty choice `modesty`, plus the Preset's own fields. A `captions`
+ *       Modesty choice `modesty` (where hands or a person are on screen), plus
+ *       the Preset's own fields. A `captions`
  *       field is refused (#22, refuseCaptionsField).
  *   PresetInputResolver — SkillEntry.presetInputs. The quote and the run both
  *       call the SAME resolver after the draft is resolved and gated, so a quote
@@ -32,6 +33,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   ModestyError,
   modestyChoiceSchema,
+  presetShows,
   resolveModesty,
   type Dialect,
   type Modesty,
@@ -116,8 +118,11 @@ export const modestyField = modestyChoiceSchema
     'Modest by default: arms covered (long sleeves), and for a woman on screen a hijab where the Preset shows a person (on by default for Gulf drafts). Only to change a default: { arms: "covered" | "sleeved", hijab: true | false }. Never less modest than the Preset allows; a hijab is refused for a man, or where nobody is on screen.',
   );
 
-/** The fields every Preset render takes. */
-const renderFields = (preset: Pick<PresetDefinition, 'aspectRatio'>) => ({
+/** Whether any shot of `preset` shows hands or a person: only then does it take a Modesty choice (#17). */
+const takesModesty = (preset: Pick<PresetDefinition, 'shotKinds'>) => presetShows(preset, 'hands') || presetShows(preset, 'person');
+
+/** The fields every Preset render takes (the Modesty choice only where someone is on screen). */
+const renderFields = (preset: Pick<PresetDefinition, 'aspectRatio' | 'shotKinds'>) => ({
   draft_id: z
     .string()
     .uuid()
@@ -138,16 +143,17 @@ const renderFields = (preset: Pick<PresetDefinition, 'aspectRatio'>) => ({
     .describe(
       'Music Bed under the voice, on by default. Set false for a voice-only Short, e.g. when the user will add a sound in TikTok (trending sounds are licensed only inside TikTok, so they can never be baked in). The quote says whether a bed will be mixed.',
     ),
-  modesty: modestyField,
+  ...(takesModesty(preset) ? { modesty: modestyField } : {}),
 });
 
 /**
  * The skill input of a Preset render with its own `extra` fields (the shared
- * fields, exactly one product photo, the Modesty choice, then `extra`). A
- * `captions` field is refused with the Caption editor pointer (#22).
+ * fields, exactly one product photo, the Modesty choice where the Preset shows
+ * hands or a person, then `extra`). A `captions` field is refused with the
+ * Caption editor pointer (#22). Product Hero is this with no `extra`.
  */
 export function presetRenderInputSchema<Extra extends z.ZodRawShape>(
-  preset: Pick<PresetDefinition, 'aspectRatio'>,
+  preset: Pick<PresetDefinition, 'aspectRatio' | 'shotKinds'>,
   extra: Extra,
 ) {
   return refuseCaptionsField(

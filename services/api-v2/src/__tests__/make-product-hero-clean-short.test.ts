@@ -159,6 +159,21 @@ describe('make_product_hero: no Captions in the render', () => {
     }
   });
 
+  it('is the shared Preset render schema, without a Modesty choice (Product Hero shows nobody)', async () => {
+    const { presetRenderInputSchema } = await import('../skills/preset-inputs.js');
+    const { PRODUCT_HERO, HANDS_ON, REACTION } = await import('@agentmedia/schema');
+    const { zodToJsonSchema } = await import('zod-to-json-schema');
+    expect(zodToJsonSchema(MakeProductHeroSkillInputSchema)).toEqual(zodToJsonSchema(presetRenderInputSchema(PRODUCT_HERO, {})));
+    const props = (s: Parameters<typeof zodToJsonSchema>[0]) => Object.keys((zodToJsonSchema(s) as { properties: object }).properties);
+    expect(props(MakeProductHeroSkillInputSchema)).toEqual(['draft_id', 'product_image_url', 'product_image_base64', 'aspect_ratio', 'music']);
+    // Presets that show hands or a person take the Modesty choice.
+    expect(props(presetRenderInputSchema(HANDS_ON, {}))).toContain('modesty');
+    expect(props(presetRenderInputSchema(REACTION, {}))).toContain('modesty');
+    // As before: an unknown `modesty` on Product Hero is dropped, never refused.
+    const parsed = MakeProductHeroSkillInputSchema.parse({ draft_id: seedDraft(), product_image_url: PHOTO, modesty: { arms: 'bare' } });
+    expect(parsed).not.toHaveProperty('modesty');
+  });
+
   it('every Preset render schema refuses a captions field', () => {
     const presets = Object.values(SKILLS).filter((s) => s.preset);
     expect(presets.map((s) => s.slug)).toContain('make_product_hero');

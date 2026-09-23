@@ -14,8 +14,7 @@
  */
 
 import { z } from 'zod';
-import { refuseCaptionsField } from './product-hero-render.js';
-import type { PresetInputResolver } from './preset-inputs.js';
+import { presetRenderInputSchema, type PresetInputResolver } from './preset-inputs.js';
 import { MakeReactionSkillInputSchema, resolveReactionInputs } from './reaction.js';
 import { MAKE_HANDS_ON_SKILL } from './hands-on.js'; // #18
 import {
@@ -305,38 +304,11 @@ export const MakePodcastSkillInputSchema = z
  * moderated before anything is spent. Always 9:16. Music Bed (#9) on by default.
  * A render never burns Captions (#22): they are added after the render in the
  * Caption editor and exported by their own job (POST /v1/shorts/{id}/caption-exports),
- * so a `captions` field is refused (refuseCaptionsField).
+ * so a `captions` field is refused (refuseCaptionsField). It is the shared
+ * Preset render schema with no fields of its own (and, since nobody is on
+ * screen, no Modesty choice).
  */
-export const MakeProductHeroSkillInputSchema = refuseCaptionsField(
-  z
-    .object({
-      draft_id: z
-        .string()
-        .uuid()
-        .describe(
-          'The approved draft to render: its id from the draft step. Show the user the Script and let them hear the voice preview first, and get their OK — the Short speaks exactly that audio. A draft becomes one Short; if its render fails, the same draft can be rendered again.',
-        ),
-      product_image_url: z
-        .string()
-        .url()
-        .regex(/^https:\/\//, 'product_image_url must use https')
-        .describe('The product photo, an https URL. If you only hold bytes, call `upload_image` first and pass the URL it returns.')
-        .optional(),
-      product_image_base64: z.string().min(64).describe('The product photo as base64 (prefer product_image_url).').optional(),
-      aspect_ratio: z.literal(PRODUCT_HERO.aspectRatio).default(PRODUCT_HERO.aspectRatio),
-      // Music Bed (#9): a licensed track ducked under the voice. Free either way.
-      music: z
-        .boolean()
-        .default(true)
-        .describe(
-          'Music Bed under the voice, on by default. Set false for a voice-only Short, e.g. when the user will add a sound in TikTok (trending sounds are licensed only inside TikTok, so they can never be baked in). The quote says whether a bed will be mixed.',
-        ),
-    })
-    .refine((d) => Boolean(d.product_image_url) !== Boolean(d.product_image_base64), {
-      message: 'provide exactly one of product_image_url (any https URL) or product_image_base64 (data URL or raw base64)',
-      path: ['product_image_url'],
-    }),
-);
+export const MakeProductHeroSkillInputSchema = presetRenderInputSchema(PRODUCT_HERO, {});
 
 export interface SkillEntry {
   slug: string;
