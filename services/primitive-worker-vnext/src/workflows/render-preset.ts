@@ -32,6 +32,13 @@
  *                        voice sets the length. No track (Music Bed off, or none
  *                        licensed) → no step, and the Short's audio is exactly
  *                        the draft voice.
+ *   3c. burnCaptions   — (#10) only when the user turned Captions on: the cues are
+ *                        derived HERE from the draft's stored TTS alignment
+ *                        (captionCuesFromAlignment: the voiced Script's words,
+ *                        Delivery Tags stripped, timed by their characters) and
+ *                        burned right-to-left onto the finished Short, last, so
+ *                        they sit over the final picture. No speech-to-text.
+ *                        The audio is copied untouched; the length is checked.
  *
  * Each step writes its own primitive_runs row under the skill run; the Short is
  * the skill run's final output. A terminal failure anywhere refunds every
@@ -40,12 +47,19 @@
  * content-policy verdict on the product photo is never retried.
  *
  * Before step 1 the render refuses to start without every input its Preset
- * requires. Extension points (later tickets): Captions join at step 3 (the mix),
- * declared per Preset on its definition.
+ * requires. With Captions on, the cues are derived right after the audio, before
+ * anything is spent: an alignment with no words to show fails the render then.
  */
 
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
-import { planPresetShots, type PlannedShot, type PresetInput } from '@agentmedia/schema';
+import {
+  captionCuesFromAlignment,
+  planPresetShots,
+  type CaptionCue,
+  type CharacterAlignment,
+  type PlannedShot,
+  type PresetInput,
+} from '@agentmedia/schema';
 import type { PrimitiveActivities } from '../activities/index.js';
 import { makeChildRunId } from './child-run-id.js';
 import { failureInfo } from './failure-info.js';
@@ -75,6 +89,12 @@ export interface PresetRenderInput {
    * before the Music Bed.
    */
   music_bed?: { track_id: string; storage_key: string } | null;
+  /**
+   * Captions (#10): the approved draft's stored TTS character alignment (tags
+   * included, as ElevenLabs returned it) when the user turned Captions on;
+   * null/absent for none. Absent on runs started before Captions.
+   */
+  captions?: { alignment: CharacterAlignment } | null;
 }
 
 export interface PresetRenderResult {
@@ -98,6 +118,7 @@ const NON_RETRYABLE = [
   'INVALID_INPUT', 'BUDGET_CAP_DAY',
   'REFERENCE_URL_NOT_ALLOWED', 'PROVIDER_UNCONFIGURED', 'INSUFFICIENT_CREDITS',
   'DRAFT_AUDIO_MISSING', 'DRAFT_STORAGE_UNCONFIGURED', 'MUSIC_BED_TRACK_MISSING', 'MUSIC_BED_STORAGE_UNCONFIGURED',
+  'CAPTIONS_UNAVAILABLE',
   // A moderation verdict is final; resubmitting is another paid render of a
   // photo that will be refused again.
   'EVOLINK_CONTENT_POLICY_VIOLATION',
@@ -109,7 +130,7 @@ const { productHeroClip } = proxyActivities<PrimitiveActivities>({
   heartbeatTimeout: '5 minutes',
   retry: { initialInterval: '10s', maximumInterval: '2m', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: NON_RETRYABLE },
 });
-const { fetchDraftAudio, muxProductHero, mixMusicBed } = proxyActivities<PrimitiveActivities>({
+const { fetchDraftAudio, muxProductHero, mixMusicBed, burnCaptions } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '10 minutes',
   heartbeatTimeout: '2 minutes',
   retry: { initialInterval: '5s', maximumInterval: '60s', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: NON_RETRYABLE },
@@ -164,6 +185,9 @@ export async function renderPreset(
       audio_key: input.audio_key,
       duration_ms: input.duration_ms,
     });
+
+    // ── 1b. Captions (#10): cues from the draft alignment, before any spend ─
+    const captionCues = input.captions ? deriveCaptionCues(input.captions.alignment, audio.duration_ms) : null;
 
     // ── 2. Silent clips covering the speech ─────────────────────────────────
     let shots: PlannedShot[];
@@ -222,6 +246,20 @@ export async function renderPreset(
         track_storage_key: musicBed.storage_key,
       });
     }
+    // ── 3c. Captions (#10): burned last, over the final picture ─────────────
+    if (captionCues) {
+      await composedSkillState({ skill_run_id: skillRunId, current_step: 'captions' });
+      short = await burnCaptions({
+        primitive_run_id: mint('captions'),
+        user_id: input.user_id,
+        skill_run_id: skillRunId,
+        short_url: short.video_url,
+        cues: captionCues,
+        audio_duration_ms: audio.duration_ms,
+        preset: preset.id,
+        aspect_ratio: preset.aspectRatio,
+      });
+    }
     if (Math.abs(short.duration_ms - audio.duration_ms) > MAX_CUT_DRIFT_MS) {
       throw ApplicationFailure.nonRetryable(
         `cut is ${short.duration_ms} ms but the audio is ${audio.duration_ms} ms`,
@@ -240,6 +278,7 @@ export async function renderPreset(
       aspect_ratio: preset.aspectRatio,
       credits_actual_usd: totalUsd,
       music_bed: musicBed?.track_id ?? null, // #9
+      captions: captionCues !== null, // #10
     };
     await composedSkillState({
       skill_run_id: skillRunId,
@@ -281,4 +320,22 @@ export async function renderPreset(
     }
     throw err;
   }
+}
+
+/**
+ * The caption cues for a draft's alignment, held to the Short's measured length.
+ * Captions were asked for, so an alignment with nothing to show (or a malformed
+ * one) fails the render rather than shipping a Short without them.
+ */
+function deriveCaptionCues(alignment: CharacterAlignment, durationMs: number): CaptionCue[] {
+  let cues: CaptionCue[];
+  try {
+    cues = captionCuesFromAlignment(alignment, { durationSeconds: durationMs / 1000 });
+  } catch (err) {
+    throw ApplicationFailure.nonRetryable(`the draft's alignment cannot be captioned: ${(err as Error).message}`, 'CAPTIONS_UNAVAILABLE');
+  }
+  if (cues.length === 0) {
+    throw ApplicationFailure.nonRetryable("the draft's alignment has no words to caption", 'CAPTIONS_UNAVAILABLE');
+  }
+  return cues;
 }

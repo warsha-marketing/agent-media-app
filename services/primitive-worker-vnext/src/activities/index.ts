@@ -25,6 +25,8 @@ import {
 } from './product-hero.js';
 // Music Bed (#9) — self-contained; mixed after the Product Hero cut.
 import { makeMixMusicBedActivity } from './music-bed.js';
+// Arabic Captions (#10) — burned last, from cues the workflow derives from the draft alignment.
+import { makeBurnCaptionsActivity } from './captions.js';
 
 export function createActivities(cfg: WorkerConfig) {
   return {
@@ -49,6 +51,7 @@ export function createActivities(cfg: WorkerConfig) {
     muxProductHero: makeMuxProductHeroActivity(cfg),
     releaseDraftRender: makeReleaseDraftRenderActivity(cfg),
     mixMusicBed: makeMixMusicBedActivity(cfg),
+    burnCaptions: makeBurnCaptionsActivity(cfg),
   };
 }
 
