@@ -1,0 +1,49 @@
+{
+  "_comment": "Regression fixture (#17). An omni-moderation-latest response shaped like the worst plausible case for a benign portrait of an adult woman in a headscarf: the provider sets flagged=true on a non-blocked category (violence, e.g. a covered head read as a threat) while every category our gate blocks scores low. The Seedance Mini content_policy_violation on such a portrait (docs/mena-ugc-acceptance.md, commit c556541) must never be reproduced by OUR gate. Scores are illustrative, not a recording.",
+  "id": "modr-regression-headscarf-portrait",
+  "model": "omni-moderation-latest",
+  "results": [
+    {
+      "flagged": true,
+      "categories": {
+        "harassment": false,
+        "harassment/threatening": false,
+        "hate": false,
+        "hate/threatening": false,
+        "illicit": false,
+        "illicit/violent": false,
+        "self-harm": false,
+        "self-harm/instructions": false,
+        "self-harm/intent": false,
+        "sexual": false,
+        "sexual/minors": false,
+        "violence": true,
+        "violence/graphic": false
+      },
+      "category_scores": {
+        "harassment": 0,
+        "harassment/threatening": 0,
+        "hate": 0,
+        "hate/threatening": 0,
+        "illicit": 0,
+        "illicit/violent": 0,
+        "self-harm": 0.0021,
+        "self-harm/instructions": 0.0004,
+        "self-harm/intent": 0.0009,
+        "sexual": 0.0312,
+        "sexual/minors": 0.0047,
+        "violence": 0.6214,
+        "violence/graphic": 0.0183
+      },
+      "category_applied_input_types": {
+        "self-harm": ["image"],
+        "self-harm/instructions": ["image"],
+        "self-harm/intent": ["image"],
+        "sexual": ["image"],
+        "sexual/minors": [],
+        "violence": ["image"],
+        "violence/graphic": ["image"]
+      }
+    }
+  ]
+}

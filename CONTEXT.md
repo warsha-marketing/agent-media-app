@@ -22,6 +22,10 @@ _Avoid_: lip-sync video, selfie video
 A named Short format the user picks instead of writing prompts (Product Hero, Hands-on, Reaction), carrying its own cost budget.
 _Avoid_: template, skill, workflow
 
+**Modesty Default**:
+How modest the people and hands in a Preset's shots are, declared by the Preset: arms covered or sleeved (never bare), and for a woman on screen a hijab, on by default for Gulf. It goes into every shot that shows a person or hands; the user may pick another culturally acceptable option, never a less modest one than the Preset allows.
+_Avoid_: dress code, modesty filter, safe mode
+
 ### Arabic speech
 
 **Dialect**:

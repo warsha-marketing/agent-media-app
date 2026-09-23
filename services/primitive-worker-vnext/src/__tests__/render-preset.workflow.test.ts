@@ -10,11 +10,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ApplicationFailure } from '@temporalio/activity';
 import { WorkflowFailedError } from '@temporalio/client';
-import { planPresetShots } from '@agentmedia/schema';
+import { planPresetShots, STANDARD_MODESTY } from '@agentmedia/schema';
 import { startWorkflowHarness, fakeActivities, type CannedActivities, type WorkflowHarness } from './support/workflow-harness.js';
 import type { TestPresetRenderInput } from './support/test-preset-workflow.js';
 import type { PresetRenderDefinition } from '../presets/index.js';
 import { PRODUCT_HERO_RENDER } from '../presets/index.js';
+import { MODESTY_PROMPTS } from '../presets/modesty.js';
 import type { FetchDraftAudioInput, ProductHeroClipInput, MuxProductHeroInput } from '../activities/product-hero.js';
 
 const SKILL_RUN_ID = '99999999-2222-4333-8444-555555555555';
@@ -28,9 +29,11 @@ const INTERCUT: PresetRenderDefinition<'person' | 'product'> = {
   aspectRatio: '9:16',
   minSpeechMs: 5_000,
   maxSpeechMs: 15_000,
+  shotKinds: { person: { shows: 'person' }, product: { shows: 'product' } },
   shotPlan: { order: ['person', 'product'], last: 'product' },
   requiredInputs: ['product_image'],
   musicBed: [],
+  modesty: STANDARD_MODESTY,
   budget: { maxCredits: 420, maxProviderUsd: 1.8 },
   shotPrompts: {
     person: 'TEST person reacting silently to the product in @image1, mouth closed.',
@@ -48,6 +51,7 @@ function renderInput(durationMs: number, preset: PresetRenderDefinition = INTERC
     duration_ms: durationMs,
     product_image_url: PHOTO,
     aspect_ratio: '9:16',
+    modesty: { arms: 'covered', hijab: false },
   };
 }
 
@@ -94,7 +98,11 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
       ['person', 10],
       ['product', 5],
     ]);
-    expect(clips.map((c) => c.prompt)).toEqual([INTERCUT.shotPrompts.person, INTERCUT.shotPrompts.product]);
+    // The person shot also carries the Modesty Default (#17; see modesty.workflow.test.ts).
+    expect(clips.map((c) => c.prompt)).toEqual([
+      `${INTERCUT.shotPrompts.person} ${MODESTY_PROMPTS.person.covered}`,
+      INTERCUT.shotPrompts.product,
+    ]);
     for (const c of clips) expect(c.preset).toBe('test_intercut');
   });
 

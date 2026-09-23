@@ -68,6 +68,39 @@ private bucket; a track read without it fails with
 `MUSIC_BED_STORAGE_UNCONFIGURED`, a missing track with `MUSIC_BED_TRACK_MISSING`
 (both non-retryable, refunded).
 
+## Manual check: a headscarf portrait on Seedance (Modesty Default, #17)
+
+People and hands shots carry the Modesty Default (`src/presets/modesty.ts`,
+appended by `presetShotPrompt`); for a woman that can mean a hijab. Our own
+image moderation gate is held by a unit test
+(`services/api-v2/src/__tests__/image-moderation.test.ts`, headscarf fixture).
+Provider-side moderation cannot be unit-tested: Seedance Mini once refused a
+benign headscarf portrait with a generic `content_policy_violation` (MENA
+acceptance notes, commit `c556541`). Check it by hand **before qualifying any
+Preset that shows people (Hands-on, Reaction) for a Dialect, and whenever
+`EVOLINK_SEEDANCE_MODEL` changes**:
+
+1. Make three portraits of different fictional adult women wearing a hijab,
+   modestly dressed with long sleeves (`make_portrait`, e.g. "a woman in her
+   thirties wearing a navy hijab and a long-sleeved abaya, soft daylight").
+   Never use a real person's photo.
+2. Upload each through the normal image upload path. Expected: accepted. A 422
+   `UNSAFE_CONTENT` here is OUR gate and a bug: keep the scores from the
+   `[image-moderation] BLOCKED` log line and fix the thresholds or the test.
+3. Animate each silently on the Preset clip model (`seedance-2.0-mini-reference-to-video`,
+   `generate_audio: false`), the portrait as `@image1`, with a people prompt
+   ending in the Modesty Default for a woman with hijab (the `person.covered` and
+   `hijab` sentences of `MODESTY_PROMPTS`), e.g. `make_simple_selfie` from the
+   portrait's character sheet (`make_character_sheet`) in `scene_action` mode
+   with no script and no music, so the clip is silent.
+4. Expected: every clip completes and she keeps the hijab in every frame.
+   On `EVOLINK_CONTENT_POLICY_VIOLATION` do NOT remove the hijab, change the
+   clothing or resubmit the same input (the worker never retries it). Record
+   the date, model, EvoLink task id, prompt and which portrait, and try the
+   other portraits: one refusal is not a policy (acceptance criterion 5). If
+   refusals repeat, the Preset is not qualified on that model; raise it with the
+   provider and test a compatible model instead.
+
 ## Simulate mode
 
 Set `SIMULATE_OPENAI=true` to skip the real OpenAI call and return a

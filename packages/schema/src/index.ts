@@ -23,6 +23,8 @@ export * from './product-hero.js';
 // pricing, and the registry of every Preset. See src/preset-definition.ts.
 export * from './preset-definition.js';
 export * from './preset-registry.js';
+// Modesty Default (#17): levels, the per-Preset rule, the user-facing choice and its resolution.
+export * from './modesty.js';
 // Delivery Tags — the allowed list and the strip helpers (Captions, viewer display).
 export * from './delivery-tags.js';
 // Arabic Captions (#10) — words and cues from the voiced Script's alignment (no speech-to-text).

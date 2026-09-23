@@ -20,7 +20,8 @@
  *   1. fetchDraftAudio — reads the draft's private audio by key and measures it.
  *                        Nothing visual is requested until the audio is in hand.
  *   2. productHeroClip — one silent clip per planned shot (generate_audio: false),
- *                        from the product photo, prompted for its shot kind. Shots
+ *                        from the product photo, prompted for its shot kind (plus the Modesty Default on every
+ *                        shot that shows a person or hands, #17). Shots
  *                        come from the SAME plan the quote priced (planPresetShots
  *                        over the draft's duration), so the charge is the quote.
  *   3. muxProductHero  — hard-cuts the clips on the 9:16 canvas, trims (or, if a
@@ -47,23 +48,26 @@
  * content-policy verdict on the product photo is never retried.
  *
  * Before step 1 the render refuses to start without every input its Preset
- * requires. With Captions on, the cues are derived right after the audio, before
+ * requires, or with a Modesty less modest than the Preset allows. With Captions on, the cues are derived right after the audio, before
  * anything is spent: an alignment with no words to show fails the render then.
  */
 
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
 import {
+  armsAtLeast,
   captionCuesFromAlignment,
   planPresetShots,
+  presetShows,
   type CaptionCue,
   type CharacterAlignment,
+  type Modesty,
   type PlannedShot,
   type PresetInput,
 } from '@agentmedia/schema';
 import type { PrimitiveActivities } from '../activities/index.js';
 import { makeChildRunId } from './child-run-id.js';
 import { failureInfo } from './failure-info.js';
-import type { PresetRenderDefinition } from '../presets/index.js';
+import { presetShotPrompt, type PresetRenderDefinition } from '../presets/index.js';
 
 /**
  * What a registered Preset workflow (e.g. makeProductHeroWorkflow) is started
@@ -95,6 +99,16 @@ export interface PresetRenderInput {
    * null/absent for none. Absent on runs started before Captions.
    */
   captions?: { alignment: CharacterAlignment } | null;
+  /**
+   * Modesty Default (#17): what api-v2 resolved for this render with
+   * resolveModesty (the Preset's defaults for the draft's Dialect, the person's
+   * gender and the user's choice), the same way it resolves the Music Bed.
+   * Required when the Preset shows a person (the hijab depends on it); for a
+   * hands-only Preset, absent means the Preset's default arms; ignored by a
+   * Preset with product shots only. Never less modest than the Preset allows:
+   * the render re-checks it before anything is requested.
+   */
+  modesty?: Modesty | null;
 }
 
 export interface PresetRenderResult {
@@ -176,6 +190,8 @@ export async function renderPreset(
       }
     }
 
+    const modesty = modestyFor(preset, input.modesty ?? null);
+
     // ── 1. The draft's audio, first ─────────────────────────────────────────
     const audio = await fetchDraftAudio({
       primitive_run_id: mint('audio'),
@@ -210,7 +226,7 @@ export async function renderPreset(
         shot_count: shots.length,
         preset: preset.id,
         shot_kind: shots[i].kind,
-        prompt: preset.shotPrompts[shots[i].kind],
+        prompt: presetShotPrompt(preset, shots[i].kind, modesty),
         generate_audio: false,
       });
       clipUrls.push(clip.video_url);
@@ -320,6 +336,31 @@ export async function renderPreset(
     }
     throw err;
   }
+}
+
+/**
+ * The Modesty Default this render applies (#17), held to the Preset: arms never
+ * less modest than it allows, a hijab only where it shows a person. Checked
+ * before anything is requested, so a refused render costs nothing.
+ */
+function modestyFor(preset: PresetRenderDefinition, given: Modesty | null): Modesty {
+  const showsPerson = presetShows(preset, 'person');
+  if (!given) {
+    if (showsPerson) {
+      throw ApplicationFailure.nonRetryable(`${preset.name} needs the resolved Modesty Default`, 'INVALID_INPUT');
+    }
+    return { arms: preset.modesty.arms.default, hijab: false };
+  }
+  if (!armsAtLeast(given.arms, preset.modesty.arms.least)) {
+    throw ApplicationFailure.nonRetryable(
+      `${preset.name} shows arms at least ${preset.modesty.arms.least}; "${given.arms}" is less modest than the Preset allows`,
+      'INVALID_INPUT',
+    );
+  }
+  if (given.hijab && !showsPerson) {
+    throw ApplicationFailure.nonRetryable(`${preset.name} shows no person to wear a hijab`, 'INVALID_INPUT');
+  }
+  return given;
 }
 
 /**

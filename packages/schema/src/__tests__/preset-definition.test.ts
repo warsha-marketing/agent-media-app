@@ -15,6 +15,7 @@ import {
   type PresetDefinition,
 } from '../preset-definition.js';
 import { PRESETS } from '../preset-registry.js';
+import { STANDARD_MODESTY } from '../modesty.js';
 import { PRODUCT_HERO, planProductHeroShots, productHeroProviderUsd, quoteProductHeroCredits } from '../product-hero.js';
 
 /** A test-only Preset: intercut people and product, always ending on the product. */
@@ -24,9 +25,11 @@ const INTERCUT: PresetDefinition<'product' | 'person'> = {
   aspectRatio: '9:16',
   minSpeechMs: 5_000,
   maxSpeechMs: 15_000,
+  shotKinds: { person: { shows: 'person' }, product: { shows: 'product' } },
   shotPlan: { order: ['person', 'product'], last: 'product' },
   requiredInputs: ['product_image'],
   musicBed: [],
+  modesty: STANDARD_MODESTY,
   budget: { maxCredits: 420, maxProviderUsd: 1.8 },
 };
 
@@ -41,7 +44,7 @@ describe('planPresetShots', () => {
   });
 
   it('cycles the order when a plan has more clips than the order names', () => {
-    const cycling: PresetDefinition<'a' | 'b'> = { ...INTERCUT, maxSpeechMs: 30_000, shotPlan: { order: ['a', 'b'] }, budget: { maxCredits: 840, maxProviderUsd: 3.6 } };
+    const cycling: PresetDefinition<'a' | 'b'> = { ...INTERCUT, maxSpeechMs: 30_000, shotKinds: { a: { shows: 'product' }, b: { shows: 'product' } }, shotPlan: { order: ['a', 'b'] }, budget: { maxCredits: 840, maxProviderUsd: 3.6 } };
     expect(planPresetShots(cycling, 30_000).map((s) => s.kind)).toEqual(['a', 'b', 'a']);
   });
 

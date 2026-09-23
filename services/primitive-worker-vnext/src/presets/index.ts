@@ -13,7 +13,8 @@
  * Pure data: the workflow sandbox imports this.
  */
 
-import { PRODUCT_HERO, type PresetDefinition, type ProductHeroShotKind } from '@agentmedia/schema';
+import { PRODUCT_HERO, type Modesty, type PresetDefinition, type ProductHeroShotKind } from '@agentmedia/schema';
+import { modestyPrompt } from './modesty.js';
 
 /** A Preset as the render pipeline reads it: its definition plus a prompt per shot kind. */
 export interface PresetRenderDefinition<Kind extends string = string> extends PresetDefinition<Kind> {
@@ -36,6 +37,21 @@ export const PRODUCT_HERO_RENDER: PresetRenderDefinition<ProductHeroShotKind> = 
     detail: 'Premium product commercial, closing detail shot of the exact product in @image1: a slow macro slide along the product revealing texture, materials and finish, then settling on a clean three-quarter view of the whole product. The product keeps its exact shape, colours, logo and label text. No people, no hands, no text overlays, no captions. Vertical 9:16, soft studio light, smooth cinematic motion.',
   },
 };
+
+/**
+ * The full prompt for one shot of `kind`: the Preset's shot prompt, plus the
+ * Modesty Default (#17) when that kind shows a person or hands. Product shots
+ * get the shot prompt unchanged. The pipeline builds every clip prompt here.
+ */
+export function presetShotPrompt<Kind extends string>(
+  preset: PresetRenderDefinition<Kind>,
+  kind: Kind,
+  modesty: Modesty,
+): string {
+  const base = preset.shotPrompts[kind];
+  const extra = modestyPrompt(preset.shotKinds[kind].shows, modesty);
+  return extra ? `${base} ${extra}` : base;
+}
 
 /** Every Preset the worker can render, by id. Server-side only. */
 export const PRESET_RENDERS: Readonly<Record<string, PresetRenderDefinition>> = {
