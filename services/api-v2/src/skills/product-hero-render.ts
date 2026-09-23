@@ -26,7 +26,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { PresetDefinition } from '@agentmedia/schema';
+import type { CharacterAlignment, PresetDefinition } from '@agentmedia/schema';
 
 /** Where the run holding a draft's claim is. */
 export type RenderRunStatus = 'submitted' | 'running' | 'succeeded' | 'failed' | 'canceled';
@@ -41,6 +41,8 @@ export interface RenderableDraft {
   /** Private storage key; passed to the worker, never to a client. */
   audio_key: string;
   duration_ms: number;
+  /** The voiced Script's TTS character alignment (Delivery Tags included); Captions (#10) are timed from it. */
+  alignment: CharacterAlignment;
   /** The skill run holding the render claim; null = free. */
   render_run_id: string | null;
   /** That run's status (null when there is no claim, or its run is missing). */
@@ -167,7 +169,7 @@ export function supabaseProductHeroDraftStore(supabase: SupabaseClient): Product
       // Service-role client bypasses RLS, so ownership is enforced here.
       const { data, error } = await supabase
         .from(TABLE)
-        .select('id, user_id, dialect, voice_catalog_id, audio_key, duration_ms, render_run_id')
+        .select('id, user_id, dialect, voice_catalog_id, audio_key, duration_ms, alignment, render_run_id')
         .eq('id', id)
         .eq('user_id', userId)
         .maybeSingle();
