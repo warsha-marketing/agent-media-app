@@ -9,8 +9,8 @@
 --
 -- Only api-v2 (service role) writes: a draft is only valid if its audio was
 -- really produced and measured, so users get SELECT on their own rows and
--- nothing else. The only permitted UPDATE is stamping rendered_at once; after
--- that the row is frozen and cannot be deleted.
+-- nothing else. The only permitted UPDATEs are stamping rendered_at once and the
+-- ON DELETE SET NULL of parent_draft_id; a rendered row cannot be deleted.
 --
 -- The audio is a PRIVATE object: only its key is stored. Clients get a
 -- short-lived signed URL minted per read by api-v2; the render phase reads the
@@ -44,10 +44,16 @@ CREATE INDEX IF NOT EXISTS idx_short_drafts_user
 CREATE INDEX IF NOT EXISTS idx_short_drafts_parent
   ON public.short_drafts (parent_draft_id) WHERE parent_draft_id IS NOT NULL;
 
--- Immutability: a draft's content never changes. The single allowed transition
--- is rendered_at NULL → timestamp (by the render phase). A rendered draft can
--- neither be changed nor deleted, so a finished Short always points at the
--- exact audio it shipped.
+-- Immutability: a draft's content never changes. Exactly two UPDATEs pass:
+--   (a) rendered_at NULL → timestamp, once, with nothing else changing (the
+--       render phase stamping the draft it used);
+--   (b) parent_draft_id → NULL, with nothing else changing, issued by the
+--       foreign key's ON DELETE SET NULL action (pg_trigger_depth() > 1: it runs
+--       inside the RI trigger, never as a direct statement).
+-- (b) is checked BEFORE the rendered-row rule: otherwise deleting an
+-- unrendered parent fails whenever one of its children has been rendered.
+-- A rendered draft can be neither changed nor deleted, so a finished Short
+-- always points at the exact audio it shipped.
 CREATE OR REPLACE FUNCTION public.short_drafts_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -60,15 +66,25 @@ BEGIN
     END IF;
     RETURN OLD;
   END IF;
+
+  -- (b) The parent was deleted: the FK nulls parent_draft_id, even on a rendered row.
+  IF pg_trigger_depth() > 1
+     AND OLD.parent_draft_id IS NOT NULL AND NEW.parent_draft_id IS NULL
+     AND (to_jsonb(NEW) - 'parent_draft_id') = (to_jsonb(OLD) - 'parent_draft_id') THEN
+    RETURN NEW;
+  END IF;
+
   IF OLD.rendered_at IS NOT NULL THEN
     RAISE EXCEPTION 'short_drafts: draft % was rendered and is immutable', OLD.id;
   END IF;
-  IF (to_jsonb(NEW) - 'rendered_at' - 'parent_draft_id') IS DISTINCT FROM (to_jsonb(OLD) - 'rendered_at' - 'parent_draft_id')
-     OR (NEW.parent_draft_id IS DISTINCT FROM OLD.parent_draft_id AND NEW.parent_draft_id IS NOT NULL) THEN
-    -- parent_draft_id may only go to NULL (the ON DELETE SET NULL cascade).
-    RAISE EXCEPTION 'short_drafts: drafts are immutable; re-voice to create a new draft';
+
+  -- (a) Stamping rendered_at, once.
+  IF NEW.rendered_at IS NOT NULL
+     AND (to_jsonb(NEW) - 'rendered_at') = (to_jsonb(OLD) - 'rendered_at') THEN
+    RETURN NEW;
   END IF;
-  RETURN NEW;
+
+  RAISE EXCEPTION 'short_drafts: drafts are immutable; re-voice to create a new draft';
 END;
 $$;
 
