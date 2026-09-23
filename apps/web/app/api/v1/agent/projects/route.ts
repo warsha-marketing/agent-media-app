@@ -3,7 +3,7 @@
 /** Same-origin proxy for /v1/agent/projects — list (GET) + create (POST). Phase 3. */
 
 import { NextRequest } from 'next/server';
-import { forwardToAgentApi } from '@/lib/agent-chat-proxy';
+import { forwardToAgentApi } from '@/lib/api-v2-proxy';
 
 export async function GET() {
   return forwardToAgentApi('/v1/agent/projects', { method: 'GET' });

@@ -3,7 +3,7 @@
 /** Same-origin proxy for /v1/agent/tasks — list (GET) + create (POST). Durable-loop Phase 1. */
 
 import { NextRequest } from 'next/server';
-import { forwardToAgentApi } from '@/lib/agent-chat-proxy';
+import { forwardToAgentApi } from '@/lib/api-v2-proxy';
 
 export async function GET(req: NextRequest) {
   const qs = req.nextUrl.searchParams.toString();

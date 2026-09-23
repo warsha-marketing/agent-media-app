@@ -3,7 +3,7 @@
 /** Same-origin proxy for /v1/agent/projects/:id — update (PATCH) + archive (DELETE). Phase 3. */
 
 import { NextRequest } from 'next/server';
-import { forwardToAgentApi } from '@/lib/agent-chat-proxy';
+import { forwardToAgentApi } from '@/lib/api-v2-proxy';
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;

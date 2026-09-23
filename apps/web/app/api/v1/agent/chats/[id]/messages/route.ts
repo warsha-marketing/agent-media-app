@@ -6,7 +6,7 @@
  */
 
 import { NextRequest } from 'next/server';
-import { forwardToAgentApi } from '@/lib/agent-chat-proxy';
+import { forwardToAgentApi } from '@/lib/api-v2-proxy';
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;

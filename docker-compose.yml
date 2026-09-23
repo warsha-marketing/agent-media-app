@@ -330,6 +330,9 @@ services:
       NEXT_PUBLIC_BACKEND_URL: http://localhost:3001
       NEXT_PUBLIC_MCP_URL: http://localhost:3001/mcp
       SUPABASE_URL: http://rest:3000
+      # Server-side proxies (lib/api-v2-proxy.ts) call api-v2 over the compose
+      # network. Unset, they would fall back to the hosted API.
+      API_V2_URL: http://api-v2:3001
     # Port 3000 is the most contested port on any dev machine. Override with
     # WEB_PORT=3005 in .env rather than editing this file.
     ports: ["${WEB_PORT:-3000}:3000"]

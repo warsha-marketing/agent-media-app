@@ -5,9 +5,9 @@
  */
 
 import { NextRequest } from 'next/server';
-import { forwardToAgentApi } from '@/lib/agent-chat-proxy';
+import { forwardToApiV2 } from '@/lib/api-v2-proxy';
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  return forwardToAgentApi(`/v1/drafts/${encodeURIComponent(id)}`, { method: 'GET' });
+  return forwardToApiV2(`/v1/drafts/${encodeURIComponent(id)}`, { method: 'GET' });
 }

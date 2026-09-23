@@ -6,9 +6,9 @@
  */
 
 import { NextRequest } from 'next/server';
-import { forwardToAgentApi } from '@/lib/agent-chat-proxy';
+import { forwardToApiV2 } from '@/lib/api-v2-proxy';
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
-  return forwardToAgentApi('/v1/drafts/product-hero/revoice', { method: 'POST', body });
+  return forwardToApiV2('/v1/drafts/product-hero/revoice', { method: 'POST', body });
 }

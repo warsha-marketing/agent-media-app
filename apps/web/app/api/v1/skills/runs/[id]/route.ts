@@ -1,33 +1,11 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+/** Same-origin proxy for GET /v1/skills/runs/:id — a skill run's status. */
 
-const API_V2_URL = process.env.API_V2_URL?.replace(/\/+$/, '')
-  ?? 'https://api.agent-media.ai';
+import { NextRequest } from 'next/server';
+import { forwardToApiV2 } from '@/lib/api-v2-proxy';
 
-export async function GET(
-  _req: NextRequest,
-  ctx: { params: Promise<{ id: string }> },
-): Promise<NextResponse> {
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const supabase = await createClient();
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) {
-    return NextResponse.json({ error: { code: 'unauthenticated' } }, { status: 401 });
-  }
-  try {
-    const upstream = await fetch(`${API_V2_URL}/v1/skills/runs/${encodeURIComponent(id)}`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    });
-    const text = await upstream.text();
-    let data: unknown;
-    try { data = text ? JSON.parse(text) : null; } catch { data = { error: { message: text.slice(0, 400) } }; }
-    return NextResponse.json(data, { status: upstream.status });
-  } catch (err) {
-    return NextResponse.json(
-      { error: { code: 'upstream_unreachable', message: (err as Error).message } },
-      { status: 502 },
-    );
-  }
+  return forwardToApiV2(`/v1/skills/runs/${encodeURIComponent(id)}`, { method: 'GET' });
 }

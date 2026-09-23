@@ -9,7 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { forwardToAgentApi } from '@/lib/agent-chat-proxy';
+import { forwardToApiV2 } from '@/lib/api-v2-proxy';
 
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as { image_url?: unknown } | null;
@@ -17,5 +17,5 @@ export async function POST(req: NextRequest) {
   if (!/^https:\/\//.test(url)) {
     return NextResponse.json({ error: { code: 'INVALID_INPUT', message: 'image_url (https) is required.' } }, { status: 400 });
   }
-  return forwardToAgentApi('/v1/uploads/image', { method: 'POST', body: JSON.stringify({ image_url: url }) });
+  return forwardToApiV2('/v1/uploads/image', { method: 'POST', body: JSON.stringify({ image_url: url }) });
 }

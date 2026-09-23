@@ -6,8 +6,8 @@
  */
 
 import { NextRequest } from 'next/server';
-import { forwardToAgentApi } from '@/lib/agent-chat-proxy';
+import { forwardToApiV2 } from '@/lib/api-v2-proxy';
 
 export async function GET(req: NextRequest) {
-  return forwardToAgentApi(`/v1/voices${req.nextUrl.search}`, { method: 'GET' });
+  return forwardToApiV2(`/v1/voices${req.nextUrl.search}`, { method: 'GET' });
 }
