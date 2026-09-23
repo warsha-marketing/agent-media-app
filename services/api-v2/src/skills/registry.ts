@@ -305,7 +305,7 @@ export const MakeProductHeroSkillInputSchema = z
       .string()
       .uuid()
       .describe(
-        'The approved draft to render: its id from the draft step. Show the user the Script and let them hear the voice preview first, and get their OK — the Short speaks exactly that audio. A draft renders once.',
+        'The approved draft to render: its id from the draft step. Show the user the Script and let them hear the voice preview first, and get their OK — the Short speaks exactly that audio. A draft becomes one Short; if its render fails, the same draft can be rendered again.',
       ),
     product_image_url: z
       .string()
@@ -447,7 +447,7 @@ export const SKILLS: Record<string, SkillEntry> = {
     name: 'Product Hero',
     version: '1.0.0',
     description:
-      'Render an APPROVED Product Hero draft into a finished 9:16 Short: silent product visuals from your product photo, cut to the exact length of the draft\'s voice-over, with that audio as the soundtrack — the voice is never re-generated, trimmed or stretched. Needs `draft_id` (an approved 5–15 s draft of yours that has not been rendered yet) and the product photo (`product_image_url`, or `product_image_base64`). Show the user the Script and play the voice preview, and get their OK and the quoted cost, before calling this.',
+      'Render an APPROVED Product Hero draft into a finished 9:16 Short: silent product visuals from your product photo, cut to the exact length of the draft\'s voice-over, which plays unchanged — the voice is never re-generated, trimmed or stretched. Needs `draft_id` (an approved 5–15 s draft of yours, voiced by an Approved Voice, that is not already rendered or rendering) and the product photo (`product_image_url`, or `product_image_base64`). Show the user the Script and play the voice preview, and get their OK and the quoted cost, before calling this.',
     primitive: 'composed:make_product_hero',
     workflowType: 'makeProductHeroWorkflow',
     inputSchema: MakeProductHeroSkillInputSchema,

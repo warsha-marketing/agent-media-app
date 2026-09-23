@@ -76,26 +76,41 @@ export class RenderRefusal extends Error {
   }
 }
 
+/**
+ * Every refusal a make_product_hero quote or run can answer with, by code: the
+ * one table the refusals below and the OpenAPI entry (skills-openapi.ts) read.
+ */
+export const RENDER_REFUSALS = {
+  draft_not_found: { status: 404, when: 'no such draft on this account' },
+  draft_render_in_flight: { status: 409, when: 'a render of this draft is in flight; if it fails, the draft can be rendered again' },
+  draft_already_rendered: { status: 409, when: 'this draft was already rendered into a Short; re-voice to make a new draft' },
+  draft_out_of_band: { status: 422, when: 'the draft does not speak for 5–15 s' },
+  voice_not_approved: {
+    status: 422,
+    when: "the draft's Voice is not an Approved Voice of its Dialect now (revoked, or voiced before the catalog); re-voice",
+  },
+} as const;
+export type RenderRefusalCode = keyof typeof RENDER_REFUSALS;
+
+const refusal = (code: RenderRefusalCode, message: string) => new RenderRefusal(RENDER_REFUSALS[code].status, code, message);
+
 export const draftNotFound = () =>
-  new RenderRefusal(404, 'draft_not_found', 'No such draft on this account. Make a draft first (POST /v1/drafts/product-hero).');
+  refusal('draft_not_found', 'No such draft on this account. Make a draft first (POST /v1/drafts/product-hero).');
 
 export const draftAlreadyRendered = () =>
-  new RenderRefusal(
-    409,
+  refusal(
     'draft_already_rendered',
     'This draft has already been rendered into a Short. Re-voice its Script to make a new draft, then render that.',
   );
 
 export const draftRenderInFlight = () =>
-  new RenderRefusal(
-    409,
+  refusal(
     'draft_render_in_flight',
     'This draft is being rendered right now. Poll that run; if it fails, the draft can be rendered again.',
   );
 
 export const voiceNotApproved = (legacy: boolean) =>
-  new RenderRefusal(
-    422,
+  refusal(
     'voice_not_approved',
     (legacy
       ? 'This draft was voiced before the Voice catalog, so its Voice was never approved.'
@@ -129,8 +144,7 @@ export async function resolveRenderableDraft(
   assertClaimFree(draft);
   const ms = Number(draft.duration_ms);
   if (!Number.isFinite(ms) || ms < PRODUCT_HERO.minSpeechMs || ms > PRODUCT_HERO.maxSpeechMs) {
-    throw new RenderRefusal(
-      422,
+    throw refusal(
       'draft_out_of_band',
       `This draft speaks for ${(ms / 1000).toFixed(1)} s; a Product Hero Short needs ` +
         `${PRODUCT_HERO.minSpeechMs / 1000}–${PRODUCT_HERO.maxSpeechMs / 1000} s. Edit the Script and re-voice it.`,

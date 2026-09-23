@@ -199,9 +199,11 @@ flowchart LR
 ```
 
 The agent-facing surface is deliberately curated. Of the internal skills, the
-hosted connector lists exactly five: `make_ugc`, `make_podcast`,
-`make_subtitles`, `create_character`, `list_characters`. Fewer, well-described
-tools beat a large catalog for agent context.
+hosted connector lists exactly six: `make_ugc`, `make_podcast`,
+`make_subtitles`, `make_product_hero` (renders an approved Product Hero draft
+into a Short; see ADR 0001), `create_character`, `list_characters`. The set of
+`agentFacing` skills is pinned by `agent-facing-surface.test.ts`. Fewer,
+well-described tools beat a large catalog for agent context.
 
 ## Self-hosting: swapping the managed pieces
 

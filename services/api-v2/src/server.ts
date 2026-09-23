@@ -60,6 +60,7 @@ import {
 } from './routes/v1/tooling.js';
 import { registerToolingMarketplaceRoutes } from './routes/v1/tooling-marketplace-routes.js';
 import { registerDraftRoutes, draftOpenApi } from './routes/v1/drafts.js';
+import { skillRouteOpenApi } from './routes/v1/skills-openapi.js';
 import { productionDraftDeps } from './drafts/providers.js';
 import { registerVoiceRoutes, voiceOpenApi } from './routes/v1/voices.js';
 import { productionVoiceDeps } from './voices/providers.js';
@@ -687,23 +688,9 @@ function buildOpenApiSpec() {
       responses: { '200': { description: 'Composed skill run' }, '404': { description: 'Not found' } },
     },
   };
-  paths['/v1/skills/{slug}/run'] = {
-    post: {
-      operationId: 'runVnextSkill',
-      summary: 'Run a vNext micro-skill (e.g. make_portrait, make_character_sheet)',
-      tags: ['vnext-skills'],
-      security: [{ bearerAuth: [] }],
-      parameters: [
-        { name: 'slug', in: 'path', required: true, schema: { type: 'string' } },
-        { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string' } },
-      ],
-      responses: {
-        '202': { description: 'Workflow submitted' },
-        '400': { description: 'Invalid input' },
-        '404': { description: 'Unknown skill' },
-      },
-    },
-  };
+  // Skill run + quote: error codes come from the tables the routes answer with.
+  const skillSpec = skillRouteOpenApi();
+  Object.assign(paths, skillSpec.paths);
   // Product Hero drafts (#4). Described next to the routes, from the same zod
   // they validate with, so the spec cannot drift from what the server accepts.
   const draftSpec = draftOpenApi();
@@ -831,6 +818,7 @@ function buildOpenApiSpec() {
           properties: { actor: { $ref: '#/components/schemas/Actor' } },
           required: ['actor'],
         },
+        ...skillSpec.schemas,
         ...draftSpec.schemas,
         ...voiceSpec.schemas,
       },

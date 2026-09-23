@@ -433,3 +433,26 @@ describe('make_product_hero dispatch', () => {
     expect(started).toHaveLength(0);
   });
 });
+
+// ── OpenAPI ─────────────────────────────────────────────────────────────────
+
+describe('make_product_hero in the OpenAPI spec', () => {
+  it('lists every refusal code under its status on run and quote, and Idempotency-Key on run', async () => {
+    const { skillRouteOpenApi } = await import('../routes/v1/skills-openapi.js');
+    const { RENDER_REFUSALS } = await import('../skills/product-hero-render.js');
+    const { paths } = skillRouteOpenApi() as {
+      paths: Record<string, { post: { responses: Record<string, { description: string }>; parameters: Array<{ name: string }> } }>;
+    };
+    for (const path of ['/v1/skills/{slug}/run', '/v1/skills/{slug}/quote']) {
+      const { responses } = paths[path].post;
+      for (const [code, { status }] of Object.entries(RENDER_REFUSALS)) {
+        expect(responses[String(status)]?.description, `${path} ${status}`).toContain(`\`${code}\``);
+      }
+    }
+    expect(paths['/v1/skills/{slug}/run'].post.parameters.map((p) => p.name)).toContain('Idempotency-Key');
+    expect(paths['/v1/skills/{slug}/quote'].post.responses['422'].description).toContain('`unpriceable_input`');
+    expect(Object.keys(RENDER_REFUSALS).sort()).toEqual(
+      ['draft_already_rendered', 'draft_not_found', 'draft_out_of_band', 'draft_render_in_flight', 'voice_not_approved'],
+    );
+  });
+});
