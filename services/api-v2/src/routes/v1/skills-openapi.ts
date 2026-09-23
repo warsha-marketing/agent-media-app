@@ -55,7 +55,7 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
       responses: {
         '202': {
           description:
-            'Workflow submitted, or the original run on an Idempotency-Key replay (idempotent_replay: true). For make_product_hero also music_bed (as in the quote) and captions (on, detail): with `captions: true` (off by default, free) right-to-left Arabic Captions are burned, timed from the draft\'s voice alignment — never speech-to-text — without the Script\'s Delivery Tags. A render whose draft has no words to caption fails with `CAPTIONS_UNAVAILABLE` and is refunded.',
+            'Workflow submitted, or the original run on an Idempotency-Key replay (idempotent_replay: true). For make_product_hero also music_bed (as in the quote). A render never burns Captions: its Short is clean, and Captions are added afterwards (GET /v1/shorts/{short_id}/captions, POST /v1/shorts/{short_id}/caption-exports).',
         },
         '400': skillError(sentences('`invalid_input`: the body fails the skill schema', '`image_upload_failed`: the photo could not be re-hosted')),
         '402': skillError('`insufficient_credits`: the balance, minus credits reserved by runs in flight, does not cover the quote'),
@@ -75,7 +75,7 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
       security: [{ bearerAuth: [] }],
       parameters: [SLUG],
       responses: {
-        '200': { description: 'The quote: credits, available (after reservations), committed, sufficient; for a Preset render also music_bed (on, track_id, mood, reason off|no_tracks, detail) and captions (on, detail). Captions are free: credits are the same with them on or off' },
+        '200': { description: 'The quote: credits, available (after reservations), committed, sufficient; for a Preset render also music_bed (on, track_id, mood, reason off|no_tracks, detail)' },
         '400': skillError('`invalid_input`: the body fails the skill schema'),
         '404': skillError(sentences('`unknown_skill`', ...refusalLines(404))),
         '409': skillError(sentences(...refusalLines(409))),

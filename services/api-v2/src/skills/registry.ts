@@ -297,8 +297,9 @@ export const MakePodcastSkillInputSchema = z
  * (ADR 0001). It renders an APPROVED draft (from POST /v1/drafts/product-hero):
  * the draft's audio is the Short's voice, unchanged. The product photo follows
  * make_product_in_hands' convention — any https URL or base64, re-hosted and
- * moderated before anything is spent. Always 9:16. Music Bed (#9) on by default;
- * Captions (#10) off by default.
+ * moderated before anything is spent. Always 9:16. Music Bed (#9) on by default.
+ * A render never burns Captions (#22): they are added after the render in the
+ * Caption editor and exported by their own job (POST /v1/shorts/{id}/caption-exports).
  */
 export const MakeProductHeroSkillInputSchema = z
   .object({
@@ -322,13 +323,6 @@ export const MakeProductHeroSkillInputSchema = z
       .default(true)
       .describe(
         'Music Bed under the voice, on by default. Set false for a voice-only Short, e.g. when the user will add a sound in TikTok (trending sounds are licensed only inside TikTok, so they can never be baked in). The quote says whether a bed will be mixed.',
-      ),
-    // Captions (#10): right-to-left Arabic, timed from the draft's voice alignment. Free either way.
-    captions: z
-      .boolean()
-      .default(false)
-      .describe(
-        'Burn right-to-left Arabic Captions of the Script (without its Delivery Tags), timed to the voice. OPT-IN, off by default — ask the user whether they want Captions before rendering; set true only if they say yes. Free: the price is the same either way.',
       ),
   })
   .refine((d) => Boolean(d.product_image_url) !== Boolean(d.product_image_base64), {

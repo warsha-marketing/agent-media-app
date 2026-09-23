@@ -20,7 +20,6 @@ import {
   type RenderableDraft,
 } from '../../skills/product-hero-render.js';
 import { musicBedView, musicBedWorkflowInput, presetMusicBed } from '../../skills/preset-music-bed.js'; // #9
-import { captionsView } from '../../skills/preset-captions.js'; // #10
 import { summarizeRunCredits, type RunCredits } from '../../skills/run-credits.js';
 import { replayMatches, requestFingerprint, sendIdempotencyKeyReused } from '../../skills/idempotency.js';
 import type { PresetDefinition } from '@agentmedia/schema';
@@ -191,7 +190,7 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     return;
   }
   let input = parsed.data as Record<string, unknown>;
-  // Extra fields a skill's quote carries beyond the price (Music Bed #9, Captions #10).
+  // Extra fields a skill's quote carries beyond the price (Music Bed #9).
   let quoteExtras: Record<string, unknown> = {};
   // A Preset render (make_product_hero, …) is priced from its draft: refuse a
   // draft the run would refuse (not the caller's, already rendered, outside the
@@ -203,7 +202,6 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     input = { ...input, duration_ms: draft.duration_ms };
     quoteExtras = {
       music_bed: musicBedView(presetMusicBed(skill.preset, input.music, draft.id)),
-      captions: captionsView(input.captions === true), // free: never changes the price
     };
   }
   // Match the run preflight and worker ledger in self-hosted billing mode.
@@ -837,8 +835,6 @@ async function dispatchPresetRender(
   // audio key stays out of it: only the workflow input carries it.
   // Music Bed (#9): the same decision the quote made (seeded by the draft).
   const musicBed = presetMusicBed(preset, body.music, draft.id);
-  // Captions (#10): opt-in and free; the run records the choice, the workflow gets the alignment.
-  const captions = body.captions === true;
   const runInput: Record<string, unknown> = {
     draft_id: draft.id,
     product_image_url: productImageUrl,
@@ -846,7 +842,6 @@ async function dispatchPresetRender(
     duration_ms: draft.duration_ms,
     music: body.music !== false,
     music_bed: musicBed.on ? musicBed.track.id : null,
-    captions,
   };
 
   const preflight = await preflightCreditCheck(userId, slug, runInput);
@@ -927,7 +922,6 @@ async function dispatchPresetRender(
     product_image_url: productImageUrl,
     aspect_ratio: preset.aspectRatio,
     music_bed: musicBedWorkflowInput(musicBed), // #9
-    captions: captions ? { alignment: draft.alignment } : null, // #10: the worker cues from the draft alignment
   };
 
   try {
@@ -960,7 +954,6 @@ async function dispatchPresetRender(
     draft_id: draft.id,
     status: 'submitted',
     music_bed: musicBedView(musicBed), // #9
-    captions: captionsView(captions), // #10
   });
 }
 

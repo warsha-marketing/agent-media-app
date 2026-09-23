@@ -65,6 +65,8 @@ import { productionDraftDeps } from './drafts/providers.js';
 import { registerVoiceRoutes, voiceOpenApi } from './routes/v1/voices.js';
 import { productionVoiceDeps } from './voices/providers.js';
 import { registerPresetRoutes, presetOpenApi } from './routes/v1/presets.js';
+import { registerShortCaptionRoutes, shortCaptionOpenApi } from './routes/v1/shorts.js';
+import { productionShortCaptionDeps } from './captions/providers.js';
 import { productionPresetDeps } from './presets/providers.js';
 import {
   isPrimitivesRouteEnabled,
@@ -692,6 +694,9 @@ function buildOpenApiSpec() {
   // Preset picker and Qualified Presets (#8).
   const presetSpec = presetOpenApi();
   Object.assign(paths, presetSpec.paths);
+  // Captions after the render (#22): suggested lines and the Caption export.
+  const shortCaptionSpec = shortCaptionOpenApi();
+  Object.assign(paths, shortCaptionSpec.paths);
   // ── The loose surface (P2/P3) — what the MCP connector exposes ────────
   // Same zod as the routes and the tools, so the spec cannot describe a
   // field the server does not accept.
@@ -816,6 +821,7 @@ function buildOpenApiSpec() {
         ...draftSpec.schemas,
         ...voiceSpec.schemas,
         ...presetSpec.schemas,
+        ...shortCaptionSpec.schemas,
       },
     },
   };
@@ -967,6 +973,9 @@ if (isPrimitivesRouteEnabled()) {
   app.post('/v1/skills/:slug/run', generateLimiter, authMiddleware, videoConcurrencyGate, asyncHandler(runSkillRoute));
   app.get('/v1/skills/runs/:skill_run_id', readLimiter, authMiddleware, asyncHandler(getSkillRunRoute));
   app.post('/v1/skills/runs/:skill_run_id/cancel', generateLimiter, authMiddleware, asyncHandler(cancelSkillRunRoute));
+  // Captions after the render (#22): the Caption editor's suggested lines and
+  // its export job (free; polled at /v1/skills/runs/:id like any run).
+  registerShortCaptionRoutes(app, { generateLimiter, readLimiter, authMiddleware }, productionShortCaptionDeps(supabase));
   app.get('/v1/me/gallery', readLimiter, authMiddleware, getMyGalleryRoute);
   app.get('/v1/characters', readLimiter, authMiddleware, listMyCharactersRoute);
   // Bytes → R2 URL. Costs no credits and starts no job, so it sits on the
