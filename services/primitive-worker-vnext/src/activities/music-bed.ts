@@ -27,7 +27,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MUSIC_BED_STORAGE_PREFIX } from '@agentmedia/schema';
+import { MUSIC_BED_STORAGE_PREFIX, isMusicBedStorageKey } from '@agentmedia/schema';
 import type { WorkerConfig } from '../config.js';
 import { getDb } from '../client/db.js';
 import { r2GetPrivateObject, r2UploadVnext } from '../client/r2.js';
@@ -131,10 +131,12 @@ async function readPrivate(cfg: WorkerConfig, key: string, what: string, missing
 
 export function makeMixMusicBedActivity(cfg: WorkerConfig) {
   return async function mixMusicBed(input: MixMusicBedInput): Promise<MixMusicBedResult> {
-    const db = getDb(cfg.supabase.url, cfg.supabase.serviceRoleKey);
-    if (!input.track_storage_key?.startsWith(MUSIC_BED_STORAGE_PREFIX)) {
+    // Only an object under music-bed/ (no `..`, no absolute path): a forged key
+    // must never mix another private object (e.g. someone's draft) into a Short.
+    if (!isMusicBedStorageKey(input.track_storage_key)) {
       throw ApplicationFailure.nonRetryable(`Music Bed tracks are read only from ${MUSIC_BED_STORAGE_PREFIX}`, 'INVALID_INPUT');
     }
+    const db = getDb(cfg.supabase.url, cfg.supabase.serviceRoleKey);
     const allowedPrefix = cfg.r2.publicUrl.replace(/\/+$/, '') + '/';
     if (!input.short_url.startsWith(allowedPrefix)) {
       throw ApplicationFailure.nonRetryable('short_url must be hosted on the configured R2 public URL', 'REFERENCE_URL_NOT_ALLOWED');

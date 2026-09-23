@@ -22,6 +22,22 @@ export { MUSIC_BED_TRACKS } from './tracks.js';
 export const MUSIC_BED_STORAGE_PREFIX = 'music-bed/';
 
 /**
+ * Whether `key` names an object under music-bed/ and nothing else. A key is
+ * refused unless it is already in normal form: no `.`/`..`/empty segment, no
+ * leading `/`, no backslash or control character. So nothing that could
+ * normalise (or be read by a storage layer) outside the prefix ever passes.
+ * The worker checks this before it reads a track from the PRIVATE bucket.
+ */
+export function isMusicBedStorageKey(key: unknown): key is string {
+  if (typeof key !== 'string' || !key.startsWith(MUSIC_BED_STORAGE_PREFIX)) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\\\u0000-\u001f\u007f]/.test(key)) return false;
+  const segments = key.split('/');
+  if (segments.length < 2) return false;
+  return segments.every((seg) => seg !== '' && seg !== '.' && seg !== '..');
+}
+
+/**
  * Whether a Short gets a Music Bed, and which track.
  *   off       — the user turned it off (voice only; they may add a sound in TikTok)
  *   no_tracks — the Preset has no licensed tracks yet, so the Short is voice only
@@ -87,7 +103,7 @@ export function musicBedTrackProblems(tracks: readonly MusicBedTrack[], licenses
     if (!l?.ref?.trim() || !l.licensor?.trim() || !/^https:\/\//.test(l.terms_url ?? '') || !/^\d{4}-\d{2}-\d{2}$/.test(l.terms_checked_on ?? '') || !l.grant?.trim()) {
       problems.push(`${id}: incomplete licence record (ref, licensor, https terms_url, terms_checked_on YYYY-MM-DD, grant)`);
     }
-    if (!t.storage_key?.startsWith(`${MUSIC_BED_STORAGE_PREFIX}${t.preset}/`)) {
+    if (!isMusicBedStorageKey(t.storage_key) || !t.storage_key.startsWith(`${MUSIC_BED_STORAGE_PREFIX}${t.preset}/`)) {
       problems.push(`${id}: storage_key must be under ${MUSIC_BED_STORAGE_PREFIX}${t.preset}/`);
     }
     if (!Number.isFinite(t.duration_ms) || t.duration_ms <= 0) problems.push(`${id}: no duration_ms`);

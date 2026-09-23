@@ -16,6 +16,7 @@ import {
   resolveMusicBed,
   musicBedTrackProblems,
   MUSIC_BED_STORAGE_PREFIX,
+  isMusicBedStorageKey,
   type MusicBedTrack,
 } from '../music-bed/index.js';
 import { PRODUCT_HERO } from '../product-hero.js';
@@ -118,5 +119,39 @@ describe('the shipped track set', () => {
   it('LICENSES.md records the source terms with the date they were checked', () => {
     expect(LICENSES_MD).toMatch(/Checked on: 2026-09-23/);
     expect(LICENSES_MD).toMatch(/https:\/\/elevenlabs\.io\/eleven-music-model-specific-terms/);
+  });
+});
+
+describe('isMusicBedStorageKey — a track key can only name an object under music-bed/', () => {
+  it('accepts a plain key under the prefix', () => {
+    expect(isMusicBedStorageKey('music-bed/product_hero/ph-a.mp3')).toBe(true);
+    expect(isMusicBedStorageKey(`${MUSIC_BED_STORAGE_PREFIX}x.mp3`)).toBe(true);
+  });
+
+  it('refuses traversal, absolute paths and anything that normalises outside the prefix', () => {
+    for (const key of [
+      'music-bed/../vnext/drafts/u/d.mp3',
+      'music-bed/product_hero/../../secrets.env',
+      'music-bed/./x.mp3',
+      'music-bed//x.mp3',
+      'music-bed/',
+      'music-bed',
+      '/music-bed/x.mp3',
+      '../music-bed/x.mp3',
+      'music-bed\\..\\x.mp3',
+      'music-bed/x/..',
+      'vnext/drafts/u/d.mp3',
+      'music-bed/x.mp3\u0000',
+      '',
+    ]) {
+      expect(isMusicBedStorageKey(key), JSON.stringify(key)).toBe(false);
+    }
+    expect(isMusicBedStorageKey(undefined)).toBe(false);
+    expect(isMusicBedStorageKey(42)).toBe(false);
+  });
+
+  it('a track whose storage_key escapes the prefix is a problem', () => {
+    const problems = musicBedTrackProblems([track('esc', { storage_key: 'music-bed/product_hero/../../x.mp3' })], '## esc').join('\n');
+    expect(problems).toMatch(/esc.*storage_key/);
   });
 });
