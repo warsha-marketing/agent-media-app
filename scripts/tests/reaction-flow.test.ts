@@ -5,11 +5,9 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { PERSON_GENDERS, STANDARD_MODESTY } from '../../packages/schema/src/modesty.ts';
-import { DIALECTS } from '../../packages/schema/src/dialects.ts';
+import { PERSON_GENDERS } from '../../packages/schema/src/modesty.ts';
 import {
   CHARACTER_GENDERS,
-  defaultHijab,
   emptyReactionPick,
   hijabOffered,
   hijabShown,
@@ -78,19 +76,35 @@ describe('the hijab option', () => {
     assert.equal(hijabOffered(null), false);
   });
 
-  it('defaults on exactly where the Modesty Default says a hijab is on (mirror of STANDARD_MODESTY)', () => {
-    for (const d of DIALECTS) {
-      assert.equal(defaultHijab(d), STANDARD_MODESTY.hijab[d] !== 'off', d);
-    }
-    assert.equal(defaultHijab(null), false);
+  /** The quote's preset_inputs for a woman, as make_reaction resolves them. */
+  const quoted = (hijab: boolean, gender = 'female') => ({
+    character_id: LAYLA,
+    character_gender: gender,
+    modesty: { arms: 'covered', hijab },
   });
 
-  it('shows the Dialect default until the user changes it, and never for a man', () => {
-    assert.equal(hijabShown(pick(), 'gulf'), true);
-    assert.equal(hijabShown(pick(), 'levantine'), false);
-    assert.equal(hijabShown(pick({ hijab: false }), 'gulf'), false);
-    assert.equal(hijabShown(pick({ hijab: true }), 'levantine'), true);
-    assert.equal(hijabShown(pick({ gender: 'male', hijab: true }), 'gulf'), false);
+  it('shows the server’s resolved default (the quote’s preset_inputs.modesty) until the user changes it', () => {
+    assert.deepEqual(hijabShown(pick(), quoted(true)), { value: true, fromServer: true });
+    assert.deepEqual(hijabShown(pick(), quoted(false)), { value: false, fromServer: true });
+    assert.deepEqual(hijabShown(pick({ hijab: false }), quoted(true)), { value: false, fromServer: false });
+    assert.deepEqual(hijabShown(pick({ hijab: true }), quoted(false)), { value: true, fromServer: false });
+  });
+
+  it('knows no default before a quote, or from a quote for another gender or without a hijab answer', () => {
+    assert.deepEqual(hijabShown(pick(), null), { value: null, fromServer: false });
+    assert.deepEqual(hijabShown(pick(), undefined), { value: null, fromServer: false });
+    assert.deepEqual(hijabShown(pick(), quoted(true, 'male')), { value: null, fromServer: false });
+    assert.deepEqual(hijabShown(pick(), { character_gender: 'female', modesty: { arms: 'covered' } }), { value: null, fromServer: false });
+  });
+
+  it('never shows a hijab for a man', () => {
+    assert.deepEqual(hijabShown(pick({ gender: 'male', hijab: true }), quoted(true)), { value: false, fromServer: false });
+  });
+
+  it('keeps no Dialect table of its own: the server is the word on the default', async () => {
+    const flow = await import('../../apps/web/lib/reaction-flow.ts');
+    assert.equal('HIJAB_DEFAULT_ON' in flow, false);
+    assert.equal('defaultHijab' in flow, false);
   });
 
   it('a switch to a man drops the hijab choice', () => {

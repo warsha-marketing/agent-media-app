@@ -4,14 +4,14 @@
 
 /**
  * Reaction's own inputs in the Preset flow (#19): which saved character reacts,
- * their gender, and for a woman the hijab option (on by default for Gulf).
+ * their gender, and for a woman the hijab option (its default is the server's,
+ * from the quote: on for Gulf drafts).
  * Presentational only: the pick's rules live in lib/reaction-flow.ts.
  */
 
 import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
 import {
-  defaultHijab,
   hijabOffered,
   hijabShown,
   withGender,
@@ -34,12 +34,14 @@ interface Props {
   characters: SavedCharacter[] | null;
   error: string | null;
   pick: ReactionPick;
-  dialect: string | null;
+  /** The latest quote's `preset_inputs`: the hijab default the server resolved. */
+  presetInputs: Record<string, unknown> | null | undefined;
   disabled: boolean;
   onChange: (pick: ReactionPick) => void;
 }
 
-export function ReactionCharacterPicker({ characters, error, pick, dialect, disabled, onChange }: Props) {
+export function ReactionCharacterPicker({ characters, error, pick, presetInputs, disabled, onChange }: Props) {
+  const hijab = hijabShown(pick, presetInputs);
   return (
     <section className="mt-6 flex flex-col gap-3 rounded-2xl p-5" style={card}>
       <span className={label} style={muted}>Who reacts</span>
@@ -111,14 +113,18 @@ export function ReactionCharacterPicker({ characters, error, pick, dialect, disa
         <label className="flex items-center gap-2 text-sm" style={{ color: '#E9E9F0' }}>
           <input
             type="checkbox"
-            checked={hijabShown(pick, dialect)}
+            checked={hijab.value ?? false}
             disabled={disabled}
             onChange={(e) => onChange({ ...pick, hijab: e.target.checked })}
           />
           She wears a hijab
-          <span className="text-xs" style={muted}>
-            ({defaultHijab(dialect) ? 'on by default for Gulf' : 'off by default in this Dialect'})
-          </span>
+          {hijab.fromServer ? (
+            <span className="text-xs" style={muted}>
+              ({hijab.value ? 'on' : 'off'} by default for your draft’s Dialect)
+            </span>
+          ) : hijab.value === null ? (
+            <span className="text-xs" style={muted}>(the default for your draft’s Dialect shows once it is priced)</span>
+          ) : null}
         </label>
       ) : null}
       <p className="text-xs" style={muted}>Arms are always covered by long sleeves.</p>

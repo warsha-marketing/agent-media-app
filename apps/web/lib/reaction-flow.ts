@@ -50,7 +50,7 @@ export function parseCharacters(body: unknown): SavedCharacter[] | null {
 
 /**
  * What the user picked for a Reaction Short. `hijab` null = the Preset's default
- * for the Dialect (the server resolves it; see defaultHijab).
+ * for the draft's Dialect (the server resolves it; see hijabShown).
  */
 export interface ReactionPick {
   characterId: string | null;
@@ -65,22 +65,27 @@ export function hijabOffered(gender: CharacterGender | null): boolean {
   return gender === 'female';
 }
 
-/**
- * Whether a woman wears a hijab unless the user changes it, per Dialect: on for
- * Gulf, off elsewhere. A mirror of STANDARD_MODESTY.hijab in @agentmedia/schema
- * (this file takes no imports), held equal by scripts/tests/reaction-flow.test.ts.
- * The server's quote (`modesty`) is the word on what renders.
- */
-export const HIJAB_DEFAULT_ON: ReadonlySet<string> = new Set(['gulf']);
-
-export function defaultHijab(dialect: string | null): boolean {
-  return !!dialect && HIJAB_DEFAULT_ON.has(dialect);
+/** Whether the hijab box shows ticked, and whether that is the server's default. */
+export interface HijabView {
+  /** null = no default known yet (no quote for this pick): the box shows unticked. */
+  value: boolean | null;
+  /** True when `value` is the server's resolved default, not the user's own choice. */
+  fromServer: boolean;
 }
 
-/** Whether the hijab box shows ticked: the user's choice, else the Dialect's default. */
-export function hijabShown(pick: ReactionPick, dialect: string | null): boolean {
-  if (!hijabOffered(pick.gender)) return false;
-  return pick.hijab ?? defaultHijab(dialect);
+/**
+ * The hijab box: the user's choice wins; otherwise the Modesty Default the
+ * server resolved for this pick (the quote's `preset_inputs.modesty.hijab`,
+ * from the draft's Dialect), trusted only when that quote was for the same
+ * gender. The page keeps no Dialect table of its own: the server is the word.
+ */
+export function hijabShown(pick: ReactionPick, presetInputs: Record<string, unknown> | null | undefined): HijabView {
+  if (!hijabOffered(pick.gender)) return { value: false, fromServer: false };
+  if (pick.hijab !== null) return { value: pick.hijab, fromServer: false };
+  const q = presetInputs ?? {};
+  const modesty = (q.modesty && typeof q.modesty === 'object' ? q.modesty : {}) as Record<string, unknown>;
+  if (q.character_gender === pick.gender && typeof modesty.hijab === 'boolean') return { value: modesty.hijab, fromServer: true };
+  return { value: null, fromServer: false };
 }
 
 /** A Reaction render can be priced once a character and their gender are picked. */

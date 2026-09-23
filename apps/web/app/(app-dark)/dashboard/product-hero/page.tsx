@@ -782,7 +782,7 @@ export default function ProductHeroPage() {
           characters={characters}
           error={charactersError}
           pick={reactionPick}
-          dialect={draft?.dialect ?? dialect}
+          presetInputs={'quote' in render ? render.quote?.presetInputs : null}
           disabled={renderLocked}
           onChange={setReactionPick}
         />
