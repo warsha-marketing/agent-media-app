@@ -24,6 +24,9 @@ describe('productInteractionGuardrailIssue — passes realistic use', () => {
     'يرفع الكوب ويأخذ رشفة هادئة ويبتسم',
     'تضع قليلا من الكريم على ظهر اليد وتفركه بلطف',
     'تعدل حجابها وتبتسم',
+    // تكشف = "reveals": fine unless a body part follows.
+    'تكشف عن العطر وتبتسم',
+    'تكشف عن المنتج أمام الكاميرا',
   ])('passes: %s', (text) => {
     expect(productInteractionGuardrailIssue(text)).toBeNull();
   });

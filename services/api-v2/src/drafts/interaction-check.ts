@@ -113,7 +113,9 @@ const AR: ReadonlyArray<[InteractionGuardrail, RegExp]> = [
     'exposed',
     new RegExp(
       AR_START +
-        String.raw`(?:تكشف|يكشف|(?:ال)?مكشوف|(?:ال)?عاري|(?:ال)?عريان|تشمر|يشمر)` +
+        // تكشف/يكشف also means "reveals" (تكشف عن المنتج), so it only counts with a body part.
+        String.raw`(?:تكشف|يكشف)(?:\s+عن)?(?:\s+\S+)?\s+(?:ال)?(?:ذراع|اذرع|زند|كتف|اكتاف|جلد|بشره|شعر|ساق|سيقان|صدر|بطن|ظهر|رقبه)\S*` +
+        '|' + AR_START + String.raw`(?:(?:ال)?مكشوف|(?:ال)?عاري|(?:ال)?عريان|تشمر|يشمر)` +
         '|' + AR_START + String.raw`(?:بدون|بلا)\s+اكمام` +
         '|' + AR_START + String.raw`(?:ترفع|يرفع)\s+(?:عن\s+)?(?:اكمام|كم)`,
       'u',
