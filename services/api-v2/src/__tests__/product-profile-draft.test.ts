@@ -594,3 +594,77 @@ describe('Product Profile in the OpenAPI spec', () => {
     expect(create.responses['422'].description).toContain('PRODUCT_IMAGE_TOO_LARGE');
   });
 });
+
+// ── Playbooks (#32) ─────────────────────────────────────────────────────────
+
+describe('the Product Interaction and the Profile category’s Playbook (#32)', () => {
+  it('a written Product Interaction asking for a banned motion gets one rewrite, told the rule', async () => {
+    const h = await start({
+      profiles: [PERFUME_PROFILE],
+      interactions: ['holds the uncapped bottle, sprays once on the inner wrist, then brings the bottle to her nose', PERFUME_ACTION],
+    });
+    const r = await create(h, { product_image_url: photoOf('user-a') });
+    expect(r.status).toBe(201);
+    expect(h.calls.write).toHaveLength(2);
+    const rejected = h.calls.write[1].rejected!;
+    expect(rejected.product_interaction).toMatch(/brings the bottle to her nose/);
+    expect(rejected.reasons.join(' ')).toMatch(/Fragrance & oud Playbook bans: "brings the bottle to her nose" — the bottle never comes to the face or nose/);
+    expect(r.body.draft.product_interaction).toBe(PERFUME_ACTION);
+  });
+
+  it('a second banned motion is returned to the user: 422 PRODUCT_INTERACTION_BANNED_MOTION, nothing voiced', async () => {
+    const h = await start({ profiles: [COFFEE_PROFILE], interactions: ['pours the coffee over ice, sips', 'pours it into a glass and sips'] });
+    const r = await create(h, { product_image_url: photoOf('user-a') });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatchObject({ code: 'PRODUCT_INTERACTION_BANNED_MOTION', playbook: 'food_cafe', rule: 'pouring', matched: 'pours' });
+    expect(r.body.error.product_interaction).toMatch(/pours it into a glass/);
+    expect(h.calls.voice).toHaveLength(0);
+  });
+
+  it('a user’s own Product Interaction with a banned motion is refused at once (English and Arabic)', async () => {
+    const h = await start({ profiles: [PERFUME_PROFILE], interactions: [PERFUME_ACTION] });
+    const parent = (await create(h, { product_image_url: photoOf('user-a') })).body.draft;
+    for (const [text, rule] of [
+      ['removes the cap, then sprays once on the wrist', 'cap_removal'],
+      ['she smells the bottle and smiles', 'bottle_to_face'],
+      ['تقرب الزجاجة من أنفها وتبتسم', 'bottle_to_face'],
+    ]) {
+      const r = await post(h, '/v1/drafts/product-hero/revoice', { script: parent.script, dialect: 'levantine', parent_draft_id: parent.id, product_interaction: text });
+      expect(r.status).toBe(422);
+      expect(r.body.error).toMatchObject({ code: 'PRODUCT_INTERACTION_BANNED_MOTION', playbook: 'fragrance_oud', rule, product_interaction: text });
+    }
+    expect(h.calls.voice).toHaveLength(1);
+    // The owner’s own wording passes: the negation states the rule.
+    const ok = await post(h, '/v1/drafts/product-hero/revoice', {
+      script: parent.script, dialect: 'levantine', parent_draft_id: parent.id,
+      product_interaction: 'sprays once on the inner wrist and sets the bottle down; she never brings the bottle itself to her face',
+    });
+    expect(ok.status).toBe(201);
+  });
+
+  it('the Playbook follows the Profile: the same words pass for a category that allows them', async () => {
+    const h = await start({ profiles: [JAR_PROFILE], interactions: [JAR_ACTION] });
+    const parent = (await create(h, { product_image_url: photoOf('user-a') })).body.draft;
+    const r = await post(h, '/v1/drafts/product-hero/revoice', { script: parent.script, dialect: 'levantine', parent_draft_id: parent.id, product_interaction: 'brings the jar near her face and smiles' });
+    expect(r.status).toBe(201);
+  });
+
+  it('the writers are given the Playbook as a <playbook> block (allowed interactions, what it bans)', () => {
+    const script = userPrompt({ brief: 'b', product_details: null, dialect: 'levantine', delivery_tags: true, product_profile: PERFUME_PROFILE });
+    expect(script).toContain('<playbook>');
+    expect(script).toContain('Playbook: Fragrance & oud.');
+    expect(script).toContain('the bottle never comes to the face or nose');
+    const interaction = interactionUserPrompt({ brief: 'b', product_details: null, product_profile: COFFEE_PROFILE });
+    expect(interaction).toContain('Playbook: Food & café.');
+    expect(interaction).toContain('nothing is poured');
+    expect(userPrompt({ brief: 'b', product_details: null, dialect: 'levantine', delivery_tags: true })).not.toContain('<playbook>');
+    expect(systemPrompt('levantine', { deliveryTags: true })).toMatch(/<playbook>/);
+    expect(interactionSystemPrompt()).toMatch(/<playbook>/);
+  });
+
+  it('documents PRODUCT_INTERACTION_BANNED_MOTION on create and re-voice', () => {
+    const spec = draftOpenApi() as any;
+    expect(spec.paths['/v1/drafts/product-hero'].post.responses['422'].description).toContain('PRODUCT_INTERACTION_BANNED_MOTION');
+    expect(spec.paths['/v1/drafts/product-hero/revoice'].post.responses['422'].description).toContain('PRODUCT_INTERACTION_BANNED_MOTION');
+  });
+});

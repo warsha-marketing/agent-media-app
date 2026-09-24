@@ -112,11 +112,13 @@ import {
   VIDEO_MODEL_LABELS,
   composeShotPlan,
   inUseReferencePrompt,
+  resolvePlaybookChoice,
   shotHasPersonReference,
   shotPrompt,
   type ShotEdit,
   type ShotField,
   type ShotFields,
+  type PlaybookChoice,
   type ShotPlanShot,
 } from '@agentmedia/shot-prompts';
 
@@ -206,6 +208,15 @@ export interface PresetRenderInput {
    * In-use Reference. The quote priced the same choice.
    */
   use_original_product_photo?: boolean;
+  /**
+   * Playbook (#32): the choice api-v2 made from the draft's Product Profile
+   * category and priced ({ id, version, pattern }). This worker resolves the
+   * same Playbook data (@agentmedia/shot-prompts): its shot pattern, defaults,
+   * video-stage negatives and banned motions (edits re-checked). An unknown or
+   * stale choice refuses the render before anything is requested.
+   * Absent/null: the Preset's shots, exactly as before.
+   */
+  playbook?: PlaybookChoice | null;
 }
 
 /** One shot of the finished Short as it rendered (final_output.shots, #26, #28). */
@@ -317,10 +328,19 @@ export async function renderPreset(
     let framePrompts: Array<string | null>;
     let clipPrompts: Array<Partial<Record<VideoModelId, string>>>;
     let inUsePrompt: string | null = null;
+    let playbook: PlaybookChoice | null = null;
     try {
       const person = { gender: input.character_gender ?? null, description: input.character_description ?? null };
       const product = { profile, inUseReference: inUse, handGender: input.hand_gender ?? null };
-      shots = composeShotPlan(preset, { durationMs: input.duration_ms, modesty, vars, interaction, person, product }, input.shot_edits ?? null).shots;
+      // #32: the Playbook the quote priced, resolved from this worker's own copy of the data.
+      const chosen = resolvePlaybookChoice(input.playbook ?? null);
+      const plan = composeShotPlan(
+        preset,
+        { durationMs: input.duration_ms, modesty, vars, interaction, person, product, playbook: chosen },
+        input.shot_edits ?? null,
+      );
+      shots = plan.shots;
+      playbook = plan.playbook;
       if (inUse && profile) inUsePrompt = inUseReferencePrompt(profile);
       // A starting frame is an image edit of the product photo: its one reference image.
       framePrompts = shots.map((s) => (s.starting_frame ? shotPrompt(s, 'image', IMAGE_REFERENCES) : null));
@@ -528,6 +548,8 @@ export async function renderPreset(
       music_bed: musicBed?.track_id ?? null, // #9
       // #31: the In-use Reference the hands and person shots used, for the user to see.
       in_use_reference: inUseUrl ? { image_url: inUseUrl, source_product_image_url: input.product_image_url } : null,
+      // #32: the Playbook the shots followed ({ id, version, pattern }), or null.
+      playbook,
       // #26: what ran — each shot's final prompt as sent, for the owner.
       shots: rendered,
     };

@@ -454,3 +454,89 @@ describe('shot_edits on the quote and the run', () => {
     expect(started).toHaveLength(1);
   });
 });
+
+// ── Playbooks (#32) ─────────────────────────────────────────────────────────
+
+describe('the draft’s Playbook (#32)', () => {
+  const profile = (over: Record<string, unknown>) => ({
+    category: 'fragrance_oud',
+    dimensions: { height_cm: 11, width_cm: 5, volume_ml: 100 },
+    size_class: 'palm',
+    parts: [{ name: 'bottle', removable: false }],
+    used_state: 'uncapped, spray neck visible',
+    differs_from_photo: false,
+    interaction_verbs: ['spray', 'smell'],
+    grip: 'one hand around the bottle',
+    physics_risks: ['liquid_spray'],
+    confidence: 0.9,
+    ...over,
+  });
+  const FRAGRANCE = { id: 'fragrance_oud', version: 1, pattern: 'spray-then-smell' };
+
+  it('the Shot Plan follows the Profile category’s Playbook and says which', async () => {
+    const id = seedDraft({ dialect: 'gulf', product_interaction: PERFUME, product_profile: profile({}) });
+    const r = await call(shotPlanRoute, OWNER, body(id));
+    expect(r.status).toBe(200);
+    expect(r.body.playbook).toEqual(FRAGRANCE);
+    const shots = shotsOf(r.body);
+    expect(shots.map((s) => s.shot_id)).toEqual(['reaction-spray', 'reaction-smell', 'product-closer']);
+    const line = shots[1].guardrails.video.find((g) => g.id === 'playbook')!;
+    expect(line).toMatchObject({ label: 'Fragrance & oud rules', enforced_by: 'prompt' });
+    expect(shots[1].prompt_preview.video).toContain('never brings the bottle itself to their face or nose');
+  });
+
+  it.each([
+    ['skincare_beauty', 'skincare_beauty'],
+    ['food_cafe', 'food_cafe'],
+    ['electronics', 'electronics'],
+    ['fashion_modest', 'general'],
+    ['home', 'general'],
+    ['other', 'general'],
+  ])('a %s product gets the %s Playbook', async (category, playbook) => {
+    const id = seedDraft({ product_interaction: 'holds it up to the camera', product_profile: profile({ category, interaction_verbs: ['hold'], physics_risks: [] }) });
+    const r = await call(shotPlanRoute, OWNER, body(id));
+    expect(r.status).toBe(200);
+    expect((r.body.playbook as { id: string }).id).toBe(playbook);
+  });
+
+  it('a draft without a Profile has no Playbook: the Preset’s shots', async () => {
+    const r = await call(shotPlanRoute, OWNER, body(seedDraft({ product_interaction: PERFUME })));
+    expect(r.body.playbook).toBeNull();
+    expect(shotsOf(r.body).map((s) => s.shot_id)).toEqual(['reaction', 'product-closer']);
+  });
+
+  it('refuses a shot edit asking for a banned motion: 422 SHOT_EDIT_BANNED_MOTION with the playbook, rule and words (English and Arabic)', async () => {
+    const id = seedDraft({ dialect: 'gulf', product_interaction: PERFUME, product_profile: profile({}) });
+    for (const [route, text] of [
+      [shotPlanRoute, 'She brings the bottle up to her nose.'],
+      [quoteSkillRoute, 'تقرب الزجاجة من أنفها'],
+      [runSkillRoute, 'She removes the cap first.'],
+    ] as const) {
+      const r = await call(route, OWNER, body(id, { shot_edits: { 'reaction-smell': { action: text } } }));
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ error: 'SHOT_EDIT_BANNED_MOTION', shot_id: 'reaction-smell', field: 'action', reason: 'banned_motion', playbook: 'fragrance_oud' });
+      expect(['bottle_to_face', 'cap_removal']).toContain(r.body.rule);
+      expect(typeof r.body.matched).toBe('string');
+    }
+    expect(started).toHaveLength(0);
+  });
+
+  it('the run stores and hands the worker the choice; the quote prices the pattern the worker plans', async () => {
+    const id = seedDraft({ dialect: 'gulf', product_interaction: PERFUME, product_profile: profile({}) });
+    const r = await call(runSkillRoute, OWNER, body(id));
+    expect(r.status).toBe(202);
+    expect(workflowInput().playbook).toEqual(FRAGRANCE);
+    const run = TABLES.skill_runs.find((s) => s.id === r.body.skill_run_id)!;
+    const input = run.input as Record<string, unknown>;
+    expect(input.playbook).toEqual(FRAGRANCE);
+    // Three 5 s clips (spray, smell, product) instead of Reaction's two at 9 s.
+    const { playbookPreset, resolvePlaybookChoice } = await import('@agentmedia/shot-prompts');
+    const { quotePresetCredits } = await import('@agentmedia/schema');
+    const priced = quoteSkillCredits('make_reaction', input);
+    expect(priced).toBe(quotePresetCredits(playbookPreset(REACTION, resolvePlaybookChoice(FRAGRANCE)), 9_000, { inUseReference: input.in_use_reference === true }));
+    expect(priced).toBeGreaterThan(quoteSkillCredits('make_reaction', { ...input, playbook: undefined }));
+    expect(priced).toBeLessThanOrEqual(REACTION.budget.maxCredits);
+    // A stale or unknown choice is never priced (fails closed).
+    expect(() => quoteSkillCredits('make_reaction', { ...input, playbook: { ...FRAGRANCE, version: 99 } })).toThrow(/rules changed/);
+  });
+});
