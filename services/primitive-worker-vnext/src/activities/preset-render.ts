@@ -41,6 +41,7 @@ import type { WorkerConfig } from '../config.js';
 import { getDb } from '../client/db.js';
 import { r2UploadVnext } from '../client/r2.js';
 import { DRAFT_AUDIO, probeSeconds, readPrivateObject } from '../lib/media-io.js';
+import { downloadProviderVideo } from '../lib/provider-video.js';
 import { runChargedStep } from './charged-step.js';
 import { shotClipUsd, shotModelChain, shotVideo, type ShotVideo, type VideoModelId } from '@agentmedia/schema';
 import { presetRender } from '../presets/index.js';
@@ -262,11 +263,8 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
           providerVideoUrl = made.videoUrl;
           Context.current().heartbeat({ stage: 'provider_done', taskId: providerTaskId });
           const videoUrl = providerVideoUrl;
-          videoBytes = await finalUnlessResubmittable(client, async () => {
-            const dl = await fetch(videoUrl, { redirect: 'follow', signal: AbortSignal.timeout(120_000) });
-            if (!dl.ok) throw new Error(`clip download ${dl.status}`);
-            return Buffer.from(await dl.arrayBuffer());
-          });
+          // Only from the provider CDNs we know, never redirected off them, size-capped.
+          videoBytes = await finalUnlessResubmittable(client, () => downloadProviderVideo(videoUrl));
         }
         Context.current().heartbeat({ stage: 'video_downloaded', bytes: videoBytes.byteLength });
 
