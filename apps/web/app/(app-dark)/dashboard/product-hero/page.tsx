@@ -95,6 +95,8 @@ import { RenderPanel, Stepper } from '@/components/product-hero-render';
 import { ReactionCharacterPicker } from '@/components/reaction-character-picker';
 import { HandsOnInputs } from '@/components/hands-on-inputs'; // #18
 import { ShotPlanReview } from '@/components/shot-plan-review'; // #26
+import { ProductProfileFields } from '@/components/product-profile-fields'; // #30
+import { isProfileEdited, profileEdit, profileFieldsOf, type ProductProfile, type ProfileFields } from '@/lib/product-profile-flow';
 import { HANDS_ON_PRESET, NO_HANDS_ON_CHOICE, handsOnInputs, handsOnView, type HandsOnChoice } from '@/lib/hands-on-flow';
 import {
   REACTION_PRESET,
@@ -116,6 +118,8 @@ interface Draft {
   product_details?: string | null;
   /** How a real person uses the product (#25); used in hands and person shots. */
   product_interaction?: string | null;
+  /** What the system understood about the product from its photo (#30); null without a photo. */
+  product_profile?: ProductProfile | null;
   script: string;
   /** Short-lived signed URL; re-read the draft for a fresh one. */
   audio_url: string;
@@ -218,6 +222,8 @@ export default function ProductHeroPage() {
   const [voicesError, setVoicesError] = useState<string | null>(null);
   const [script, setScript] = useState('');
   const [interaction, setInteraction] = useState('');
+  // The Product Profile's key fields as the user edits them (#30); null = the draft has none.
+  const [profileFields, setProfileFields] = useState<ProfileFields | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [history, setHistory] = useState<Draft[]>([]);
   const [busy, setBusy] = useState<'write' | 'voice' | null>(null);
@@ -320,6 +326,7 @@ export default function ProductHeroPage() {
     setDraft(d);
     setScript(d.script);
     setInteraction(d.product_interaction ?? '');
+    setProfileFields(profileFieldsOf(d.product_profile));
     setHistory((h) => [d, ...h]);
     // A new draft needs its own quote; its URL is where a reload comes back to.
     dispatch({ type: 'reset' });
@@ -345,6 +352,7 @@ export default function ProductHeroPage() {
       setDraft(d);
       setScript(d.script);
       setInteraction(d.product_interaction ?? '');
+      setProfileFields(profileFieldsOf(d.product_profile));
       setHistory([d]);
       if (d.brief) setBrief(d.brief);
       if (d.product_details) setProductDetails(d.product_details);
@@ -396,6 +404,8 @@ export default function ProductHeroPage() {
         ...(productDetails.trim() ? { product_details: productDetails.trim() } : {}),
         dialect,
         voice_id: voiceId,
+        // The uploaded photo: Claude reads it into the Product Profile (#30).
+        ...(photo?.url ? { product_image_url: photo.url } : {}),
       });
       if (r.draft) accept(r.draft);
       else refuse(r.error!);
@@ -420,12 +430,15 @@ export default function ProductHeroPage() {
         ...(voiceId ? { voice_id: voiceId } : {}),
         // The Product Interaction only when the user changed it (#25); else the parent's carries over.
         ...interactionEdit(draft, interaction),
-        // With a parent, its Brief and Product Details carry over server-side.
+        // The Product Profile only when the user changed it (#30); else the parent's carries over.
+        ...profileEdit(draft?.product_profile, profileFields),
+        // With a parent, its Brief, Product Details and Product Profile carry over server-side.
         ...(draft
           ? { parent_draft_id: draft.id }
           : {
               ...(brief.trim() ? { brief: brief.trim() } : {}),
               ...(productDetails.trim() ? { product_details: productDetails.trim() } : {}),
+              ...(photo?.url ? { product_image_url: photo.url } : {}),
             }),
       });
       if (r.draft) accept(r.draft);
@@ -450,7 +463,7 @@ export default function ProductHeroPage() {
 
   const badTags = unknownDeliveryTags(script);
   const voiceChanged = !!draft && !!voiceId && voiceId !== draft.voice?.id;
-  const edited = isDraftEdited({ draft, script, interaction, voiceChanged });
+  const edited = isDraftEdited({ draft, script, interaction, voiceChanged }) || isProfileEdited(draft?.product_profile, profileFields);
   const render = rs.render;
   /** While a render starts or runs, the draft and photo on screen are the ones it uses. */
   const renderLocked = render.phase === 'starting' || render.phase === 'rendering';
@@ -975,6 +988,10 @@ export default function ProductHeroPage() {
               </p>
             ) : null}
           </div>
+          {/* Product Profile (#30): what the system understood about the product; editing it re-drafts. */}
+          {draft?.product_profile && profileFields ? (
+            <ProductProfileFields profile={draft.product_profile} fields={profileFields} disabled={renderLocked} onChange={setProfileFields} />
+          ) : null}
           {/* Product Interaction (#25): how a real person uses the product, beside the Script. */}
           <div className="flex flex-col gap-1.5">
             <label className={label} style={muted} htmlFor="product-interaction">Product Interaction</label>
@@ -987,7 +1004,7 @@ export default function ProductHeroPage() {
               readOnly={renderLocked}
               maxLength={PRODUCT_INTERACTION_MAX}
               rows={2}
-              placeholder="e.g. removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles"
+              placeholder="e.g. holds the uncapped bottle, sprays once on the inner wrist, brings the wrist to the nose, smiles"
               className="w-full resize-y rounded-xl px-4 py-3 text-sm outline-none"
               style={field}
             />

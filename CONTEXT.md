@@ -27,7 +27,7 @@ How modest the people and hands in a Preset's shots are, declared by the Preset:
 _Avoid_: dress code, modesty filter, safe mode
 
 **Product Interaction**:
-How a real person uses the product on camera, as a short English action (perfume: "removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles"; coffee: a sip; skincare: applied to the back of the hand). The Script writer drafts it from the Product Details alongside the Script; it is stored on the draft, and the user may edit it, which makes a new draft like a Script edit. It goes into every shot that shows hands or a person (and a hands starting frame), never a product shot, and never overrides the Modesty Default or the no-speaking instruction: one that contradicts them (speech, a hijab removed, bare arms or skin, undressing; English or Arabic) is refused when saved.
+How a real person uses the product on camera, as one short, simple, continuous English action with the product already in the state it is used in (perfume: "holds the uncapped bottle, sprays once on the inner wrist, brings the wrist to the nose, smiles"; coffee: a sip; skincare: from the open jar, applied to the back of the hand). The Script writer drafts it from the Product Profile and the Product Details alongside the Script; it is stored on the draft, and the user may edit it, which makes a new draft like a Script edit. It goes into every shot that shows hands or a person (and a hands starting frame), never a product shot, and never overrides the Modesty Default or the no-speaking instruction: one that contradicts them (speech, a hijab removed, bare arms or skin, undressing; English or Arabic) is refused when saved.
 _Avoid_: usage, action prompt, demo, gesture
 
 **Shot Plan**:
@@ -45,7 +45,7 @@ _Avoid_: safety filter, rule, constraint, negative prompt
 ### Product intelligence
 
 **Product Profile**:
-What the system understands about one product from its photo and Product Details: category, real size, parts and states, how it is used, grip, and physical risks for video.
+What the system understands about one product from its photo and Product Details: category, real size, parts and states, how it is used, grip, and physical risks for video. Read by Claude (vision) when a draft is made from a product photo, before the Script; stored on the draft, and the user may edit it, which makes a new draft (and re-writes the Product Interaction from it).
 _Avoid_: product metadata, product analysis
 
 **In-use Reference**:
