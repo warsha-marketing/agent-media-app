@@ -11,9 +11,10 @@
  * definition and never branches on a Preset's name.
  *
  * This is the PUBLIC half of a definition (this package is published): the
- * shot prompts per kind are the quality authority and stay server-side, in the
- * worker's render definition (services/primitive-worker-vnext/src/presets),
- * which extends this type with them.
+ * Shot Prompt wording per kind (scenes and Guardrails) is the quality authority
+ * and stays server-side, in the private @agentmedia/shot-prompts package
+ * (packages/shot-prompts), which the worker's render definition and api-v2's
+ * Shot Plan (#26) read alongside this type.
  *
  * ⚠ INVARIANT: api-v2 quotes from planPresetShots and the worker renders from
  * it, so the quote the user confirms is exactly the charge. Do not plan shots

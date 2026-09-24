@@ -12,7 +12,7 @@
  * hijab turned off where the Preset requires it.
  *
  * This is the public half (levels, rules, the user-facing input). The prompt
- * wording for each level is server-side, with the worker's shot prompts.
+ * wording for each level is server-side, a Guardrail in @agentmedia/shot-prompts.
  */
 
 import { z } from 'zod';

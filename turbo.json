@@ -28,7 +28,7 @@
       "passThroughEnv": ["TEMPORAL_TEST_SERVER_PATH"]
     },
     "//#test:scripts": {
-      "inputs": ["scripts/tests/**", "apps/web/lib/**"]
+      "inputs": ["scripts/tests/**", "apps/web/lib/**", "packages/shot-prompts/src/**"]
     },
     "dev": {
       "cache": false,

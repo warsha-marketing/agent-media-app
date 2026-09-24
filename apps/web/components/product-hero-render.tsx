@@ -13,6 +13,7 @@ import { useState, type CSSProperties, type ReactNode } from 'react';
 import { AlertTriangle, Captions, Check, Clapperboard, Download, ImageOff, Loader2, RotateCcw } from 'lucide-react';
 import { downloadUrl } from '@/lib/download-file';
 import { CaptionEditor } from '@/components/caption-editor';
+import { RenderedShots } from '@/components/shot-plan-review'; // #26
 import { FLOW_STEPS, RENDER_STAGES, musicBedLine, type ApiOutcome, type FlowStep, type Quote, type RefundView, type RenderPhase } from '@/lib/product-hero-flow';
 
 const card = { border: '1px solid rgba(255,255,255,0.08)', backgroundColor: '#14151F' } as const;
@@ -88,7 +89,7 @@ export function RenderPanel(p: RenderPanelProps) {
       ) : null}
       {r.phase === 'refused' ? <Refusal outcome={r.outcome} quoted={!!r.quote} {...p} /> : null}
       {r.phase === 'rendering' ? <Progress view={r.view} /> : null}
-      {r.phase === 'succeeded' ? <Result runId={r.runId} videoUrl={r.videoUrl} durationMs={r.durationMs} /> : null}
+      {r.phase === 'succeeded' ? <Result runId={r.runId} videoUrl={r.videoUrl} durationMs={r.durationMs} shots={r.shots} /> : null}
       {r.phase === 'failed' ? (
         <Failure canceled={r.canceled} moderation={r.moderation} message={r.message} refund={r.refund} onRetry={p.onRetry} onNewPhoto={p.onNewPhoto} />
       ) : null}
@@ -230,7 +231,7 @@ function Progress({ view }: { view: Extract<RenderPhase, { phase: 'rendering' }>
   );
 }
 
-function Result({ runId, videoUrl, durationMs }: { runId: string; videoUrl: string; durationMs: number | null }) {
+function Result({ runId, videoUrl, durationMs, shots }: { runId: string; videoUrl: string; durationMs: number | null; shots?: unknown[] }) {
   const [saving, setSaving] = useState(false);
   // Captions are added after the render (#22): the Short stays clean, and the
   // Caption editor previews, edits and exports them on the server.
@@ -269,6 +270,8 @@ function Result({ runId, videoUrl, durationMs }: { runId: string; videoUrl: stri
         ) : null}
         <span className="text-xs" style={muted}>A draft renders once. To make another Short, edit the Script and re-voice it.</span>
       </div>
+      {/* #26: what ran — each shot's final prompt as its model got it. */}
+      <RenderedShots shots={shots} />
     </>
   );
 }

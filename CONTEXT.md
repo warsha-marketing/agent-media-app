@@ -30,6 +30,18 @@ _Avoid_: dress code, modesty filter, safe mode
 How a real person uses the product on camera, as a short English action (perfume: "removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles"; coffee: a sip; skincare: applied to the back of the hand). The Script writer drafts it from the Product Details alongside the Script; it is stored on the draft, and the user may edit it, which makes a new draft like a Script edit. It goes into every shot that shows hands or a person (and a hands starting frame), never a product shot, and never overrides the Modesty Default or the no-speaking instruction: one that contradicts them (speech, a hijab removed, bare arms or skin, undressing; English or Arabic) is refused when saved.
 _Avoid_: usage, action prompt, demo, gesture
 
+**Shot Plan**:
+Every shot a render will make, composed before it starts from the approved draft and the Preset: each shot's kind (product, hands or person), on-screen length and video model (with its fallback), and its Shot Prompt. The quote prices it; the user may open it ("Review shots") and edit each shot's scene text before Confirm, which never changes the price. Not opening it renders exactly the Preset's plan.
+_Avoid_: storyboard, shot list, timeline
+
+**Shot Prompt**:
+What one shot's video model is asked for: its scene text (what happens in the shot, provider-neutral: "the product", "the person"; the Preset's by default, with the Product Interaction on hands and person shots, and editable by the user) plus the shot's Guardrails. The server always builds it itself; the final prompt as sent to the model is kept with the render and shown to the owner on the result.
+_Avoid_: prompt (alone), shot description, template
+
+**Guardrail**:
+A locked line of a Shot Prompt that the user sees but can never edit or remove: the fixed product and character references, the no-speaking instruction on person and hands shots (ADR 0001), the Modesty Default, nobody on a product shot, no text or captions, and the video model's own audio off. The server adds them to every shot whatever the client sends, and refuses scene text (or a Product Interaction) that contradicts one: speech, a hijab removed, bare arms or skin, undressing, in English or Arabic.
+_Avoid_: safety filter, rule, constraint, negative prompt
+
 ### Arabic speech
 
 **Dialect**:

@@ -94,6 +94,7 @@ import { PHOTO_ACCEPT, uploadProductPhoto } from '@/lib/product-hero-upload';
 import { RenderPanel, Stepper } from '@/components/product-hero-render';
 import { ReactionCharacterPicker } from '@/components/reaction-character-picker';
 import { HandsOnInputs } from '@/components/hands-on-inputs'; // #18
+import { ShotPlanReview } from '@/components/shot-plan-review'; // #26
 import { HANDS_ON_PRESET, NO_HANDS_ON_CHOICE, handsOnInputs, handsOnView, type HandsOnChoice } from '@/lib/hands-on-flow';
 import {
   REACTION_PRESET,
@@ -544,19 +545,29 @@ export default function ProductHeroPage() {
   const skill = preset?.skill || undefined;
   const presetInputs = isReaction ? reactionInputs(reactionPick) : isHandsOn ? handsOnInputs(handsOn) : null;
   const presetInputsKey = JSON.stringify(presetInputs);
+  // Shot Plan review (#26): the scene text the user changed, by shot id. A new
+  // draft, Preset or Preset inputs is a new plan (its shots may differ): the
+  // edits start over, and the panel is remounted (its key).
+  const [shotEdits, setShotEdits] = useState<Record<string, string>>({});
+  const planKey = `${draftId ?? ''}|${skill ?? ''}|${presetInputsKey}`;
+  useEffect(() => {
+    setShotEdits({});
+  }, [planKey]);
+  const shotEditsKey = JSON.stringify(shotEdits);
   const choice = useMemo<RenderChoice | null>(
     () => {
       if (!draftId || !photoUrl) return null;
       if (isReaction && !presetInputs) return null;
-      return { draftId, photoUrl, music, skill, presetInputs };
+      return { draftId, photoUrl, music, skill, presetInputs, shotEdits };
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- presetInputsKey stands for presetInputs
-    [draftId, photoUrl, music, skill, isReaction, presetInputsKey],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- presetInputsKey / shotEditsKey stand for presetInputs / shotEdits
+    [draftId, photoUrl, music, skill, isReaction, presetInputsKey, shotEditsKey],
   );
 
-  // A different Preset or Reaction pick is a different request: withdraw the
-  // quote on screen and re-quote (the reducer leaves a running render alone).
-  const requestKey = `${skill ?? ''}|${presetInputsKey}`;
+  // A different Preset, Reaction pick or scene edit is a different request:
+  // withdraw the quote on screen and re-quote (the reducer leaves a running
+  // render alone); the next Confirm is a new confirmation with a new key.
+  const requestKey = `${skill ?? ''}|${presetInputsKey}|${shotEditsKey}`;
   useEffect(() => {
     dispatch({ type: 'invalidate_quote' });
   }, [requestKey]);
@@ -1012,6 +1023,10 @@ export default function ProductHeroPage() {
           onHandGender={(g) => setHandsOn((cur) => ({ ...cur, handGender: g }))}
           onSetting={(s) => setHandsOn((cur) => ({ ...cur, setting: s }))}
         />
+      ) : null}
+
+      {choice && (render.phase === 'idle' || render.phase === 'quoting' || render.phase === 'quoted' || render.phase === 'refused') ? (
+        <ShotPlanReview key={planKey} choice={choice} disabled={renderLocked || edited} onEdits={setShotEdits} />
       ) : null}
 
       <RenderPanel
