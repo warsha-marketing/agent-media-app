@@ -1,0 +1,28 @@
+{
+  "name": "@agentmedia/shot-prompts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Server-only Shot Prompt wording (scene templates, Guardrails, the guardrail check) shared by api-v2 and primitive-worker-vnext. Never published: the prompt craft stays server-side.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@agentmedia/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^3.1.0"
+  }
+}

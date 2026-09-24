@@ -10,13 +10,16 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 
 # Copy only the packages and services needed
 COPY packages/schema/ packages/schema/
+# Server-only Shot Prompt wording (#26), shared by api-v2 and the worker.
+COPY packages/shot-prompts/ packages/shot-prompts/
 COPY services/api-v2/ services/api-v2/
 
 # Install dependencies for schema + api-v2 only
-RUN pnpm install --frozen-lockfile --filter @agentmedia/schema --filter api-v2
+RUN pnpm install --frozen-lockfile --filter @agentmedia/schema --filter @agentmedia/shot-prompts --filter api-v2
 
 # Build schema first, then api-v2
 RUN pnpm --filter @agentmedia/schema build
+RUN pnpm --filter @agentmedia/shot-prompts build
 RUN pnpm --filter api-v2 build
 
 WORKDIR /app/services/api-v2

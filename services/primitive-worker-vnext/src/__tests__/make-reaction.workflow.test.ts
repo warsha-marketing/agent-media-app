@@ -20,6 +20,7 @@ import type { MakeReactionWorkflowInput } from '../workflows/make-reaction.js';
 import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
 import { MODESTY_PROMPTS } from '../presets/modesty.js';
 import { REACTION_RENDER, SILENT_REACTION } from '../presets/reaction.js';
+import { NO_PEOPLE, REFERENCE_TOKENS } from '@agentmedia/shot-prompts';
 import { presetRender } from '../presets/index.js';
 import * as workflows from '../workflows/index.js';
 
@@ -108,7 +109,8 @@ describe('makeReactionWorkflow — silent faces intercut with the product', () =
         expect(c.prompt).toContain(MODESTY_PROMPTS.person.covered);
         expect(c.prompt).toContain(MODESTY_PROMPTS.hijab);
       } else {
-        expect(c.prompt).toBe(REACTION_RENDER.shotPrompts.product);
+        expect(c.prompt).toContain(REACTION_RENDER.scenes.product);
+        expect(c.prompt).toContain(NO_PEOPLE);
         expect(c.prompt).not.toContain(SILENT_REACTION);
         expect(c.prompt).not.toContain('Modest styling');
       }
@@ -242,11 +244,14 @@ describe('make_reaction registration', () => {
     expect(presetRender('reaction')).toBe(REACTION_RENDER);
   });
 
-  it('asks for a closed mouth on every reaction shot and shows nobody on a product shot', () => {
-    expect(REACTION_RENDER.shotPrompts.reaction).toContain(SILENT_REACTION);
-    expect(REACTION_RENDER.shotPrompts.reaction).toContain('@image2');
-    expect(REACTION_RENDER.shotPrompts.product).not.toContain('@image2');
-    expect(REACTION_RENDER.shotPrompts.product).toMatch(/No people/);
+  it('asks for a closed mouth on every reaction shot and shows nobody on a product shot', async () => {
+    const fakes = happyFakes();
+    await harness.execute('makeReactionWorkflow', [renderInput(9_000)], fakes);
+    const [reaction, product] = clipsOf(fakes);
+    expect(reaction.prompt).toContain(SILENT_REACTION);
+    expect(reaction.prompt).toContain(REFERENCE_TOKENS.person);
+    expect(product.prompt).not.toContain(REFERENCE_TOKENS.person);
+    expect(product.prompt).toMatch(/No people/);
   });
 });
 
@@ -499,23 +504,21 @@ describe('makeReactionWorkflow — Product Interaction (#25)', () => {
     skincare: 'squeezes a small amount onto the back of the hand and gently rubs it in',
   };
 
-  it.each(Object.entries(EXAMPLES))('carries the %s interaction on every reaction shot, after the no-speaking and modesty wording', async (_p, interaction) => {
+  it.each(Object.entries(EXAMPLES))('carries the %s interaction in every reaction scene, with the no-speaking and modesty Guardrails after it', async (_p, interaction) => {
     const fakes = happyFakes();
     await harness.execute('makeReactionWorkflow', [renderInput(12_000, { product_interaction: interaction })], fakes);
     for (const c of clipsOf(fakes)) {
       if (c.shot_kind === 'product') {
-        expect(c.prompt).toBe(REACTION_RENDER.shotPrompts.product);
+        expect(c.prompt).not.toContain(interaction);
         continue;
       }
       const at = c.prompt.indexOf(interaction);
       expect(at).toBeGreaterThan(-1);
-      // Never overriding: the no-speaking and modesty words are there, verbatim, before it.
-      expect(c.prompt.indexOf(SILENT_REACTION)).toBeGreaterThan(-1);
-      expect(c.prompt.indexOf(SILENT_REACTION)).toBeLessThan(at);
-      expect(c.prompt.indexOf(MODESTY_PROMPTS.person.covered)).toBeGreaterThan(-1);
-      expect(c.prompt.indexOf(MODESTY_PROMPTS.person.covered)).toBeLessThan(at);
-      expect(c.prompt.indexOf(MODESTY_PROMPTS.hijab)).toBeLessThan(at);
-      expect(c.prompt.slice(at)).toMatch(/nobody speaks/);
+      // Never overriding: the no-speaking and modesty Guardrails are there,
+      // verbatim, after it — the prompt's last word (#26).
+      expect(c.prompt.indexOf(SILENT_REACTION)).toBeGreaterThan(at);
+      expect(c.prompt.indexOf(MODESTY_PROMPTS.person.covered)).toBeGreaterThan(at);
+      expect(c.prompt.indexOf(MODESTY_PROMPTS.hijab)).toBeGreaterThan(at);
     }
   });
 

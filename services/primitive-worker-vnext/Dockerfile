@@ -21,11 +21,14 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 
 # Bring in the workspace deps the worker actually needs.
 COPY packages/schema/ packages/schema/
+# Server-only Shot Prompt wording (#26), shared by api-v2 and the worker.
+COPY packages/shot-prompts/ packages/shot-prompts/
 COPY services/primitive-worker-vnext/ services/primitive-worker-vnext/
 
-RUN pnpm install --frozen-lockfile --filter @agentmedia/schema --filter primitive-worker-vnext
+RUN pnpm install --frozen-lockfile --filter @agentmedia/schema --filter @agentmedia/shot-prompts --filter primitive-worker-vnext
 
 RUN pnpm --filter @agentmedia/schema build
+RUN pnpm --filter @agentmedia/shot-prompts build
 RUN pnpm --filter primitive-worker-vnext build
 
 WORKDIR /app/services/primitive-worker-vnext

@@ -35,8 +35,14 @@
  *                        fallback, the failed attempt is refunded and the
  *                        fallback renders the shot. Both refusing is the
  *                        non-retryable content-policy failure. Every hands and
- *                        person prompt also carries the draft's Product
- *                        Interaction, after the Modesty Default (#25).
+ *                        person scene also carries the draft's Product
+ *                        Interaction (#25). Every clip prompt is a Shot Prompt
+ *                        (#26): the shot's scene — the Preset's, or the user's
+ *                        edit (shot_edits, checked again here) — plus the
+ *                        Guardrails, which this worker ALWAYS adds from its
+ *                        own copy (@agentmedia/shot-prompts), whatever the
+ *                        input says. Each shot's prompt as sent is stored on
+ *                        its clip row and on the Short (final_output.shots).
  *   3. presetMux  — hard-cuts the clips on the 9:16 canvas (shots with a
  *                        planned on-screen share each cut to it), trims (or, if a
  *                        clip ran a few ms short, holds) the visuals to the audio's
@@ -81,7 +87,8 @@ import type { PrimitiveActivities } from '../activities/index.js';
 import { makeChildRunId } from './child-run-id.js';
 import { failureInfo } from './failure-info.js';
 import { CONTENT_POLICY_REFUSED, NON_RETRYABLE_TYPES, failurePolicy } from '../failure-policy.js';
-import { presetFramePrompt, presetShotPrompt, type PresetRenderDefinition } from '../presets/index.js';
+import { presetFramePrompt, type PresetRenderDefinition } from '../presets/index.js';
+import { REFERENCE_TOKENS, ShotEditError, composeShotPlan, shotPrompt, type ShotPlanShot } from '@agentmedia/shot-prompts';
 
 /**
  * What a registered Preset workflow (e.g. makeProductHeroWorkflow) is started
@@ -135,6 +142,29 @@ export interface PresetRenderInput {
    * to a product shot. Absent/null on drafts from before it: prompts unchanged.
    */
   product_interaction?: string | null;
+  /**
+   * Shot Plan review (#26): the user's scene text for the shots they edited, by
+   * shot id (`shot-1-reaction`, …), as api-v2 validated it against the same
+   * plan. Only scene text: the Guardrails are never part of the input, and the
+   * render adds its own to every shot. Checked again here (the shot ids, the
+   * length, no brackets or reference syntax, the guardrail check): a bad edit
+   * refuses the render before anything is requested. Absent/empty: every shot
+   * renders the Preset's scene, exactly as before.
+   */
+  shot_edits?: Readonly<Record<string, string>> | null;
+}
+
+/** One shot of the finished Short as it rendered (final_output.shots, #26). */
+export interface RenderedShot {
+  shot_id: string;
+  kind: string;
+  /** The model that rendered it (its kind's model, or the fallback). */
+  model: string;
+  scene: string;
+  edited: boolean;
+  guardrails: string[];
+  /** The final prompt exactly as sent to that model (scene + Guardrails, its reference syntax). */
+  prompt: string;
 }
 
 export interface PresetRenderResult {
@@ -212,6 +242,35 @@ export async function renderPreset(
     const vars = promptVarsFor(preset, input);
     const interaction = input.product_interaction ?? null;
 
+    // The shots and every prompt of the render (#26: edits checked), before
+    // anything is requested, so a refused edit costs nothing.
+    let shots: PlannedShot[];
+    try {
+      shots = planPresetShots(preset, input.duration_ms);
+    } catch (err) {
+      throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
+    }
+    // Each clip's Shot Prompt is its scene (the user's edit, checked again,
+    // else the Preset's) plus this worker's own Guardrails (#26).
+    let framePrompts: Array<string | null>;
+    let plan: ShotPlanShot[];
+    try {
+      framePrompts = shots.map((s) =>
+        preset.shotKinds[s.kind].frame ? presetFramePrompt(preset, s.kind, modesty, vars, interaction) : null,
+      );
+      plan = composeShotPlan(
+        preset,
+        { durationMs: input.duration_ms, modesty, vars, interaction, personReference: Boolean(input.character_image_url) },
+        input.shot_edits ?? null,
+      );
+    } catch (err) {
+      if (err instanceof ShotEditError) throw ApplicationFailure.nonRetryable(err.message.slice(0, 500), err.code);
+      throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
+    }
+    // The provider adapter (presetClip) swaps the reference tokens for its own syntax.
+    const clipPrompts = plan.map((shot) => shotPrompt(shot, REFERENCE_TOKENS));
+    const rendered: RenderedShot[] = [];
+
     // ── 1. The draft's audio, first ─────────────────────────────────────────
     const audio = await fetchDraftAudio({
       primitive_run_id: mint('audio'),
@@ -222,24 +281,6 @@ export async function renderPreset(
       duration_ms: input.duration_ms,
     });
 
-    // ── 2. Silent clips covering the speech ─────────────────────────────────
-    let shots: PlannedShot[];
-    try {
-      shots = planPresetShots(preset, input.duration_ms);
-    } catch (err) {
-      throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
-    }
-    // Every prompt of the render, built before anything visual is requested.
-    let framePrompts: Array<string | null>;
-    let clipPrompts: string[];
-    try {
-      framePrompts = shots.map((s) =>
-        preset.shotKinds[s.kind].frame ? presetFramePrompt(preset, s.kind, modesty, vars, interaction) : null,
-      );
-      clipPrompts = shots.map((s) => presetShotPrompt(preset, s.kind, modesty, vars, interaction));
-    } catch (err) {
-      throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
-    }
     let totalUsd = 0;
     const overruns = overrunsFor(preset);
     // ── 1b. Starting frames (#18), every one before any clip ────────────────
@@ -263,6 +304,7 @@ export async function renderPreset(
       frameUrls[i] = made.image_url;
       totalUsd += made.credits_actual_usd;
     }
+    // ── 2. Silent clips covering the speech ─────────────────────────────────
     const clipUrls: string[] = [];
     for (let i = 0; i < shots.length; i += 1) {
       await composedSkillState({ skill_run_id: skillRunId, current_step: `clip_${i + 1}` });
@@ -273,6 +315,7 @@ export async function renderPreset(
       // A content refusal on an earlier model of the chain: if the fallback
       // then fails for another reason, the refusal is what the run reports.
       let refused: string | undefined;
+      let ranOn: string | undefined;
       for (let a = 0; a < chain.length && !clip; a += 1) {
         const childId = mint(a === 0 ? `clip_${i}` : `clip_${i}_${chain[a]}`);
         try {
@@ -295,6 +338,7 @@ export async function renderPreset(
               ? { character_image_url: input.character_image_url }
               : {}),
           });
+          ranOn = chain[a];
         } catch (err) {
           const f = failureInfo(err);
           const last = a === chain.length - 1;
@@ -321,6 +365,16 @@ export async function renderPreset(
       }
       if (!clip) throw ApplicationFailure.nonRetryable(`no model rendered shot ${i + 1}`, 'CLIP_FAILED');
       clipUrls.push(clip.video_url);
+      rendered.push({
+        shot_id: plan[i].shot_id,
+        kind: plan[i].kind,
+        // A clip from before #26 (a replayed history) reports neither; fall back to what was asked.
+        model: clip.model ?? ranOn ?? chain[0],
+        scene: plan[i].scene,
+        edited: plan[i].edited,
+        guardrails: plan[i].guardrails.map((g) => g.id),
+        prompt: clip.prompt ?? clipPrompts[i],
+      });
       totalUsd += clip.credits_actual_usd;
     }
 
@@ -378,6 +432,8 @@ export async function renderPreset(
       aspect_ratio: preset.aspectRatio,
       credits_actual_usd: totalUsd,
       music_bed: musicBed?.track_id ?? null, // #9
+      // #26: what ran — each shot's final prompt as sent, for the owner.
+      shots: rendered,
     };
     await composedSkillState({
       skill_run_id: skillRunId,

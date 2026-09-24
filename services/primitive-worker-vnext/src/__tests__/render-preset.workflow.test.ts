@@ -16,6 +16,7 @@ import type { TestPresetRenderInput } from './support/test-preset-workflow.js';
 import type { PresetRenderDefinition } from '../presets/index.js';
 import { PRODUCT_HERO_RENDER } from '../presets/index.js';
 import { MODESTY_PROMPTS } from '../presets/modesty.js';
+import { FORMAT, NO_PEOPLE, NO_SPEAKING_PERSON, PRODUCT_REFERENCE } from '@agentmedia/shot-prompts';
 import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
 
 const SKILL_RUN_ID = '99999999-2222-4333-8444-555555555555';
@@ -35,11 +36,17 @@ const INTERCUT: PresetRenderDefinition<'person' | 'product'> = {
   musicBed: [],
   modesty: STANDARD_MODESTY,
   budget: { maxCredits: 420, maxProviderUsd: 1.8 },
-  shotPrompts: {
-    person: 'TEST person reacting silently to the product in @image1, mouth closed.',
-    product: 'TEST product close-up of @image1.',
+  scenes: {
+    person: 'TEST person reacting silently to the product, mouth closed.',
+    product: 'TEST product close-up.',
   },
 };
+
+/** Product Hero's Shot Prompts as the pipeline hands them to presetClip: the reference, the scene, the Guardrails (#26). */
+const HERO_PROMPTS = [
+  `${PRODUCT_REFERENCE} ${PRODUCT_HERO_RENDER.scenes.hero} ${NO_PEOPLE} ${FORMAT}`,
+  `${PRODUCT_REFERENCE} ${PRODUCT_HERO_RENDER.scenes.detail} ${NO_PEOPLE} ${FORMAT}`,
+];
 
 function renderInput(durationMs: number, preset: PresetRenderDefinition = INTERCUT): TestPresetRenderInput {
   return {
@@ -98,10 +105,11 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
       ['person', 10],
       ['product', 5],
     ]);
-    // The person shot also carries the Modesty Default (#17; see modesty.workflow.test.ts).
+    // Each is its scene plus its Guardrails (#26): the person shot's no-speaking
+    // and Modesty Default (#17; see modesty.workflow.test.ts), the product shot's nobody.
     expect(clips.map((c) => c.prompt)).toEqual([
-      `${INTERCUT.shotPrompts.person} ${MODESTY_PROMPTS.person.covered}`,
-      INTERCUT.shotPrompts.product,
+      `${PRODUCT_REFERENCE} ${INTERCUT.scenes.person} ${NO_SPEAKING_PERSON} ${MODESTY_PROMPTS.person.covered} ${FORMAT}`,
+      `${PRODUCT_REFERENCE} ${INTERCUT.scenes.product} ${NO_PEOPLE} ${FORMAT}`,
     ]);
     for (const c of clips) expect(c.preset).toBe('test_intercut');
   });
@@ -195,7 +203,7 @@ describe('makeProductHeroWorkflow — Product Hero is one definition on that pip
 
     const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => c.shot_kind)).toEqual(['hero', 'detail']);
-    expect(clips.map((c) => c.prompt)).toEqual([PRODUCT_HERO_RENDER.shotPrompts.hero, PRODUCT_HERO_RENDER.shotPrompts.detail]);
+    expect(clips.map((c) => c.prompt)).toEqual(HERO_PROMPTS);
     const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
     expect(mux.preset).toBe('product_hero');
   });
@@ -206,6 +214,6 @@ describe('makeProductHeroWorkflow — Product Hero is one definition on that pip
     await harness.execute('makeProductHeroWorkflow', [smuggled as never], fakes);
     const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => c.shot_kind)).toEqual(['hero', 'detail']);
-    expect(clips.map((c) => c.prompt)).toEqual([PRODUCT_HERO_RENDER.shotPrompts.hero, PRODUCT_HERO_RENDER.shotPrompts.detail]);
+    expect(clips.map((c) => c.prompt)).toEqual(HERO_PROMPTS);
   });
 });

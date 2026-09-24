@@ -17,6 +17,7 @@ import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../a
 import type { PresetStartingFrameInput } from '../activities/preset-frame.js';
 import { HAND_WORDS, HANDS_ON_RENDER, SETTING_WORDS } from '../presets/hands-on.js';
 import { MODESTY_PROMPTS } from '../presets/modesty.js';
+import { FORMAT } from '@agentmedia/shot-prompts';
 import { quotePrimitiveCredits } from '../client/credits.js';
 
 const SKILL_RUN_ID = '18181818-2222-4333-8444-555555555555';
@@ -176,7 +177,7 @@ describe('makeHandsOnWorkflow — prompts', () => {
       const clips = fakes.callsTo('presetClip') as PresetClipInput[];
       for (const f of frames) expect(f.prompt.endsWith(MODESTY_PROMPTS.hands[arms])).toBe(true);
       for (const c of clips) {
-        if (c.shot_kind === 'hands') expect(c.prompt.endsWith(MODESTY_PROMPTS.hands[arms])).toBe(true);
+        if (c.shot_kind === 'hands') expect(c.prompt).toContain(`${MODESTY_PROMPTS.hands[arms]} ${FORMAT}`);
         else expect(c.prompt).not.toContain('Modest styling');
       }
     }
@@ -197,15 +198,20 @@ describe('makeHandsOnWorkflow — prompts', () => {
     for (const p of [frame.prompt, clips[0].prompt]) {
       expect(p).toContain(HAND_WORDS.male);
       expect(p).toContain(SETTING_WORDS.majlis);
-      expect(p).not.toMatch(/\{[a-z_]+\}/);
+      // No unfilled {placeholder} (the {{…}} reference tokens are the model adapter's to fill).
+      expect(p).not.toMatch(/(?<!\{)\{[a-z_]+\}(?!\})/);
     }
     expect(clips[1].prompt).toContain(SETTING_WORDS.majlis);
     expect(clips[1].prompt).not.toContain(HAND_WORDS.male);
   });
 
-  it('never lets a prompt imply speech: every clip says nobody speaks or shows nobody', () => {
-    expect(HANDS_ON_RENDER.shotPrompts.hands).toMatch(/nobody speaks/);
-    expect(HANDS_ON_RENDER.shotPrompts.product).toMatch(/No people, no hands/);
+  it('never lets a prompt imply speech: every clip says nobody speaks or shows nobody', async () => {
+    const fakes = happyFakes();
+    await harness.execute('makeHandsOnWorkflow', [renderInput(12_000)], fakes);
+    for (const c of fakes.callsTo('presetClip') as PresetClipInput[]) {
+      expect(c.prompt).toMatch(c.shot_kind === 'hands' ? /nobody speaks/ : /No people, no hands/);
+    }
+    expect(HANDS_ON_RENDER.scenes.hands).not.toMatch(/@image/);
   });
 });
 
@@ -280,18 +286,22 @@ describe('makeHandsOnWorkflow — Product Interaction (#25)', () => {
     ['perfume', 'dressing_table', 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose'],
     ['coffee', 'kitchen', 'lifts the cup and takes one slow sip'],
     ['skincare', 'dressing_table', 'squeezes a small amount onto the back of the hand and rubs it in'],
-  ] as const)('%s: every hands frame and clip carries it after the Modesty Default; the product shot does not', async (_p, setting, interaction) => {
+  ] as const)('%s: every hands frame carries it after the Modesty Default, every hands clip in its scene with the Guardrails after; the product shot does not', async (_p, setting, interaction) => {
     const fakes = happyFakes();
     await harness.execute('makeHandsOnWorkflow', [renderInput(12_000, { setting, product_interaction: interaction })], fakes);
     const frames = fakes.callsTo('presetStartingFrame') as PresetStartingFrameInput[];
     const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(frames.length).toBeGreaterThan(0);
-    const handsPrompts = [...frames.map((f) => f.prompt), ...clips.filter((c) => c.shot_kind === 'hands').map((c) => c.prompt)];
-    for (const prompt of handsPrompts) {
+    for (const prompt of frames.map((f) => f.prompt)) {
       const at = prompt.indexOf(interaction);
       expect(at).toBeGreaterThan(-1);
       expect(prompt.indexOf(MODESTY_PROMPTS.hands.covered)).toBeGreaterThan(-1);
       expect(prompt.indexOf(MODESTY_PROMPTS.hands.covered)).toBeLessThan(at);
+    }
+    for (const prompt of clips.filter((c) => c.shot_kind === 'hands').map((c) => c.prompt)) {
+      const at = prompt.indexOf(interaction);
+      expect(at).toBeGreaterThan(-1);
+      expect(prompt.indexOf(MODESTY_PROMPTS.hands.covered)).toBeGreaterThan(at);
     }
     for (const c of clips.filter((c) => c.shot_kind === 'product')) {
       expect(c.prompt).not.toContain(interaction);

@@ -46,6 +46,7 @@ import { runChargedStep } from './charged-step.js';
 import { modelClipUsd, shotModelChain, shotVideo, type ShotVideo, type VideoModelId } from '@agentmedia/schema';
 import { presetRender } from '../presets/index.js';
 import { videoModel, type VideoModelClient } from '../video-models/index.js';
+import { hasReferenceTokens } from '@agentmedia/shot-prompts';
 import { PROVIDER_FAILED } from '../failure-policy.js';
 import { providerFailure } from '../client/provider-failure.js';
 
@@ -130,10 +131,14 @@ export interface PresetClipInput {
   /** 0-based position of this shot in the Short, and how many shots it has. */
   shot_index: number;
   shot_count: number;
-  /** The Preset rendering this shot, the shot's kind in its plan, and the
-   *  Preset's prompt for that kind (server-side; see ../presets). */
+  /** The Preset rendering this shot, and the shot's kind in its plan. */
   preset: string;
   shot_kind: string;
+  /**
+   * The shot's Shot Prompt (#26): its scene plus the worker's Guardrails, with
+   * the reference images as tokens (@agentmedia/shot-prompts REFERENCE_TOKENS),
+   * which this activity swaps for the model's own syntax (client.promptFor).
+   */
   prompt: string;
   /** Preset visuals are always silent: the draft audio is the only voice. */
   generate_audio: false;
@@ -155,6 +160,10 @@ export interface PresetClipResult {
   video_url: string;
   duration_seconds: 5 | 10;
   credits_actual_usd: number;
+  /** The model that rendered the clip (absent on a result recorded before #26). */
+  model?: VideoModelId;
+  /** The prompt exactly as sent to it (#26: stored on the Short as what ran; absent before #26). */
+  prompt?: string;
 }
 
 /**
@@ -200,7 +209,11 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
     const client = videoModel(model);
 
     const characterImageUrl = input.character_image_url;
-    const prompt = input.prompt;
+    // The Shot Prompt in this model's reference syntax: what is sent, and what is recorded.
+    const prompt = client.promptFor(input.prompt);
+    if (hasReferenceTokens(prompt)) {
+      throw ApplicationFailure.nonRetryable(`${model} left a reference token in the prompt`, 'INVALID_INPUT');
+    }
     // Spend: the per-primitive cap does not apply (the Preset's budget governs
     // the whole render; see the header). The day cap still does (runChargedStep).
     // The charge is the shot's (its chain's), whichever model runs, so a
@@ -244,6 +257,8 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
         video_url: prior.url,
         duration_seconds: input.duration,
         credits_actual_usd: prior.actualUsd,
+        model,
+        prompt,
       }),
       work: async () => {
         let videoBytes: Buffer;
@@ -327,6 +342,8 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
           video_url: publicUrl,
           duration_seconds: input.duration,
           credits_actual_usd: estimatedUsd,
+          model,
+          prompt,
         };
       },
     });
