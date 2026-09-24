@@ -213,9 +213,16 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     const presetInputs = await presetInputsOrRespond(render, 'preview');
     if (!presetInputs) return;
     // Shot Plan review (#26): field edits are refused here as on the run; they never change the price.
-    if (!shotPlanOrRespond(render, presetInputs)) return;
+    const plan = shotPlanOrRespond(render, presetInputs);
+    if (!plan) return;
     // #31: the In-use Reference step is priced when the render makes one (quote == charge).
-    input = { ...input, duration_ms: draft.duration_ms, in_use_reference: renderMakesInUseReference(skill.preset, draft, input) };
+    // #32: the Playbook's pattern is priced exactly as it plans (the run records the same choice).
+    input = {
+      ...input,
+      duration_ms: draft.duration_ms,
+      in_use_reference: renderMakesInUseReference(skill.preset, draft, input),
+      ...(plan.playbook ? { playbook: plan.playbook } : {}),
+    };
     quoteExtras = {
       music_bed: musicBedView(presetMusicBed(skill.preset, input.music, draft.id)),
       in_use_reference: inUseReferenceView(skill.preset, draft, input),
@@ -982,6 +989,8 @@ async function dispatchPresetRender(
     ...presetInputs.run,
     // #26: the fields the user edited, by shot id (the Short's final_output.shots has each final prompt).
     ...(edited ? { shot_edits: shotEdits } : {}),
+    // #32: the Playbook the plan follows; priced (and reserved) from it, and rendered with it.
+    ...(plan.playbook ? { playbook: plan.playbook } : {}),
   };
 
   const preflight = await preflightCreditCheck(userId, slug, runInput);
@@ -1070,6 +1079,8 @@ async function dispatchPresetRender(
     ...presetInputs.workflow,
     // #26: only validated field edits; the worker re-checks them and adds its own Guardrails.
     ...(edited ? { shot_edits: shotEdits } : {}),
+    // #32: the Playbook choice ({ id, version, pattern }); the worker resolves the same data.
+    ...(plan.playbook ? { playbook: plan.playbook } : {}),
   };
 
   try {

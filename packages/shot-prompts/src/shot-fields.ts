@@ -143,7 +143,7 @@ export function composeFields(fields: ShotFields): string {
 
 // ── Checking an edited field ─────────────────────────────────────────────────
 
-export type ShotEditCode = 'SHOT_EDIT_INVALID' | 'SHOT_EDIT_BREAKS_GUARDRAIL';
+export type ShotEditCode = 'SHOT_EDIT_INVALID' | 'SHOT_EDIT_BREAKS_GUARDRAIL' | 'SHOT_EDIT_BANNED_MOTION';
 export type ShotEditReason =
   | 'unknown_shot'
   | 'not_object'
@@ -155,7 +155,8 @@ export type ShotEditReason =
   | 'too_long'
   | 'brackets'
   | 'reference_syntax'
-  | 'guardrail';
+  | 'guardrail'
+  | 'banned_motion';
 
 export interface ShotFieldProblem {
   code: ShotEditCode;
@@ -164,6 +165,9 @@ export interface ShotFieldProblem {
   /** SHOT_EDIT_BREAKS_GUARDRAIL: which Guardrail, and the words that broke it. */
   guardrail?: InteractionGuardrail;
   matched?: string;
+  /** SHOT_EDIT_BANNED_MOTION (#32): the Playbook and its rule the words break (matched: the words). */
+  playbook?: string;
+  rule?: string;
 }
 
 /** Bracketed tags ([softly], {hands}, <b>): a field is plain words. */

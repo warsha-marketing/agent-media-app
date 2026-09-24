@@ -29,7 +29,7 @@ The monorepo is a pnpm + turbo workspace.
 | `packages/mcp-server` | TypeScript | Local stdio MCP server (companion to the hosted `/mcp` connector) |
 | `packages/sdk-ts`, `packages/sdk-python` | TS / Python | SDKs against api-v2 |
 | `packages/schema`, `packages/types`, `packages/ui` | TS | Shared schema, types, UI components |
-| `packages/shot-prompts` | TS, private | Server-only Shot Prompt wording (shot fields, Guardrails per stage, the guardrail check), shared by api-v2 and primitive-worker-vnext |
+| `packages/shot-prompts` | TS, private | Server-only Shot Prompt wording (shot fields, Guardrails per stage, the guardrail check, the per-category Playbooks as data), shared by api-v2 and primitive-worker-vnext |
 
 Every backend service ships its own `Dockerfile`, so they can be deployed independently, to different hosts, and scaled separately.
 

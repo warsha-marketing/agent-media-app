@@ -20,3 +20,4 @@ export * from './scenes.js';
 export * from './shot-fields.js';
 export * from './shot-plan.js';
 export * from './product-reference.js';
+export * from './playbooks/index.js';

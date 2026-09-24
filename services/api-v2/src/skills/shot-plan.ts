@@ -21,6 +21,13 @@
  *       Idempotency-Key fingerprint (the validated body). The run hands the
  *       worker only the fields that change a shot; the worker re-checks them
  *       and always adds its own Guardrails.
+ *   Playbooks (#32) — the draft's Product Profile category picks one
+ *       (renderPlaybook): its shot pattern and defaults shape the plan, its
+ *       negatives are a locked line on the video stage, and a field asking
+ *       for one of its banned motions is refused (422 SHOT_EDIT_BANNED_MOTION,
+ *       with playbook, rule and matched). The plan says which one
+ *       (`playbook`: id, version, pattern); the quote prices that plan and the
+ *       run hands the choice to the worker, which renders the same one.
  *
  * The composition is @agentmedia/shot-prompts' (server-only, shared with the
  * worker), from the same draft duration, Modesty Default, Preset inputs and
@@ -28,7 +35,7 @@
  */
 
 import { z } from 'zod';
-import { shotFallbacks, type Modesty, type PersonGender, type PresetDefinition } from '@agentmedia/schema';
+import { ProductProfileSchema, shotFallbacks, type Modesty, type PersonGender, type PresetDefinition } from '@agentmedia/schema';
 import {
   PEOPLE_FIELDS,
   SHOT_ENERGIES,
@@ -38,6 +45,7 @@ import {
   SHOT_TEXT_FIELDS,
   ShotEditError,
   VIDEO_MODEL_LABELS,
+  choosePlaybook,
   composeShotPlan,
   displayReferences,
   presetPrompts,
@@ -45,6 +53,7 @@ import {
   withReferences,
   type Guardrail,
   type ReferenceWords,
+  type ResolvedPlaybook,
   type ShotPlan,
   type ShotPlanPreset,
   type ShotPlanShot,
@@ -84,6 +93,16 @@ function renderModesty(preset: PresetDefinition, presetInputs: PresetInputs): Mo
 }
 
 /**
+ * The Playbook (#32) a render of `draft` follows: its Product Profile's
+ * category's (General for one without its own); none for a draft without a
+ * Profile (from before #30) or with one that no longer reads as a Profile.
+ */
+export function renderPlaybook(draft: Pick<RenderableDraft, 'product_profile'>): ResolvedPlaybook | null {
+  const parsed = ProductProfileSchema.safeParse(draft.product_profile ?? null);
+  return parsed.success ? choosePlaybook(parsed.data) : null;
+}
+
+/**
  * The Shot Plan of rendering `draft` as `preset` with the Preset inputs the
  * route resolved, and `edits` applied. A refused edit is a 422
  * RenderRefusal carrying its shot_id, field and reason (and the Guardrail it broke).
@@ -117,6 +136,7 @@ export function composeRenderShotPlan(
           inUseReference,
           handGender: (presetInputs.run.hand_gender as PersonGender | undefined) ?? null,
         },
+        playbook: renderPlaybook(draft),
       },
       (edits ?? null) as Record<string, unknown> | null,
     );
@@ -127,6 +147,7 @@ export function composeRenderShotPlan(
         reason: err.reason,
         ...(err.field ? { field: err.field } : {}),
         ...(err.guardrail ? { guardrail: err.guardrail, matched: err.matched } : {}),
+        ...(err.rule ? { playbook: err.playbook, rule: err.rule, matched: err.matched } : {}),
       });
     }
     throw err;
@@ -190,6 +211,8 @@ export function shotPlanView(slug: string, preset: PresetDefinition, draft: Pick
     draft_id: draft.id,
     duration_ms: Number(draft.duration_ms),
     set: plan.set,
+    // #32: the Playbook the shots follow ({ id, version, pattern }), or null.
+    playbook: plan.playbook,
     fields: SHOT_FIELD_CATALOG,
     shots: plan.shots.map(shotView),
   };

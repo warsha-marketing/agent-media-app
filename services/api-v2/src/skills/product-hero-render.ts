@@ -53,7 +53,8 @@ export interface RenderableDraft {
   product_interaction?: string | null;
   /**
    * Product Profile (#30): the render reads its size (the Scale Anchor) and
-   * its used state and parts (the In-use Reference, #31). Null on drafts from before it.
+   * its used state and parts (the In-use Reference, #31), and its category
+   * picks the render's Playbook (#32). Null on drafts from before it.
    */
   product_profile?: ProductProfile | null;
   /** That run's status (null when there is no claim, or its run is missing). */
@@ -118,6 +119,11 @@ export const RENDER_REFUSALS = {
   SHOT_EDIT_BREAKS_GUARDRAIL: {
     status: 422,
     when: 'a `shot_edits` field contradicts a Guardrail: someone speaks, a hijab comes off, arms or skin are bared, someone undresses (English or Arabic)',
+  },
+  // Playbooks (#32): the draft's Product Profile category picks a Playbook, whose banned motions no shot field may ask for.
+  SHOT_EDIT_BANNED_MOTION: {
+    status: 422,
+    when: "a `shot_edits` field asks for a motion the product's Playbook bans (e.g. fragrance & oud: the bottle brought to the face or nose, the cap taken off on camera, a spray at the face; food & café: pouring, cutting; English or Arabic), with the playbook, rule and matched words",
   },
 } as const;
 export type RenderRefusalCode = keyof typeof RENDER_REFUSALS;

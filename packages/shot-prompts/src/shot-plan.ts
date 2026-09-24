@@ -46,10 +46,15 @@ import { shotGuardrails, stageGuardrails, type Guardrail, type ShotStage, type S
 import { personDescriptionLine, type PersonWords } from './person.js';
 import { inUseReferenceLine, scaleAnchorLine, type ShotProductContext } from './product-reference.js';
 import { withReferences, type ReferenceWords } from './references.js';
+import { playbookGuardrail, playbookPreset, playbookRoleDefaults, withPlaybookGuardrail } from './playbooks/apply.js';
+import { bannedMotionIssue, bannedMotionMessage } from './playbooks/banned-motion.js';
+import { playbookChoice } from './playbooks/registry.js';
+import type { PlaybookChoice, ResolvedPlaybook } from './playbooks/types.js';
 import { fillPrompt, productInteractionAction, type PresetPrompts } from './scenes.js';
 import {
   PEOPLE_FIELDS,
   SHOT_FIELDS,
+  SHOT_FIELD_LABELS,
   asSentence,
   composeFields,
   isShotField,
@@ -119,6 +124,9 @@ export class ShotEditError extends Error {
   readonly field?: ShotField;
   readonly guardrail?: InteractionGuardrail;
   readonly matched?: string;
+  /** SHOT_EDIT_BANNED_MOTION (#32): the Playbook and the rule. */
+  readonly playbook?: string;
+  readonly rule?: string;
   constructor(shot: string, problem: ShotFieldProblem, field?: ShotField) {
     super(`${shot}: ${problem.message}`);
     this.name = 'ShotEditError';
@@ -128,14 +136,16 @@ export class ShotEditError extends Error {
     if (field) this.field = field;
     if (problem.guardrail) this.guardrail = problem.guardrail;
     if (problem.matched) this.matched = problem.matched;
+    if (problem.playbook) this.playbook = problem.playbook;
+    if (problem.rule) this.rule = problem.rule;
   }
 }
 
 const invalid = (reason: ShotEditReason, message: string): ShotFieldProblem => ({ code: 'SHOT_EDIT_INVALID', reason, message });
 const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** One shot's edit, checked against the shot it names: its fields, tidied. Throws ShotEditError. */
-function checkedEdit(id: string, shows: ShotSubject, raw: unknown): ShotEdit {
+/** One shot's edit, checked against the shot it names (and the product's Playbook): its fields, tidied. Throws ShotEditError. */
+function checkedEdit(id: string, shows: ShotSubject, raw: unknown, playbook: ResolvedPlaybook | null): ShotEdit {
   if (!isPlainObject(raw)) {
     throw new ShotEditError(id, invalid('not_object', 'A shot edit is an object of fields, e.g. { "scene": "The person smiles." }.'));
   }
@@ -149,6 +159,23 @@ function checkedEdit(id: string, shows: ShotSubject, raw: unknown): ShotEdit {
     }
     const problem = shotFieldProblem(key, value);
     if (problem) throw new ShotEditError(id, problem, key);
+    if (key !== 'energy' && playbook) {
+      const banned = bannedMotionIssue(value as string, playbook.playbook);
+      if (banned) {
+        throw new ShotEditError(
+          id,
+          {
+            code: 'SHOT_EDIT_BANNED_MOTION',
+            reason: 'banned_motion',
+            message: bannedMotionMessage(SHOT_FIELD_LABELS[key], banned, playbook.playbook.name),
+            matched: banned.matched,
+            playbook: banned.playbook,
+            rule: banned.rule,
+          },
+          key,
+        );
+      }
+    }
     out[key] = key === 'energy' ? value : tidyFieldText(value as string);
   }
   return out as ShotEdit;
@@ -185,6 +212,14 @@ export interface ShotPlanContext {
    * Absent: neither line (drafts from before the Product Profile).
    */
   product?: ShotProductContext | null;
+  /**
+   * The product's Playbook (#32, ./playbooks), chosen from the draft's Product
+   * Profile (choosePlaybook) or a run's recorded choice (resolvePlaybookChoice):
+   * its pattern's shot order (planned and priced the same way), its defaults
+   * and role fields, its negatives on the video stage, and its banned motions
+   * refused in edits. Absent/null: the Preset's shots, exactly as before.
+   */
+  playbook?: ResolvedPlaybook | null;
 }
 
 export interface ShotPlanShot {
@@ -228,17 +263,23 @@ export interface ShotPlanShot {
 export interface ShotPlan {
   /** The Short's Set (#33), or null. */
   set: ShotSetRef | null;
+  /** The Playbook the plan follows (#32): id, version and pattern; null without one. */
+  playbook: PlaybookChoice | null;
   shots: ShotPlanShot[];
 }
 
-function defaultFields(preset: ShotPlanPreset, kind: string, shows: ShotSubject, ctx: ShotPlanContext): ShotFields {
+function defaultFields(preset: ShotPlanPreset, kind: string, role: string, shows: ShotSubject, ctx: ShotPlanContext): ShotFields {
   const d = preset.shots[kind];
   if (!d) throw new Error(`${preset.name} has no shot wording for ${kind} shots`);
   const vars = ctx.vars ?? {};
   const text = (v: string | undefined) => (v ? fillPrompt(v, vars) : '');
+  // The Playbook's (#32) over the Preset's: its energy and performance, then the role's fields.
+  const pb = playbookRoleDefaults(ctx.playbook, preset.id, role, shows);
   const out = {} as Record<ShotField, string>;
   for (const f of SHOT_FIELDS) {
-    out[f] = f === 'energy' ? d.energy : f === 'action' ? productInteractionAction(shows, ctx.interaction) : text(d[f]);
+    if (f === 'energy') out[f] = pb.energy ?? d.energy;
+    else if (f === 'action') out[f] = pb.action !== undefined ? text(pb.action) : productInteractionAction(shows, ctx.interaction);
+    else out[f] = text(pb[f] ?? d[f]);
   }
   return out as ShotFields;
 }
@@ -252,7 +293,9 @@ function defaultFields(preset: ShotPlanPreset, kind: string, shows: ShotSubject,
  * inputs do not fill.
  */
 export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, edits?: Readonly<Record<string, unknown>> | null): ShotPlan {
-  const planned = planPresetShots(preset, ctx.durationMs);
+  // The Playbook's pattern (#32) reorders the Preset's own kinds: planned, and priced, the same way.
+  const playbook = ctx.playbook ?? null;
+  const planned = planPresetShots(playbookPreset(preset, playbook), ctx.durationMs);
   const ids = shotIds(planned.map((s) => s.role));
   for (const id of Object.keys(edits ?? {})) {
     if (!ids.includes(id)) {
@@ -271,8 +314,8 @@ export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, ed
     const onScreen = s.onScreenMs ?? Math.min(s.seconds * 1000, Math.max(0, ctx.durationMs - elapsed));
     elapsed += onScreen;
     const id = ids[index];
-    const defaults = defaultFields(preset, kind, shows, ctx);
-    const edit = edits && Object.hasOwn(edits, id) ? checkedEdit(id, shows, edits[id]) : {};
+    const defaults = defaultFields(preset, kind, s.role, shows, ctx);
+    const edit = edits && Object.hasOwn(edits, id) ? checkedEdit(id, shows, edits[id], playbook) : {};
     const fields = { ...defaults, ...edit } as ShotFields;
     const edited_fields = SHOT_FIELDS.filter((f) => fields[f] !== defaults[f]);
     const frameScene = frame ? preset.frameScenes?.[kind] : undefined;
@@ -287,8 +330,14 @@ export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, ed
       inUseReference: inUseLine,
       scaleAnchor: scaleAnchorLine(profile, shows === 'person' ? ctx.person?.gender : ctx.product?.handGender),
     });
+    // The Playbook's negatives (#32): one more locked line on the video stage.
+    const playbookLine = playbookGuardrail(playbook, shows);
     const video_guardrails_by_model: Partial<Record<VideoModelId, Guardrail[]>> = {};
-    for (const m of shotModelChain(video)) video_guardrails_by_model[m] = stageGuardrails('video', guardrailCtx(m));
+    for (const m of shotModelChain(video)) {
+      video_guardrails_by_model[m] = withPlaybookGuardrail(stageGuardrails('video', guardrailCtx(m)), playbookLine);
+    }
+    const guardrails = shotGuardrails(guardrailCtx(video.model));
+    guardrails.video = withPlaybookGuardrail(guardrails.video, playbookLine);
     return {
       shot_id: id,
       index,
@@ -305,11 +354,11 @@ export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, ed
       fields,
       edited_fields,
       edited: edited_fields.length > 0,
-      guardrails: shotGuardrails(guardrailCtx(video.model)),
+      guardrails,
       video_guardrails_by_model,
     };
   });
-  return { set, shots };
+  return { set, playbook: playbookChoice(playbook), shots };
 }
 
 /**

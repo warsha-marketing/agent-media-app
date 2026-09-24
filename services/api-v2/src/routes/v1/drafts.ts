@@ -161,6 +161,8 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
     'PRODUCT_IMAGE_NOT_HOSTED: product_image_url is not a photo this account uploaded to agent-media (upload it first; carries product_image_url); PRODUCT_PHOTO_REFUSED: the photo cannot be used for an ad; PRODUCT_IMAGE_TOO_LARGE: the photo decodes to more than 40 megapixels (carries max_pixels) — upload a smaller one; PRODUCT_PROFILE_BREAKS_GUARDRAIL: the Product Profile read from the photo still contradicts a Guardrail after one rewrite (carries guardrail and matched) — use a photo of the product alone, or add Product Details';
   const usedState =
     'PRODUCT_INTERACTION_NOT_IN_USED_STATE: the Product Interaction written from the Product Profile still takes a part off or opens the product on camera after one rewrite (carries matched and product_interaction, to edit)';
+  const bannedMotion =
+    "PRODUCT_INTERACTION_BANNED_MOTION: the Product Interaction asks for a motion the Product Profile category's Playbook bans (e.g. fragrance & oud: the bottle brought to the face or nose, the cap taken off, a spray at the face; food & café: pouring, cutting; English or Arabic) — the writer's after one rewrite, a user's edit at once (carries playbook, rule, matched and product_interaction)";
   const outOfBand = `SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG: voiced speech outside ${MIN_SPEECH_MS / 1000}–${MAX_SPEECH_MS / 1000} s (carries action, duration_ms and the Script)`;
   return {
     paths: {
@@ -168,13 +170,13 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
         'createProductHeroDraft',
         'Product Hero draft: read the product photo (product_image_url, recommended) into a Product Profile, write a Script (plain dialect spelling, Targeted Diacritics, Delivery Tags) that sells the Product Details and a Product Interaction from the Profile, in a Dialect, and voice it. Free (no credits).',
         bodySchema(CreateDraftInputSchema, 'create_draft_input'),
-        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, stray brackets, Latin letters) — carries the Script and issues, to fix in the editor and re-voice; ${guardrail}, after one rewrite; ${usedState}; ${photo}; ${PRESET_NOT_QUALIFIED}: no Preset is a Qualified Preset in this Dialect yet (carries dialect and available; see GET /v1/presets); BRIEF_REFUSED; ${voiceRefused}`,
+        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, stray brackets, Latin letters) — carries the Script and issues, to fix in the editor and re-voice; ${guardrail}, after one rewrite; ${usedState}; ${bannedMotion}; ${photo}; ${PRESET_NOT_QUALIFIED}: no Preset is a Qualified Preset in this Dialect yet (carries dialect and available; see GET /v1/presets); BRIEF_REFUSED; ${voiceRefused}`,
       ),
       '/v1/drafts/product-hero/revoice': post(
         'revoiceProductHeroDraft',
         `Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief, Product Details, Product Profile and Dialect carry over. An edited product_profile replaces the parent's and, unless product_interaction is also given, the Product Interaction is re-written from it. The Script may carry Delivery Tags: ${tagList}.`,
         bodySchema(RevoiceDraftInputSchema, 'revoice_draft_input'),
-        `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_STRAY_BRACKETS: a [ or ] outside a Delivery Tag (carries found); SCRIPT_NO_ARABIC: no Arabic text to speak (Latin words such as a brand name are allowed in an edit); DIALECT_MISMATCH (dialect differs from the parent's); ${guardrail}; PRODUCT_PROFILE_BREAKS_GUARDRAIL: the edited Product Profile's words contradict a Guardrail (carries guardrail and matched), or the one read from the photo does (see below); ${usedState}; ${photo}; ${PRESET_NOT_QUALIFIED}; ${voiceRefused}`,
+        `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_STRAY_BRACKETS: a [ or ] outside a Delivery Tag (carries found); SCRIPT_NO_ARABIC: no Arabic text to speak (Latin words such as a brand name are allowed in an edit); DIALECT_MISMATCH (dialect differs from the parent's); ${guardrail}; PRODUCT_PROFILE_BREAKS_GUARDRAIL: the edited Product Profile's words contradict a Guardrail (carries guardrail and matched), or the one read from the photo does (see below); ${usedState}; ${bannedMotion}; ${photo}; ${PRESET_NOT_QUALIFIED}; ${voiceRefused}`,
       ),
       '/v1/drafts/{id}': {
         get: {
@@ -274,10 +276,12 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
               allowed: { type: 'array', items: { type: 'string' }, description: 'On UNKNOWN_DELIVERY_TAG: the allowed Delivery Tags.' },
               found: { type: 'array', items: { type: 'string' }, description: 'On SCRIPT_STRAY_BRACKETS: the stray brackets found.' },
               guardrail: { type: 'string', enum: ['speech', 'hijab', 'exposed', 'undress'], description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL / PRODUCT_PROFILE_BREAKS_GUARDRAIL: which Guardrail it contradicts.' },
-              matched: { type: 'string', description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL / PRODUCT_PROFILE_BREAKS_GUARDRAIL: the words that matched.' },
+              matched: { type: 'string', description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL / PRODUCT_PROFILE_BREAKS_GUARDRAIL / PRODUCT_INTERACTION_BANNED_MOTION: the words that matched.' },
+              playbook: { type: 'string', description: 'On PRODUCT_INTERACTION_BANNED_MOTION: the Playbook whose rule it breaks (e.g. fragrance_oud).' },
+              rule: { type: 'string', description: 'On PRODUCT_INTERACTION_BANNED_MOTION: the banned motion (e.g. bottle_to_face).' },
               product_interaction: {
                 type: 'string',
-                description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL / PRODUCT_INTERACTION_NOT_IN_USED_STATE: the refused Product Interaction, to edit.',
+                description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL / PRODUCT_INTERACTION_NOT_IN_USED_STATE / PRODUCT_INTERACTION_BANNED_MOTION: the refused Product Interaction, to edit.',
               },
               product_image_url: { type: 'string', description: 'On PRODUCT_IMAGE_NOT_HOSTED: the refused photo URL.' },
               preset: { type: 'string', description: 'The Preset refused, where one is named (skill routes).' },
