@@ -3,10 +3,11 @@
 // The Product Interaction guardrail check (#25): a Product Interaction may add
 // an action to a hands or person shot, never contradict the Guardrails — the
 // no-speaking instruction and the Modesty Default. Checked in English and
-// Arabic, case- and diacritics-insensitively.
+// Arabic, case- and diacritics-insensitively. (Moved here from api-v2 with #28,
+// beside the check itself.)
 
 import { describe, it, expect } from 'vitest';
-import { productInteractionGuardrailIssue } from '../drafts/interaction-check.js';
+import { productInteractionGuardrailIssue } from '../index.js';
 
 describe('productInteractionGuardrailIssue — passes realistic use', () => {
   it.each([
