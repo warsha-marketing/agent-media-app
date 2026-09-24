@@ -59,6 +59,8 @@ export type GuardrailId =
   | 'modesty'
   | 'hijab'
   | 'no_people'
+  /** The product's Playbook's negatives (#32), video stage (./playbooks/apply.ts). */
+  | 'playbook'
   | 'format'
   | 'audio_off';
 

@@ -204,7 +204,7 @@ describe('shot ids', () => {
       expect(byId(plan, 'reaction-spray').fields.scene).toBe(SPRAY_EDIT);
       expect(byId(plan, 'reaction-smell').edited).toBe(false);
     }
-    expect(effectiveEdits({ set: null, shots: sprayFirst })).toEqual(effectiveEdits({ set: null, shots: smellFirst }));
+    expect(effectiveEdits({ set: null, playbook: null, shots: sprayFirst })).toEqual(effectiveEdits({ set: null, playbook: null, shots: smellFirst }));
   });
 
   it('keep an edit on its shot when a Preset reorders shots of other kinds', () => {
