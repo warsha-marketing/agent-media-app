@@ -64,6 +64,9 @@ import {
   isRunSettled,
   parseQuote,
   PRODUCT_DETAILS_MAX,
+  PRODUCT_INTERACTION_MAX,
+  interactionEdit,
+  isDraftEdited,
   quoteBody, // #9 Music Bed
   readFlowParams,
   renderBody, // #9 Music Bed
@@ -110,6 +113,8 @@ interface Draft {
   dialect: Dialect;
   brief: string | null;
   product_details?: string | null;
+  /** How a real person uses the product (#25); used in hands and person shots. */
+  product_interaction?: string | null;
   script: string;
   /** Short-lived signed URL; re-read the draft for a fresh one. */
   audio_url: string;
@@ -211,6 +216,7 @@ export default function ProductHeroPage() {
   const [voiceId, setVoiceId] = useState<string | null>(null);
   const [voicesError, setVoicesError] = useState<string | null>(null);
   const [script, setScript] = useState('');
+  const [interaction, setInteraction] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [history, setHistory] = useState<Draft[]>([]);
   const [busy, setBusy] = useState<'write' | 'voice' | null>(null);
@@ -312,6 +318,7 @@ export default function ProductHeroPage() {
   function accept(d: Draft) {
     setDraft(d);
     setScript(d.script);
+    setInteraction(d.product_interaction ?? '');
     setHistory((h) => [d, ...h]);
     // A new draft needs its own quote; its URL is where a reload comes back to.
     dispatch({ type: 'reset' });
@@ -336,6 +343,7 @@ export default function ProductHeroPage() {
       }
       setDraft(d);
       setScript(d.script);
+      setInteraction(d.product_interaction ?? '');
       setHistory([d]);
       if (d.brief) setBrief(d.brief);
       if (d.product_details) setProductDetails(d.product_details);
@@ -409,6 +417,8 @@ export default function ProductHeroPage() {
         dialect: spokenIn,
         // The picked Voice; without one, a re-voice reuses the parent draft's Voice.
         ...(voiceId ? { voice_id: voiceId } : {}),
+        // The Product Interaction only when the user changed it (#25); else the parent's carries over.
+        ...interactionEdit(draft, interaction),
         // With a parent, its Brief and Product Details carry over server-side.
         ...(draft
           ? { parent_draft_id: draft.id }
@@ -439,7 +449,7 @@ export default function ProductHeroPage() {
 
   const badTags = unknownDeliveryTags(script);
   const voiceChanged = !!draft && !!voiceId && voiceId !== draft.voice?.id;
-  const edited = draft ? script.trim() !== draft.script || voiceChanged : script.trim().length > 0;
+  const edited = isDraftEdited({ draft, script, interaction, voiceChanged });
   const render = rs.render;
   /** While a render starts or runs, the draft and photo on screen are the ones it uses. */
   const renderLocked = render.phase === 'starting' || render.phase === 'rendering';
@@ -953,6 +963,28 @@ export default function ProductHeroPage() {
                 {unknownDeliveryTagMessage(badTags)} Use one of the tags above, or remove it.
               </p>
             ) : null}
+          </div>
+          {/* Product Interaction (#25): how a real person uses the product, beside the Script. */}
+          <div className="flex flex-col gap-1.5">
+            <label className={label} style={muted} htmlFor="product-interaction">Product Interaction</label>
+            <textarea
+              id="product-interaction"
+              dir="ltr"
+              lang="en"
+              value={interaction}
+              onChange={(e) => setInteraction(e.target.value)}
+              readOnly={renderLocked}
+              maxLength={PRODUCT_INTERACTION_MAX}
+              rows={2}
+              placeholder="e.g. removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles"
+              className="w-full resize-y rounded-xl px-4 py-3 text-sm outline-none"
+              style={field}
+            />
+            <p className="text-xs" style={muted}>
+              How a real person uses your product on camera, in English. It guides the hands and person shots (Hands-on,
+              Reaction), never the product shots, and never changes the modest styling or makes anyone speak. Editing it
+              re-voices into a new draft, like editing the Script.
+            </p>
           </div>
           {draft && !edited ? (
             // key: a new draft swaps the source, so remount the player.

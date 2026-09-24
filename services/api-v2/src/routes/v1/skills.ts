@@ -966,6 +966,8 @@ async function dispatchPresetRender(
     product_image_url: productImageUrl,
     aspect_ratio: preset.aspectRatio,
     music_bed: musicBedWorkflowInput(musicBed), // #9
+    // #25: the draft's Product Interaction, for every hands and person prompt.
+    product_interaction: draft.product_interaction ?? null,
     ...own.workflow,
   };
 

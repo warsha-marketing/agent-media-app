@@ -5,6 +5,8 @@ import {
   confirmationFor,
   currentStep,
   initialRenderState,
+  interactionEdit,
+  isDraftEdited,
   isRunSettled,
   parseQuote,
   refundOf,
@@ -265,5 +267,44 @@ describe('stepper', () => {
     assert.equal(currentStep({ hasPhoto: true, hasDraft: true, scriptEdited: false, render: idle }), 'Confirm');
     assert.equal(currentStep({ hasPhoto: true, hasDraft: true, scriptEdited: false, render: { phase: 'rendering', runId: RUN_A, view: null, quote: null } }), 'Render');
     assert.equal(currentStep({ hasPhoto: true, hasDraft: true, scriptEdited: false, render: { phase: 'succeeded', runId: RUN_A, videoUrl: 'u', durationMs: null, quote: null } }), 'Short');
+  });
+});
+
+describe('Product Interaction edits (#25)', () => {
+  const PERFUME = 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles';
+  const draft = { script: 'س', product_interaction: PERFUME };
+
+  it('an unchanged interaction is not an edit and is not sent (the parent’s carries over)', () => {
+    assert.equal(isDraftEdited({ draft, script: 'س', interaction: `  ${PERFUME} `, voiceChanged: false }), false);
+    assert.deepEqual(interactionEdit(draft, PERFUME), {});
+  });
+
+  it('a changed interaction is an edit, re-drafted like a Script edit, and sent tidied', () => {
+    const coffee = 'lifts the cup and takes one slow sip';
+    assert.equal(isDraftEdited({ draft, script: 'س', interaction: coffee, voiceChanged: false }), true);
+    assert.deepEqual(interactionEdit(draft, `  ${coffee}\n`), { product_interaction: coffee });
+  });
+
+  it('clearing it is an edit that sends an empty interaction', () => {
+    assert.equal(isDraftEdited({ draft, script: 'س', interaction: '', voiceChanged: false }), true);
+    assert.deepEqual(interactionEdit(draft, '  '), { product_interaction: '' });
+  });
+
+  it('a draft from before #25 (no interaction) is unchanged by an empty field', () => {
+    const old = { script: 'س', product_interaction: null };
+    assert.equal(isDraftEdited({ draft: old, script: 'س', interaction: '', voiceChanged: false }), false);
+    assert.deepEqual(interactionEdit(old, ''), {});
+  });
+
+  it('a Script or Voice change is still an edit; with no draft, any Script is', () => {
+    assert.equal(isDraftEdited({ draft, script: 'ب', interaction: PERFUME, voiceChanged: false }), true);
+    assert.equal(isDraftEdited({ draft, script: 'س', interaction: PERFUME, voiceChanged: true }), true);
+    assert.equal(isDraftEdited({ draft: null, script: ' س ', interaction: '', voiceChanged: false }), true);
+    assert.equal(isDraftEdited({ draft: null, script: '  ', interaction: '', voiceChanged: false }), false);
+  });
+
+  it('without a draft, a typed interaction is sent as is', () => {
+    assert.deepEqual(interactionEdit(null, ' sips '), { product_interaction: 'sips' });
+    assert.deepEqual(interactionEdit(null, ''), {});
   });
 });

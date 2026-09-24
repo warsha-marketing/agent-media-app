@@ -39,6 +39,10 @@
  *
  * Product Details are the facts the Script sells (name, notes, ingredients,
  * benefits); they are stored on the draft and carried over on re-voice.
+ * The Product Interaction (#25) — how a real person uses the product — is
+ * written by the same writer call, in the same structured reply, and stored on
+ * the draft; the user may edit it, which re-voices into a new draft like a
+ * Script edit (a re-voice carries the parent's over unless it is given).
  * Delivery Tags are voiced only by a TTS model that honours them (eleven_v3);
  * with any other model they are stripped before voicing, and the draft stores
  * the Script exactly as it was spoken.
@@ -72,6 +76,17 @@ export const BRIEF_MAX_CHARS = 2_000;
 export const PRODUCT_DETAILS_MAX_CHARS = 3_000;
 /** Well above 15 s of speech (~40 words), well below a runaway TTS bill. */
 export const SCRIPT_MAX_CHARS = 600;
+/** A Product Interaction is one short action sentence; room for a few steps, never a prompt. */
+export const PRODUCT_INTERACTION_MAX_CHARS = 300;
+
+/**
+ * A Product Interaction as stored: whitespace collapsed, trimmed, within the
+ * limit; null when there is none.
+ */
+export function tidyProductInteraction(text: string | null | undefined): string | null {
+  const tidy = (text ?? '').replace(/\s+/g, ' ').trim().slice(0, PRODUCT_INTERACTION_MAX_CHARS).trim();
+  return tidy || null;
+}
 
 export const CreateDraftInputSchema = z
   .object({
@@ -96,6 +111,12 @@ export const RevoiceDraftInputSchema = z
     brief: z.string().trim().max(BRIEF_MAX_CHARS).optional(),
     /** Only used when there is no parent; with one, the parent's Product Details carry over. */
     product_details: z.string().trim().max(PRODUCT_DETAILS_MAX_CHARS).optional(),
+    /**
+     * The Product Interaction (#25), edited by the user: how a real person uses
+     * the product. Given, it replaces the parent's ("" clears it); omitted, the
+     * parent's carries over. Editing it re-drafts, like editing the Script.
+     */
+    product_interaction: z.string().trim().max(PRODUCT_INTERACTION_MAX_CHARS).optional(),
     /** An Approved Voice of `dialect`. Optional with a parent: the parent's Voice is reused. */
     voice_id: z.string().uuid().optional(),
   })
@@ -122,6 +143,13 @@ export interface DraftRow {
   brief: string | null;
   /** The facts the Script sells; null when none were given. */
   product_details: string | null;
+  /**
+   * Product Interaction (#25): how a real person uses the product, in English
+   * ("removes the cap, sprays once on the inner wrist, …"). Written with the
+   * Script, editable (a new draft); the render adds it to every hands and
+   * person shot. Null when there is none (every draft before #25).
+   */
+  product_interaction: string | null;
   script: string;
   script_source: 'generated' | 'edited';
   parent_draft_id: string | null;
@@ -183,6 +211,8 @@ export interface WrittenScript {
    * Targeted Diacritics.
    */
   product_terms: string[];
+  /** How a real person uses the product, in English (#25); null when the writer gave none. */
+  product_interaction: string | null;
   model: string;
 }
 
@@ -382,7 +412,7 @@ function assertInBand(take: VoiceTake): void {
 async function persist(
   deps: DraftDeps,
   userId: string,
-  fields: Pick<NewDraftRow, 'brief' | 'product_details' | 'script_source' | 'parent_draft_id' | 'script_model'>,
+  fields: Pick<NewDraftRow, 'brief' | 'product_details' | 'product_interaction' | 'script_source' | 'parent_draft_id' | 'script_model'>,
   take: VoiceTake,
 ): Promise<DraftRow> {
   const id = deps.newId();
@@ -413,7 +443,7 @@ async function write(deps: DraftDeps, request: WriteScriptInput): Promise<Writte
   if (!script || script.length > SCRIPT_MAX_CHARS) {
     throw new DraftError(502, 'SCRIPT_GENERATION_FAILED', 'Could not write a Script for this Brief. Try again or rephrase the Brief.');
   }
-  return { ...written, script };
+  return { ...written, script, product_interaction: tidyProductInteraction(written.product_interaction) };
 }
 
 /**
@@ -439,10 +469,14 @@ async function writeChecked(deps: DraftDeps, request: WriteScriptInput): Promise
 }
 
 /** Write a checked Script, then voice and measure it. */
-async function writeAndVoice(deps: DraftDeps, request: WriteScriptInput, voice: VoiceRow): Promise<VoiceTake & { model: string }> {
+async function writeAndVoice(
+  deps: DraftDeps,
+  request: WriteScriptInput,
+  voice: VoiceRow,
+): Promise<VoiceTake & { model: string; productInteraction: string | null }> {
   const written = await writeChecked(deps, request);
   const take = await voiceAndMeasure(deps, { script: written.script, dialect: request.dialect, voice: voiceRef(voice) }, voice.id);
-  return { ...take, model: written.model };
+  return { ...take, model: written.model, productInteraction: written.product_interaction };
 }
 
 /**
@@ -475,6 +509,7 @@ export async function createDraftFromBrief(deps: DraftDeps, userId: string, inpu
   return persist(deps, userId, {
     brief: input.brief,
     product_details: productDetails,
+    product_interaction: take.productInteraction,
     script_source: 'generated',
     parent_draft_id: null,
     script_model: take.model,
@@ -497,6 +532,7 @@ export async function createDraftFromBrief(deps: DraftDeps, userId: string, inpu
 export async function revoiceDraft(deps: DraftDeps, userId: string, input: RevoiceDraftInput): Promise<DraftRow> {
   let brief = input.brief?.trim() || null;
   let productDetails = input.product_details?.trim() || null;
+  let productInteraction = tidyProductInteraction(input.product_interaction);
   let voiceId = input.voice_id ?? null;
   if (input.parent_draft_id) {
     const parent = await deps.repo.getOwned(input.parent_draft_id, userId);
@@ -512,6 +548,8 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
     }
     brief = parent.brief;
     productDetails = parent.product_details ?? null;
+    // The user's edit of the Product Interaction, else the parent's.
+    if (input.product_interaction === undefined) productInteraction = parent.product_interaction ?? null;
     voiceId ??= parent.voice_catalog_id;
   }
   await assertQualified(deps, userId, input.dialect);
@@ -526,6 +564,7 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
   return persist(deps, userId, {
     brief,
     product_details: productDetails,
+    product_interaction: productInteraction,
     script_source: 'edited',
     parent_draft_id: input.parent_draft_id ?? null,
     script_model: null,
@@ -543,6 +582,7 @@ export function toDraftView(row: DraftRow, audio: SignedAudioUrl) {
     dialect: row.dialect,
     brief: row.brief,
     product_details: row.product_details ?? null,
+    product_interaction: row.product_interaction ?? null,
     script: row.script,
     script_source: row.script_source,
     parent_draft_id: row.parent_draft_id,

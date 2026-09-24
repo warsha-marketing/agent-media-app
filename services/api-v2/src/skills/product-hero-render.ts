@@ -49,6 +49,8 @@ export interface RenderableDraft {
   /** What the draft was written from; Hands-on (#18) picks its default setting and hand gender from them. */
   brief?: string | null;
   product_details?: string | null;
+  /** Product Interaction (#25): how a real person uses the product; every Preset render passes it to the worker. */
+  product_interaction?: string | null;
   /** That run's status (null when there is no claim, or its run is missing). */
   render_run_status: RenderRunStatus | null;
 }
@@ -205,7 +207,7 @@ export function supabaseProductHeroDraftStore(supabase: SupabaseClient): Product
       // Service-role client bypasses RLS, so ownership is enforced here.
       const { data, error } = await supabase
         .from(TABLE)
-        .select('id, user_id, dialect, voice_catalog_id, audio_key, duration_ms, alignment, render_run_id, brief, product_details')
+        .select('id, user_id, dialect, voice_catalog_id, audio_key, duration_ms, alignment, render_run_id, brief, product_details, product_interaction')
         .eq('id', id)
         .eq('user_id', userId)
         .maybeSingle();

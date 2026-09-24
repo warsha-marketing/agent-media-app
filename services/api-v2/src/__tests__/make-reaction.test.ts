@@ -250,6 +250,16 @@ describe('make_reaction — the saved character', () => {
     expect(run.input).toMatchObject({ character_id: CHAR, character_gender: 'female' });
   });
 
+  it('hands the draft’s Product Interaction to the render (#25), and null for a draft without one', async () => {
+    const interaction = 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles';
+    const r = await call(runSkillRoute, OWNER, body(seedDraft({ product_interaction: interaction })));
+    expect(r.status).toBe(202);
+    expect(workflowInput().product_interaction).toBe(interaction);
+    const bare = await call(runSkillRoute, OWNER, body(seedDraft()));
+    expect(bare.status).toBe(202);
+    expect(workflowInput().product_interaction).toBeNull();
+  });
+
   it('uses the character sheet when the character has no portrait, and takes the row id too', async () => {
     const legacy = seedCharacter({ public_id: null, portrait_url: null, character_sheet_url: 'https://r2.example.com/chars/omar-sheet.png' });
     const r = await call(runSkillRoute, OWNER, body(seedDraft(), { character_id: legacy.id, character_gender: 'male' }));
