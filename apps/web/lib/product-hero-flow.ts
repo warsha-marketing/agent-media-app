@@ -556,6 +556,43 @@ export function unknownDeliveryTagMessage(unknown: readonly string[]): string {
 /** The Product Details field's limit: the API's PRODUCT_DETAILS_MAX_CHARS (held equal by the parity test). */
 export const PRODUCT_DETAILS_MAX = 3000;
 
+/** The Product Interaction field's limit: the API's PRODUCT_INTERACTION_MAX_CHARS (held equal by the parity test). */
+export const PRODUCT_INTERACTION_MAX = 300;
+
+/** A Product Interaction as the API stores it: whitespace collapsed and trimmed. */
+const tidyInteraction = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
+
+/**
+ * Whether what is on screen differs from the draft (#25): the Script, the
+ * Voice, or the Product Interaction. Any of them re-voices into a new draft.
+ */
+export function isDraftEdited(s: {
+  draft: { script: string; product_interaction?: string | null } | null;
+  script: string;
+  interaction: string;
+  voiceChanged: boolean;
+}): boolean {
+  if (!s.draft) return s.script.trim().length > 0;
+  return (
+    s.script.trim() !== s.draft.script ||
+    s.voiceChanged ||
+    tidyInteraction(s.interaction) !== tidyInteraction(s.draft.product_interaction)
+  );
+}
+
+/**
+ * The Product Interaction field of a re-voice request (#25): sent only when the
+ * user changed it ("" clears it); otherwise omitted, so the parent's carries over.
+ */
+export function interactionEdit(
+  draft: { product_interaction?: string | null } | null,
+  interaction: string,
+): { product_interaction?: string } {
+  const next = tidyInteraction(interaction);
+  if (!draft) return next ? { product_interaction: next } : {};
+  return next === tidyInteraction(draft.product_interaction) ? {} : { product_interaction: next };
+}
+
 /**
  * Bracketed text in a Script that is not an allowed Delivery Tag, as written
  * (e.g. "[wisper]"). The server refuses these on re-voice (UNKNOWN_DELIVERY_TAG);

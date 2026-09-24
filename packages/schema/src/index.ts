@@ -16,6 +16,7 @@ export * from './tooling/contracts.js';
 export * from './take-planner.js';
 // Clip prices (credits + provider USD) — the one table quote and charge share.
 export * from './video-pricing.js';
+export * from './video-models.js';
 // Product Hero shot plan + cost budget — quote (api-v2) and render
 // (primitive-worker-vnext) plan identically. See src/product-hero.ts.
 export * from './product-hero.js';

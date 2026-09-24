@@ -272,3 +272,36 @@ describe('makeHandsOnWorkflow — failure refunds every charged child and releas
     expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'OPENAI_400' });
   });
 });
+
+// ── #25: Product Interaction in the hands frame and clip, never the product shot ──
+
+describe('makeHandsOnWorkflow — Product Interaction (#25)', () => {
+  it.each([
+    ['perfume', 'dressing_table', 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose'],
+    ['coffee', 'kitchen', 'lifts the cup and takes one slow sip'],
+    ['skincare', 'dressing_table', 'squeezes a small amount onto the back of the hand and rubs it in'],
+  ] as const)('%s: every hands frame and clip carries it after the Modesty Default; the product shot does not', async (_p, setting, interaction) => {
+    const fakes = happyFakes();
+    await harness.execute('makeHandsOnWorkflow', [renderInput(12_000, { setting, product_interaction: interaction })], fakes);
+    const frames = fakes.callsTo('presetStartingFrame') as PresetStartingFrameInput[];
+    const clips = fakes.callsTo('presetClip') as PresetClipInput[];
+    expect(frames.length).toBeGreaterThan(0);
+    const handsPrompts = [...frames.map((f) => f.prompt), ...clips.filter((c) => c.shot_kind === 'hands').map((c) => c.prompt)];
+    for (const prompt of handsPrompts) {
+      const at = prompt.indexOf(interaction);
+      expect(at).toBeGreaterThan(-1);
+      expect(prompt.indexOf(MODESTY_PROMPTS.hands.covered)).toBeGreaterThan(-1);
+      expect(prompt.indexOf(MODESTY_PROMPTS.hands.covered)).toBeLessThan(at);
+    }
+    for (const c of clips.filter((c) => c.shot_kind === 'product')) {
+      expect(c.prompt).not.toContain(interaction);
+      expect(c.prompt).not.toMatch(/How the product is used/);
+    }
+  });
+
+  it('keeps every Hands-on shot on Seedance', async () => {
+    const fakes = happyFakes();
+    await harness.execute('makeHandsOnWorkflow', [renderInput(12_000)], fakes);
+    for (const c of fakes.callsTo('presetClip') as PresetClipInput[]) expect(c.model).toBe('seedance-2.0');
+  });
+});

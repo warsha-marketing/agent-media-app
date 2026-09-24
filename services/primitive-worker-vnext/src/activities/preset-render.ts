@@ -6,9 +6,11 @@
  * renderPreset) runs them in order:
  *
  *   fetchDraftAudio — read the approved draft's PRIVATE audio by key and measure it
- *   presetClip      — one silent Seedance clip from its start image (the shot's
+ *   presetClip      — one silent clip from its start image (the shot's
  *                     starting frame, else the product photo), prompted by its
- *                     Preset for its shot kind (generate_audio: false)
+ *                     Preset for its shot kind (generate_audio: false), on the
+ *                     video model its shot kind names (#25, ../video-models;
+ *                     Seedance via EvoLink when it names none)
  *   presetMux       — hard-cut the clips, trim/hold the visuals to the audio's exact
  *                     length, and mux the draft audio in untouched (never trimmed,
  *                     never stretched)
@@ -18,7 +20,8 @@
  * `product_hero_mux` (captions/short-captions.ts in api-v2 reads the latter).
  *
  * Each writes its own primitive_runs row under the parent skill run. Only the
- * clips are charged, at the shared per-clip price. They are exempt from the
+ * clips are charged, at their shot's price (@agentmedia/schema shotClipCredits:
+ * the most its model chain charges — what the quote summed — whichever model ran). They are exempt from the
  * per-primitive cap (a 10 s clip alone exceeds it): the Preset's declared budget
  * (PresetDefinition.budget in @agentmedia/schema) governs the whole render, and
  * the shot plan is held to it by tests. The day cap still applies.
@@ -38,9 +41,10 @@ import type { WorkerConfig } from '../config.js';
 import { getDb } from '../client/db.js';
 import { r2UploadVnext } from '../client/r2.js';
 import { DRAFT_AUDIO, probeSeconds, readPrivateObject } from '../lib/media-io.js';
-import { generateSimpleSelfieEvolink } from '../client/evolink.js';
 import { runChargedStep } from './charged-step.js';
-import { VIDEO_CLIP_USD } from '@agentmedia/schema';
+import { shotClipUsd, shotModelChain, shotVideo, type ShotVideo, type VideoModelId } from '@agentmedia/schema';
+import { presetRender } from '../presets/index.js';
+import { videoModel } from '../video-models/index.js';
 
 const execFileP = promisify(execFile);
 
@@ -135,6 +139,12 @@ export interface PresetClipInput {
    * only on shots that show a person (Reaction, #19). Never on a product shot.
    */
   character_image_url?: string;
+  /**
+   * Which model of the shot kind's chain renders this attempt (#25): the
+   * kind's model, or its fallback after that one refused or failed. Absent =
+   * the kind's model. Must be in the chain the Preset declares for the kind.
+   */
+  model?: VideoModelId;
 }
 
 export interface PresetClipResult {
@@ -157,12 +167,27 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
     if (typeof input.prompt !== 'string' || input.prompt.trim() === '') {
       throw ApplicationFailure.nonRetryable(`no prompt for ${input.preset} shot ${input.shot_kind}`, 'INVALID_INPUT');
     }
+    // The shot's model chain comes from the Preset's definition (server-side),
+    // never from the input: the input only says which model of it to run now.
+    let video: ShotVideo;
+    try {
+      video = shotVideo(presetRender(input.preset), input.shot_kind);
+    } catch (err) {
+      throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
+    }
+    const model = input.model ?? video.model;
+    if (!shotModelChain(video).includes(model)) {
+      throw ApplicationFailure.nonRetryable(`${input.preset} ${input.shot_kind} shots do not render on ${String(model)}`, 'INVALID_INPUT');
+    }
+    const client = videoModel(model);
 
     const characterImageUrl = input.character_image_url;
     const prompt = input.prompt;
     // Spend: the per-primitive cap does not apply (the Preset's budget governs
     // the whole render; see the header). The day cap still does (runChargedStep).
-    const estimatedUsd = VIDEO_CLIP_USD[input.duration];
+    // Cost and charge are the shot's (its chain's), whichever model runs, so a
+    // fallback never changes the price the user was quoted.
+    const estimatedUsd = shotClipUsd(video, input.duration);
     return runChargedStep({
       cfg,
       db,
@@ -181,6 +206,7 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
         shot_index: input.shot_index,
         shot_count: input.shot_count,
         shot_kind: input.shot_kind,
+        model,
         generate_audio: false,
         prompt,
         ...(characterImageUrl ? { character_image_url: characterImageUrl } : {}),
@@ -188,6 +214,7 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
       charge: {
         primitive: 'product_hero_clip',
         duration: input.duration,
+        video,
         description: `vNext product_hero clip ${input.shot_index + 1}/${input.shot_count} ${input.duration}s`,
       },
       replay: (prior) => ({
@@ -203,36 +230,17 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
         if (cfg.openai.simulate) {
           videoBytes = Buffer.from('SIMULATED', 'utf8');
         } else {
-          const evolinkKey = process.env.EVOLINK_API_KEY?.trim() || process.env.EVOLINK_API_KEYS?.trim();
-          if (!evolinkKey) {
-            throw ApplicationFailure.nonRetryable('EVOLINK_API_KEY not configured on primitive-worker-vnext', 'PROVIDER_UNCONFIGURED');
-          }
-          try {
-            const result = await generateSimpleSelfieEvolink({
-              prompt,
-              // @image1 the start image; @image2 the person, on a shot that shows one.
-              imageUrls: characterImageUrl ? [input.start_image_url, characterImageUrl] : [input.start_image_url],
-              duration: input.duration,
-              aspectRatio: '9:16',
-              // ADR 0001: the video model never speaks.
-              generateAudio: false,
-              quality: '720p',
-            });
-            providerTaskId = result.taskId;
-            providerVideoUrl = result.videoUrl;
-          } catch (err) {
-            // A moderation verdict arrives from the poll as a non-retryable
-            // EVOLINK_CONTENT_POLICY_VIOLATION — pass it through untouched.
-            if (err instanceof ApplicationFailure) throw err;
-            const msg = err instanceof Error ? err.message : String(err);
-            const status = (err as { status?: number })?.status;
-            // 429 / 402 are transient; other 4xx are caller faults (incl. a photo
-            // refused at submit) and must not be resubmitted.
-            if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429 && status !== 402) {
-              throw ApplicationFailure.nonRetryable(`evolink ${status}: ${msg}`, `EVOLINK_${status}`);
-            }
-            throw err instanceof Error ? err : new Error(msg);
-          }
+          const made = await client.generate({
+            prompt,
+            startImageUrl: input.start_image_url,
+            ...(characterImageUrl ? { characterImageUrl } : {}),
+            seconds: input.duration,
+            // ADR 0001: the video model never speaks.
+            generateAudio: false,
+            onProgress: (stage) => Context.current().heartbeat({ stage: 'provider_poll', provider_status: stage }),
+          });
+          providerTaskId = made.taskId;
+          providerVideoUrl = made.videoUrl;
           Context.current().heartbeat({ stage: 'provider_done', taskId: providerTaskId });
           const dl = await fetch(providerVideoUrl, { redirect: 'follow', signal: AbortSignal.timeout(120_000) });
           if (!dl.ok) throw new Error(`clip download ${dl.status}`);
@@ -251,10 +259,10 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
         if (providerTaskId) {
           await db.from('provider_tasks').insert({
             primitive_run_id: input.primitive_run_id,
-            provider: 'seedance-2-0',
+            provider: client.provider,
             external_task_id: providerTaskId,
             status: 'succeeded',
-            raw_response: { provider_video_url: providerVideoUrl },
+            raw_response: { provider_video_url: providerVideoUrl, model },
           });
         }
 
@@ -265,8 +273,9 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
           bytes: videoBytes.byteLength,
           mime: 'video/mp4',
           metadata: {
-            provider: 'seedance-2-0',
-            model: process.env.EVOLINK_SEEDANCE_MODEL || 'seedance-2.0-mini-reference-to-video',
+            provider: client.provider,
+            model: client.modelName(),
+            video_model: model,
             simulated: cfg.openai.simulate,
             aspect_ratio: '9:16',
             duration_seconds: input.duration,

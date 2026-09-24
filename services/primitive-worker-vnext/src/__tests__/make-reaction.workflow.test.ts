@@ -10,7 +10,10 @@
 import { describe, it, expect, expectTypeOf, beforeAll, afterAll } from 'vitest';
 import { ApplicationFailure } from '@temporalio/activity';
 import { WorkflowFailedError } from '@temporalio/client';
-import { REACTION_MAX_SHOT_MS, type Modesty } from '@agentmedia/schema';
+import { REACTION, REACTION_MAX_SHOT_MS, quotePresetCredits, shotVideo, type Modesty } from '@agentmedia/schema';
+import { CONTENT_POLICY_FAILURE } from '../client/fal.js';
+import { quotePrimitiveCredits } from '../client/credits.js';
+import { NON_RETRYABLE_TYPES } from '../workflows/render-preset.js';
 import { startWorkflowHarness, fakeActivities, type CannedActivities, type WorkflowHarness } from './support/workflow-harness.js';
 import type { MakeReactionWorkflowInput } from '../workflows/make-reaction.js';
 import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
@@ -243,5 +246,167 @@ describe('make_reaction registration', () => {
     expect(REACTION_RENDER.shotPrompts.reaction).toContain('@image2');
     expect(REACTION_RENDER.shotPrompts.product).not.toContain('@image2');
     expect(REACTION_RENDER.shotPrompts.product).toMatch(/No people/);
+  });
+});
+
+// ── #25: person shots on Kling O3 Pro (Veo 3.1 fallback), product shots on Seedance ──
+
+const refusedBy = (model: string) =>
+  ApplicationFailure.nonRetryable(`fal ${model} refused: likenesses of real people`, CONTENT_POLICY_FAILURE);
+
+describe('makeReactionWorkflow — the video model per shot kind (#25)', () => {
+  it('renders person shots on Kling O3 Pro and product shots on Seedance', async () => {
+    const fakes = happyFakes();
+    await harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes);
+    const clips = clipsOf(fakes);
+    expect(clips).toHaveLength(4);
+    for (const c of clips) expect(c.model).toBe(c.shot_kind === 'reaction' ? 'kling-o3-pro' : 'seedance-2.0');
+  });
+
+  it('falls back to Veo 3.1 when Kling refuses: the refused attempt is refunded and recorded, the Short still renders', async () => {
+    const fakes = happyFakes({
+      presetClip: (i: PresetClipInput) => {
+        if (i.model === 'kling-o3-pro') throw refusedBy('kling');
+        return { primitive_run_id: i.primitive_run_id, video_url: `https://r2.example.test/clips/${i.shot_index}-${i.model}.mp4`, duration_seconds: i.duration, credits_actual_usd: 0.6 };
+      },
+    });
+    const result = await harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes);
+    expect(result.video_url).toBe('https://r2.example.test/shorts/reaction.mp4');
+
+    const clips = clipsOf(fakes);
+    const tried = clips.map((c) => `${c.shot_index}:${c.model}`);
+    expect(tried).toEqual(['0:kling-o3-pro', '0:veo-3.1', '1:seedance-2.0', '2:kling-o3-pro', '2:veo-3.1', '3:seedance-2.0']);
+    // Each attempt is its own charged child: the fallback never reuses the refused one's id.
+    expect(new Set(clips.map((c) => c.primitive_run_id)).size).toBe(clips.length);
+
+    const refused = clips.filter((c) => c.model === 'kling-o3-pro').map((c) => c.primitive_run_id);
+    const refunded = (fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id);
+    expect(refunded.sort()).toEqual([...refused].sort());
+    const marked = fakes.callsTo('markPrimitiveRunFailed') as Array<{ primitive_run_id: string; error_code: string }>;
+    expect(marked.map((m) => m.primitive_run_id).sort()).toEqual([...refused].sort());
+    for (const m of marked) expect(m.error_code).toBe(CONTENT_POLICY_FAILURE);
+
+    // The cut uses the fallback's clip, trimmed to the planned share (Veo renders 8 s).
+    const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
+    expect(mux.clip_urls[0]).toContain('0-veo-3.1');
+    expect(mux.shot_ms!.every((ms) => ms <= REACTION_MAX_SHOT_MS)).toBe(true);
+    expect(fakes.names()).not.toContain('releaseDraftRender');
+  });
+
+  it('falls back on an ordinary provider failure too, not only a refusal', async () => {
+    const fakes = happyFakes({
+      presetClip: (i: PresetClipInput) => {
+        if (i.model === 'kling-o3-pro') throw ApplicationFailure.nonRetryable('fal timed out', 'FAL_TIMEOUT');
+        return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 0.6 };
+      },
+    });
+    await harness.execute('makeReactionWorkflow', [renderInput(8_000)], fakes);
+    expect(clipsOf(fakes).map((c) => c.model)).toEqual(['kling-o3-pro', 'veo-3.1', 'seedance-2.0']);
+  });
+
+  it('never falls back on a failure the fallback cannot fix (no credits)', async () => {
+    const fakes = happyFakes({
+      presetClip: () => {
+        throw ApplicationFailure.nonRetryable('insufficient credits', 'INSUFFICIENT_CREDITS');
+      },
+    });
+    await expect(harness.execute('makeReactionWorkflow', [renderInput(8_000)], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
+    expect(clipsOf(fakes).map((c) => c.model)).toEqual(['kling-o3-pro']);
+  });
+
+  it('both refusing is the non-retryable content-policy failure: every attempt refunded, the draft released', async () => {
+    const fakes = happyFakes({
+      presetClip: (i: PresetClipInput) => {
+        if (i.shot_kind === 'reaction') throw refusedBy(i.model!);
+        return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 0.6 };
+      },
+    });
+    const err = await harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes).catch((e) => e);
+    expect(err).toBeInstanceOf(WorkflowFailedError);
+
+    const clips = clipsOf(fakes);
+    expect(clips.map((c) => c.model)).toEqual(['kling-o3-pro', 'veo-3.1']);
+    const refunded = new Set((fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id));
+    for (const c of clips) expect(refunded.has(c.primitive_run_id)).toBe(true);
+
+    const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
+    expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: CONTENT_POLICY_FAILURE });
+    expect(NON_RETRYABLE_TYPES).toContain(CONTENT_POLICY_FAILURE);
+    expect(fakes.callsTo('releaseDraftRender')).toEqual([{ skill_run_id: SKILL_RUN_ID, draft_id: 'draft-19' }]);
+    const names = fakes.names();
+    expect(names.indexOf('releaseDraftRender')).toBeGreaterThan(names.lastIndexOf('refundCredits'));
+  });
+
+  it('asks every model — Kling, Veo and Seedance — for a clip with its own audio disabled', async () => {
+    const fakes = happyFakes({
+      presetClip: (i: PresetClipInput) => {
+        if (i.model === 'kling-o3-pro' && i.shot_index === 0) throw refusedBy('kling');
+        return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 0.6 };
+      },
+    });
+    await harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes);
+    const clips = clipsOf(fakes);
+    expect(new Set(clips.map((c) => c.model))).toEqual(new Set(['kling-o3-pro', 'veo-3.1', 'seedance-2.0']));
+    for (const c of clips) expect(c.generate_audio).toBe(false);
+  });
+
+  it.each([5_000, 7_400, 10_000, 10_001, 12_345, 15_000])(
+    'charges exactly the quote at %i ms, whether or not the fallback ran',
+    async (ms) => {
+      for (const refuse of [false, true]) {
+        const fakes = happyFakes({
+          presetClip: (i: PresetClipInput) => {
+            if (refuse && i.model === 'kling-o3-pro') throw refusedBy('kling');
+            return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 0.6 };
+          },
+        });
+        await harness.execute('makeReactionWorkflow', [renderInput(ms)], fakes);
+        const refunded = new Set((fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id));
+        // What stays charged: every attempt that was not refunded, at its shot's price.
+        const charged = clipsOf(fakes)
+          .filter((c) => !refunded.has(c.primitive_run_id))
+          .reduce((s, c) => s + quotePrimitiveCredits('product_hero_clip', c.duration, undefined, shotVideo(REACTION, c.shot_kind)), 0);
+        expect(charged).toBe(quotePresetCredits(REACTION, ms));
+      }
+    },
+  );
+});
+
+// ── #25: Product Interaction in every person prompt, never a product prompt ──
+
+describe('makeReactionWorkflow — Product Interaction (#25)', () => {
+  const EXAMPLES = {
+    perfume: 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles',
+    coffee: 'lifts the cup with both hands, takes one slow sip, lowers it and smiles',
+    skincare: 'squeezes a small amount onto the back of the hand and gently rubs it in',
+  };
+
+  it.each(Object.entries(EXAMPLES))('carries the %s interaction on every reaction shot, after the no-speaking and modesty wording', async (_p, interaction) => {
+    const fakes = happyFakes();
+    await harness.execute('makeReactionWorkflow', [renderInput(12_000, { product_interaction: interaction })], fakes);
+    for (const c of clipsOf(fakes)) {
+      if (c.shot_kind === 'product') {
+        expect(c.prompt).toBe(REACTION_RENDER.shotPrompts.product);
+        continue;
+      }
+      const at = c.prompt.indexOf(interaction);
+      expect(at).toBeGreaterThan(-1);
+      // Never overriding: the no-speaking and modesty words are there, verbatim, before it.
+      expect(c.prompt.indexOf(SILENT_REACTION)).toBeGreaterThan(-1);
+      expect(c.prompt.indexOf(SILENT_REACTION)).toBeLessThan(at);
+      expect(c.prompt.indexOf(MODESTY_PROMPTS.person.covered)).toBeGreaterThan(-1);
+      expect(c.prompt.indexOf(MODESTY_PROMPTS.person.covered)).toBeLessThan(at);
+      expect(c.prompt.indexOf(MODESTY_PROMPTS.hijab)).toBeLessThan(at);
+      expect(c.prompt.slice(at)).toMatch(/nobody speaks/);
+    }
+  });
+
+  it('leaves the prompts as they were for a draft with no Product Interaction', async () => {
+    const without = happyFakes();
+    await harness.execute('makeReactionWorkflow', [renderInput(9_000)], without);
+    const withNull = happyFakes();
+    await harness.execute('makeReactionWorkflow', [renderInput(9_000, { product_interaction: null })], withNull);
+    expect(clipsOf(withNull).map((c) => c.prompt)).toEqual(clipsOf(without).map((c) => c.prompt));
+    expect(clipsOf(without)[0].prompt).not.toMatch(/How the product is used/);
   });
 });

@@ -20,7 +20,7 @@
  * anywhere else.
  */
 
-import { VIDEO_CLIP_CREDITS, VIDEO_CLIP_USD } from './video-pricing.js';
+import { DEFAULT_SHOT_VIDEO, shotClipCredits, shotClipUsd, type ShotVideo } from './video-models.js';
 import type { MusicBedTrack } from './music-bed/types.js';
 import type { ModestyDefault, ShotSubject } from './modesty.js';
 import { STARTING_FRAME_CREDITS, STARTING_FRAME_USD, type StartingFrame } from './starting-frames.js';
@@ -75,9 +75,11 @@ export interface PresetDefinition<Kind extends string = string> {
    * (#17): the pipeline adds the Modesty Default to every `hands` and `person`
    * shot, and to no other. `frame` (#18, ./starting-frames.ts): the shot is
    * animated from a generated starting frame instead of the product photo, one
-   * frame per planned shot of that kind, priced with the clips.
+   * frame per planned shot of that kind, priced with the clips. `video` (#25,
+   * ./video-models.ts): the model the kind's clips render on and the one it
+   * falls back to when that one refuses or fails; absent = Seedance via EvoLink.
    */
-  shotKinds: Readonly<Record<Kind, { shows: ShotSubject; frame?: StartingFrame }>>;
+  shotKinds: Readonly<Record<Kind, { shows: ShotSubject; frame?: StartingFrame; video?: ShotVideo }>>;
   /** Which kinds of shots, in what order. Clip lengths follow the shared rule. */
   shotPlan: PresetShotOrder<Kind>;
   /** Inputs the render needs beyond the draft. */
@@ -212,18 +214,28 @@ export function shotFrame(preset: Pick<PresetDefinition, 'shotKinds'>, kind: str
   return (preset.shotKinds as Record<string, { frame?: StartingFrame }>)[kind]?.frame;
 }
 
-/** Credits for rendering `durationMs` of speech under `preset`: its planned clips plus their starting frames. */
+/** The video model (and fallback) a planned shot of `kind` renders on (#25); Seedance when the kind names none. */
+export function shotVideo(preset: Pick<PresetDefinition, 'shotKinds'>, kind: string): ShotVideo {
+  return (preset.shotKinds as Record<string, { video?: ShotVideo }>)[kind]?.video ?? DEFAULT_SHOT_VIDEO;
+}
+
+/**
+ * Credits for rendering `durationMs` of speech under `preset`: its planned
+ * clips, each priced from its kind's model chain (shotClipCredits: the same
+ * price the worker charges whichever model of the chain runs), plus their
+ * starting frames.
+ */
 export function quotePresetCredits(preset: PresetDefinition, durationMs: number): number {
   return planPresetShots(preset, durationMs).reduce((sum, s) => {
     const frame = shotFrame(preset, s.kind);
-    return sum + VIDEO_CLIP_CREDITS[s.seconds] + (frame ? STARTING_FRAME_CREDITS[frame] : 0);
+    return sum + shotClipCredits(shotVideo(preset, s.kind), s.seconds) + (frame ? STARTING_FRAME_CREDITS[frame] : 0);
   }, 0);
 }
 
-/** Provider USD for rendering `durationMs` of speech under `preset`: its planned clips plus their starting frames. */
+/** Provider USD for rendering `durationMs` of speech under `preset`: its planned clips (the costliest model of each chain) plus their starting frames. */
 export function presetProviderUsd(preset: PresetDefinition, durationMs: number): number {
   return planPresetShots(preset, durationMs).reduce((sum, s) => {
     const frame = shotFrame(preset, s.kind);
-    return sum + VIDEO_CLIP_USD[s.seconds] + (frame ? STARTING_FRAME_USD[frame] : 0);
+    return sum + shotClipUsd(shotVideo(preset, s.kind), s.seconds) + (frame ? STARTING_FRAME_USD[frame] : 0);
   }, 0);
 }

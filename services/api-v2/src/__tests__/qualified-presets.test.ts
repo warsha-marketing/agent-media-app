@@ -123,7 +123,7 @@ async function start(opts: { seed?: QualifiedPresetRow[]; operatorCheckFails?: b
   const draftDeps: DraftDeps = {
     writeScript: async (input) => {
       written.push({ dialect: input.dialect });
-      return { script: SCRIPT, product_terms: [], model: 'claude-test' };
+      return { script: SCRIPT, product_terms: [], product_interaction: null, model: 'claude-test' };
     },
     voiceScript: async ({ script, dialect, voice: v }) => {
       voiced.push({ dialect, provider_voice_id: v.provider_voice_id });

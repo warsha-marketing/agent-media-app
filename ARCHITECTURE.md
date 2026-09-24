@@ -270,6 +270,15 @@ generic 500 mid-render. Pin models with `EVOLINK_SEEDANCE_MODEL`,
 **To add a provider:** create `providers/<name>.js` exporting an adapter, import
 it in `providers/index.js`, add it to `PROVIDERS`. No pipeline changes.
 
+The vNext Preset render does the same per shot kind: a Preset's shot kind
+names its video model (and a fallback) as data
+(`shotKinds.reaction.video = { model: 'kling-o3-pro', fallback: 'veo-3.1' }`,
+`packages/schema/src/video-models.ts`; absent = Seedance via EvoLink), and
+`services/primitive-worker-vnext/src/video-models/` maps each model id to its
+client and request builder (fal's queue API for Kling O3 Pro and Veo 3.1,
+`FAL_KEY`). A shot is charged its model chain's price whichever model ran, so
+the quote is the charge with or without the fallback.
+
 Images go through `gpt-image-2` (`OPENAI_API_KEY`) and prompt craft through
 Anthropic (`ANTHROPIC_API_KEY`). The legacy b-roll and talking-head lanes still
 read `BROLL_PROVIDER` / `TALKING_HEAD_PROVIDER` directly and have not yet been

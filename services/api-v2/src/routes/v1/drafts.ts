@@ -8,7 +8,8 @@
  *                                           dialect, voice_id }         → 201 { draft }
  *   POST /v1/drafts/product-hero/revoice  { script, dialect, voice_id?,
  *                                           parent_draft_id?, brief?,
- *                                           product_details? }          → 201 { draft }
+ *                                           product_details?,
+ *                                           product_interaction? }      → 201 { draft }
  *
  * voice_id is an Approved Voice of the Dialect (GET /v1/voices, #7); anything
  * else is refused with 422 VOICE_NOT_APPROVED before a provider is called. The
@@ -180,6 +181,11 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
           dialect: { type: 'string', enum: [...SCRIPT_DIALECTS] },
           brief: { type: ['string', 'null'] },
           product_details: { type: ['string', 'null'], description: 'The facts the Script sells (name, notes or ingredients, benefits); carried over on re-voice.' },
+          product_interaction: {
+            type: ['string', 'null'],
+            description:
+              'Product Interaction: how a real person uses the product, in English (e.g. perfume: "removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles"). Written with the Script; the render adds it to every hands and person shot. Edit it by re-voicing with product_interaction (a new draft); carried over on re-voice otherwise.',
+          },
           script: {
             type: 'string',
             description:

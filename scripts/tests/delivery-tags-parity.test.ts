@@ -5,10 +5,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as schema from '../../packages/schema/src/delivery-tags.ts';
-import { PRODUCT_DETAILS_MAX_CHARS } from '../../services/api-v2/src/drafts/product-hero-draft.ts';
+import { PRODUCT_DETAILS_MAX_CHARS, PRODUCT_INTERACTION_MAX_CHARS } from '../../services/api-v2/src/drafts/product-hero-draft.ts';
 import {
   DELIVERY_TAGS,
   PRODUCT_DETAILS_MAX,
+  PRODUCT_INTERACTION_MAX,
   formatDeliveryTags,
   insertDeliveryTag,
   unknownDeliveryTagMessage,
@@ -42,6 +43,9 @@ describe('Delivery Tags: web editor mirror', () => {
 describe('Product Details limit: web field mirror', () => {
   it('caps the field at the API limit', () => {
     assert.equal(PRODUCT_DETAILS_MAX, PRODUCT_DETAILS_MAX_CHARS);
+  });
+  it('caps the Product Interaction field at the API limit', () => {
+    assert.equal(PRODUCT_INTERACTION_MAX, PRODUCT_INTERACTION_MAX_CHARS);
   });
 });
 

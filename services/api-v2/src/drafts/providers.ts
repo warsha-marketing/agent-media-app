@@ -34,6 +34,7 @@ import {
   DraftError,
   MAX_SPEECH_MS,
   MIN_SPEECH_MS,
+  tidyProductInteraction,
   type Alignment,
   type Dialect,
   type DraftDeps,
@@ -106,17 +107,20 @@ ${tags}
 
 Write brand and product names in Arabic letters as they are said. Write numbers and prices as words. No emojis, hashtags, Latin letters, speaker labels, quotation marks or line breaks.
 
-Reply with JSON only: {"script": the Script as one paragraph, "product_terms": the words of your Script that name the Product Details' nouns, notes or ingredients and that you marked because a voice could misread them, each exactly as it appears in the Script (with its marks); [] if none}.`;
+Product Interaction: also describe, in plain English, how a real person uses this product on camera, as one short action (at most about 25 words, present tense, no subject), so the visuals show realistic use. Use it the way it is really used: a perfume is uncapped and sprayed before anyone smells it (e.g. "removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles"), a coffee is sipped, a skincare cream is applied to the back of the hand. Describe only the hands and the action: never clothing, the body, speech or text on screen; the person never speaks.
+
+Reply with JSON only: {"script": the Script as one paragraph, "product_terms": the words of your Script that name the Product Details' nouns, notes or ingredients and that you marked because a voice could misread them, each exactly as it appears in the Script (with its marks); [] if none, "product_interaction": the Product Interaction in English}.`;
 }
 
-/** The writer's reply: the Script and the product terms it marked (see WrittenScript). */
+/** The writer's reply: the Script, the product terms it marked and the Product Interaction (see WrittenScript). */
 export const SCRIPT_OUTPUT_SCHEMA = {
   type: 'object',
   properties: {
     script: { type: 'string' },
     product_terms: { type: 'array', items: { type: 'string' } },
+    product_interaction: { type: 'string' },
   },
-  required: ['script', 'product_terms'],
+  required: ['script', 'product_terms', 'product_interaction'],
   additionalProperties: false,
 } as const;
 
@@ -137,17 +141,21 @@ export function userPrompt(input: WriteScriptInput): string {
 }
 
 /** Read the writer's JSON reply; a reply that is not the expected shape is an upstream failure. */
-export function parseWriterReply(text: string): { script: string; product_terms: string[] } {
+export function parseWriterReply(text: string): { script: string; product_terms: string[]; product_interaction: string | null } {
   let data: unknown;
   try {
     data = JSON.parse(text);
   } catch {
     throw new Error('anthropic: Script reply is not JSON');
   }
-  const d = data as { script?: unknown; product_terms?: unknown };
+  const d = data as { script?: unknown; product_terms?: unknown; product_interaction?: unknown };
   if (typeof d.script !== 'string') throw new Error('anthropic: Script reply has no script');
   const terms = Array.isArray(d.product_terms) ? d.product_terms.filter((t): t is string => typeof t === 'string') : [];
-  return { script: d.script.replace(/\s+/g, ' ').trim(), product_terms: terms.map((t) => t.trim()).filter(Boolean) };
+  return {
+    script: d.script.replace(/\s+/g, ' ').trim(),
+    product_terms: terms.map((t) => t.trim()).filter(Boolean),
+    product_interaction: tidyProductInteraction(typeof d.product_interaction === 'string' ? d.product_interaction : null),
+  };
 }
 
 export function anthropicScriptWriter(opts: { apiKey: string; model: string }): DraftDeps['writeScript'] {

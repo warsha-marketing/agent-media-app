@@ -19,10 +19,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerDraftRoutes, draftOpenApi } from '../routes/v1/drafts.js';
-import { anthropicScriptWriter, productionDraftDeps, systemPrompt, userPrompt } from '../drafts/providers.js';
+import { anthropicScriptWriter, parseWriterReply, productionDraftDeps, systemPrompt, userPrompt } from '../drafts/providers.js';
 import { DELIVERY_TAGS } from '@agentmedia/schema';
 import {
   CreateDraftInputSchema,
+  PRODUCT_INTERACTION_MAX_CHARS,
   RevoiceDraftInputSchema,
   mp3DurationMs,
   type DraftDeps,
@@ -58,7 +59,7 @@ const RUMI_DETAILS =
   'RUMI Royal Rituals — Eau de Parfum. Notes: Aqueous, Bergamot, Pink Pepper, Geranium, Orris, Orange Blossom, Leather, Patchouli, Musk. Long-lasting, made for the evening.';
 
 /** A writer reply: a Script alone, or a Script with the product terms it reports. */
-type Written = string | { script: string; product_terms: string[] };
+type Written = string | { script: string; product_terms: string[]; product_interaction?: string | null };
 
 function alignmentFor(text: string, ms: number): Alignment {
   const chars = [...text];
@@ -98,7 +99,9 @@ async function start(opts: { durations: number[]; scripts?: Written[]; ttsModel?
     writeScript: async (input) => {
       calls.write.push(input as unknown as Record<string, unknown>);
       const next = scripts.shift() ?? SCRIPT_A;
-      return typeof next === 'string' ? { script: next, product_terms: [], model: 'claude-test' } : { ...next, model: 'claude-test' };
+      return typeof next === 'string'
+        ? { script: next, product_terms: [], product_interaction: null, model: 'claude-test' }
+        : { product_interaction: null, ...next, model: 'claude-test' };
     },
     voiceScript: async ({ script, voice }) => {
       calls.voice.push(script);
@@ -450,9 +453,9 @@ describe('the Script-writing prompt', () => {
     try {
       const write = anthropicScriptWriter({ apiKey: 'k', model: 'claude-test' });
       const out = await write({ brief: 'Evening ad', product_details: RUMI_DETAILS, dialect: 'levantine', delivery_tags: true });
-      expect(out).toEqual({ script: LIVE_SCRIPT, product_terms: LIVE_TERMS, model: 'claude-test' });
+      expect(out).toEqual({ script: LIVE_SCRIPT, product_terms: LIVE_TERMS, product_interaction: null, model: 'claude-test' });
       const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
-      expect(body.output_config.format).toMatchObject({ type: 'json_schema', schema: { required: ['script', 'product_terms'] } });
+      expect(body.output_config.format).toMatchObject({ type: 'json_schema', schema: { required: ['script', 'product_terms', 'product_interaction'] } });
       expect(body.system).toContain('[softly]');
       expect(body.messages[0].content).toContain(RUMI_DETAILS);
     } finally {
@@ -908,5 +911,122 @@ describe('draft vocabulary', () => {
       join(here, '..', '..', '..', '..', 'apps/web/app/(app-dark)/dashboard/product-hero/page.tsx'),
     ];
     for (const f of files) expect(readFileSync(f, 'utf8'), f).not.toMatch(/\bcopy\b/i);
+  });
+});
+
+
+// ── Product Interaction (#25) ────────────────────────────────────────────────
+
+const PERFUME = 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles';
+const COFFEE = 'lifts the cup with both hands, takes one slow sip, lowers it and smiles';
+const SKINCARE = 'squeezes a small amount onto the back of the hand and gently rubs it in';
+
+describe('Product Interaction — written with the Script', () => {
+  it('the writer is asked how a real person uses the product, in English, alongside the Script', () => {
+    const system = systemPrompt('levantine', { deliveryTags: true });
+    expect(system).toMatch(/product_interaction/);
+    expect(system).toMatch(/how a real person uses/i);
+    expect(system).toMatch(/English/);
+    // Realistic use: nobody sniffs a capped perfume bottle.
+    expect(system).toMatch(/cap/);
+    // It never makes anyone speak on screen.
+    expect(system).toMatch(/never speak/i);
+  });
+
+  it('the real writer requires it in the structured reply and returns it', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: JSON.stringify({ script: LIVE_SCRIPT, product_terms: LIVE_TERMS, product_interaction: ` ${PERFUME}\n` }) }],
+        }),
+        { status: 200 },
+      ),
+    );
+    try {
+      const out = await anthropicScriptWriter({ apiKey: 'k', model: 'claude-test' })({
+        brief: 'Evening ad', product_details: RUMI_DETAILS, dialect: 'levantine', delivery_tags: true,
+      });
+      expect(out.product_interaction).toBe(PERFUME);
+      const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(body.output_config.format.schema.properties.product_interaction).toEqual({ type: 'string' });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('reads a reply without one as none, tidies its whitespace and bounds its length', () => {
+    expect(parseWriterReply(JSON.stringify({ script: 'س', product_terms: [] })).product_interaction).toBeNull();
+    expect(parseWriterReply(JSON.stringify({ script: 'س', product_terms: [], product_interaction: '   ' })).product_interaction).toBeNull();
+    expect(parseWriterReply(JSON.stringify({ script: 'س', product_terms: [], product_interaction: ' lifts\n the  cup ' })).product_interaction).toBe('lifts the cup');
+    const long = parseWriterReply(JSON.stringify({ script: 'س', product_terms: [], product_interaction: 'x'.repeat(1000) })).product_interaction!;
+    expect(long.length).toBeLessThanOrEqual(PRODUCT_INTERACTION_MAX_CHARS);
+  });
+
+  it.each([
+    ['perfume', PERFUME],
+    ['coffee', COFFEE],
+    ['skincare', SKINCARE],
+  ])('stores the %s interaction on the draft and returns it', async (_p, interaction) => {
+    const h = await start({ durations: [9000], scripts: [{ script: SCRIPT_A, product_terms: [], product_interaction: interaction }] });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Ad', product_details: 'A product', dialect: 'levantine', voice_id: VOICE });
+    expect(r.status).toBe(201);
+    expect(r.body.draft.product_interaction).toBe(interaction);
+    expect(h.rows[0].product_interaction).toBe(interaction);
+    const read = await call(h, 'GET', `/v1/drafts/${r.body.draft.id}`, 'user-a');
+    expect(read.body.draft.product_interaction).toBe(interaction);
+  });
+
+  it('keeps the interaction the writer gave on its duration rewrite', async () => {
+    const h = await start({
+      durations: [17_000, 9_000],
+      scripts: [
+        { script: SCRIPT_A, product_terms: [], product_interaction: 'first try' },
+        { script: SCRIPT_B, product_terms: [], product_interaction: COFFEE },
+      ],
+    });
+    const r = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Ad', dialect: 'levantine', voice_id: VOICE });
+    expect(r.status).toBe(201);
+    expect(r.body.draft.product_interaction).toBe(COFFEE);
+  });
+});
+
+describe('Product Interaction — edited by the user, like the Script', () => {
+  async function drafted() {
+    const h = await start({ durations: [9000, 9000], scripts: [{ script: SCRIPT_A, product_terms: [], product_interaction: PERFUME }] });
+    const first = await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Ad', dialect: 'levantine', voice_id: VOICE });
+    return { h, first: first.body.draft };
+  }
+
+  it('an edited interaction makes a NEW draft (the parent never changes), with the same Script', async () => {
+    const { h, first } = await drafted();
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', {
+      script: first.script, dialect: 'levantine', parent_draft_id: first.id, product_interaction: SKINCARE,
+    });
+    expect(r.status).toBe(201);
+    expect(r.body.draft.id).not.toBe(first.id);
+    expect(r.body.draft.parent_draft_id).toBe(first.id);
+    expect(r.body.draft.product_interaction).toBe(SKINCARE);
+    expect(r.body.draft.script).toBe(first.script);
+    expect(h.rows.find((row) => row.id === first.id)!.product_interaction).toBe(PERFUME);
+  });
+
+  it('a Script edit without one carries the parent’s interaction over', async () => {
+    const { h, first } = await drafted();
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', { script: SCRIPT_B, dialect: 'levantine', parent_draft_id: first.id });
+    expect(r.status).toBe(201);
+    expect(r.body.draft.product_interaction).toBe(PERFUME);
+  });
+
+  it('an empty edit clears it; one over the limit is refused', async () => {
+    const { h, first } = await drafted();
+    const cleared = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', {
+      script: first.script, dialect: 'levantine', parent_draft_id: first.id, product_interaction: '  ',
+    });
+    expect(cleared.status).toBe(201);
+    expect(cleared.body.draft.product_interaction).toBeNull();
+    expect(
+      RevoiceDraftInputSchema.safeParse({ script: 'س', dialect: 'levantine', parent_draft_id: first.id, product_interaction: 'x'.repeat(PRODUCT_INTERACTION_MAX_CHARS + 1) }).success,
+    ).toBe(false);
   });
 });

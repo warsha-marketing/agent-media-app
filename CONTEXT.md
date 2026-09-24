@@ -26,6 +26,10 @@ _Avoid_: template, skill, workflow
 How modest the people and hands in a Preset's shots are, declared by the Preset: arms covered or sleeved (never bare), and for a woman on screen a hijab, on by default for Gulf. It goes into every shot that shows a person or hands; the user may pick another culturally acceptable option, never a less modest one than the Preset allows.
 _Avoid_: dress code, modesty filter, safe mode
 
+**Product Interaction**:
+How a real person uses the product on camera, as a short English action (perfume: "removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles"; coffee: a sip; skincare: applied to the back of the hand). The Script writer drafts it from the Product Details alongside the Script; it is stored on the draft, and the user may edit it, which makes a new draft like a Script edit. It goes into every shot that shows hands or a person (and a hands starting frame), never a product shot, and never overrides the Modesty Default or the no-speaking instruction.
+_Avoid_: usage, action prompt, demo, gesture
+
 ### Arabic speech
 
 **Dialect**:
