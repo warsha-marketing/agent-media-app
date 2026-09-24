@@ -22,6 +22,11 @@ describe('the video model registry', () => {
     for (const id of VIDEO_MODEL_IDS) expect(videoModel(id).id).toBe(id);
   });
 
+  it('only fal models build a fal request; Seedance has no endpoint', () => {
+    expect('buildRequest' in VIDEO_MODELS['seedance-2.0']).toBe(false);
+    expect('endpoint' in VIDEO_MODELS['seedance-2.0']).toBe(false);
+  });
+
   it('refuses a model id it does not know', () => {
     expect(() => videoModel('sora-9' as never)).toThrow(/unknown video model/);
   });
@@ -29,8 +34,10 @@ describe('the video model registry', () => {
 
 describe('fal request builders', () => {
   it('Kling O3 Pro: reference-to-video, product then person, 9:16, the planned length, audio off', () => {
-    const req = VIDEO_MODELS['kling-o3-pro'].buildRequest!(SHOT);
+    const req = VIDEO_MODELS['kling-o3-pro'].buildRequest(SHOT);
     expect(req.endpoint).toBe('fal-ai/kling-video/o3/pro/reference-to-video');
+    expect(VIDEO_MODELS['kling-o3-pro'].endpoint).toBe(req.endpoint);
+    expect(VIDEO_MODELS['kling-o3-pro'].modelName()).toBe(req.endpoint);
     expect(req.input).toEqual({
       prompt: 'The person in the second reference image holds the exact product in the first reference image and smiles.',
       image_urls: [SHOT.startImageUrl, SHOT.characterImageUrl],
@@ -38,12 +45,13 @@ describe('fal request builders', () => {
       duration: '5',
       generate_audio: false,
     });
-    expect(VIDEO_MODELS['kling-o3-pro'].buildRequest!({ ...SHOT, seconds: 10 }).input.duration).toBe('10');
+    expect(VIDEO_MODELS['kling-o3-pro'].buildRequest({ ...SHOT, seconds: 10 }).input.duration).toBe('10');
   });
 
   it('Veo 3.1: reference-to-video, 720p, 8 s (the cut trims it to the shot), audio off', () => {
-    const req = VIDEO_MODELS['veo-3.1'].buildRequest!(SHOT);
+    const req = VIDEO_MODELS['veo-3.1'].buildRequest(SHOT);
     expect(req.endpoint).toBe('fal-ai/veo3.1/reference-to-video');
+    expect(VIDEO_MODELS['veo-3.1'].endpoint).toBe(req.endpoint);
     expect(req.input).toEqual({
       prompt: 'The person in the second reference image holds the exact product in the first reference image and smiles.',
       image_urls: [SHOT.startImageUrl, SHOT.characterImageUrl],
@@ -55,17 +63,17 @@ describe('fal request builders', () => {
   });
 
   it('Veo 3.1 cannot render a 10 s shot', () => {
-    expect(() => VIDEO_MODELS['veo-3.1'].buildRequest!({ ...SHOT, seconds: 10 })).toThrow();
+    expect(() => VIDEO_MODELS['veo-3.1'].buildRequest({ ...SHOT, seconds: 10 })).toThrow();
   });
 
   it('a shot without a person sends the product photo alone', () => {
-    const req = VIDEO_MODELS['kling-o3-pro'].buildRequest!({ ...SHOT, characterImageUrl: undefined });
+    const req = VIDEO_MODELS['kling-o3-pro'].buildRequest({ ...SHOT, characterImageUrl: undefined });
     expect(req.input.image_urls).toEqual([SHOT.startImageUrl]);
   });
 
   it('every fal request has the model’s own audio off, whatever it is asked', () => {
     for (const id of ['kling-o3-pro', 'veo-3.1'] as const) {
-      expect(VIDEO_MODELS[id].buildRequest!(SHOT).input.generate_audio).toBe(false);
+      expect(VIDEO_MODELS[id].buildRequest(SHOT).input.generate_audio).toBe(false);
     }
   });
 });

@@ -48,8 +48,10 @@ export interface GeneratedVideo {
 /** A fal request: the queue endpoint and its JSON input. */
 export interface FalRequest {
   endpoint: string;
-  input: Record<string, unknown> & { generate_audio: false };
+  input: FalInput;
 }
+
+type FalInput = Record<string, unknown> & { generate_audio: false };
 
 export interface VideoModelClient {
   id: VideoModelId;
@@ -57,9 +59,14 @@ export interface VideoModelClient {
   provider: string;
   /** The provider's model name, recorded on the clip's artifact. */
   modelName(): string;
-  /** The fal request this model sends for a shot (fal models only; pure, tested). */
-  buildRequest?: (shot: VideoShotRequest) => FalRequest;
   generate(shot: VideoShotRequest): Promise<GeneratedVideo>;
+}
+
+/** A video model on fal's queue: its endpoint, and the request it sends for a shot (pure, tested). */
+export interface FalVideoModel extends VideoModelClient {
+  provider: 'fal';
+  endpoint: string;
+  buildRequest(shot: VideoShotRequest): FalRequest;
 }
 
 /** EvoLink's `@image1` / `@image2` as fal prompts name them. */
@@ -77,14 +84,16 @@ function falKey(): string {
   return key;
 }
 
-function falModel(id: VideoModelId, buildRequest: (shot: VideoShotRequest) => FalRequest): VideoModelClient {
+function falModel(id: VideoModelId, endpoint: string, buildInput: (shot: VideoShotRequest) => FalInput): FalVideoModel {
+  const buildRequest = (shot: VideoShotRequest): FalRequest => ({ endpoint, input: buildInput(shot) });
   return {
     id,
     provider: 'fal',
-    modelName: () => buildRequest({ prompt: '', startImageUrl: '', seconds: 5, generateAudio: false }).endpoint,
+    endpoint,
+    modelName: () => endpoint,
     buildRequest,
     async generate(shot) {
-      const { endpoint, input } = buildRequest(shot);
+      const { input } = buildRequest(shot);
       const out = await runFalQueue({ apiKey: falKey(), endpoint, input, onPoll: (s) => shot.onProgress?.(s) });
       return { videoUrl: out.videoUrl, taskId: out.requestId };
     },
@@ -128,41 +137,35 @@ const seedance: VideoModelClient = {
 };
 
 /** Kling O3 Pro on fal: 1080×1920, 24 fps, the planned length (it renders 3–15 s). */
-const klingO3Pro = falModel('kling-o3-pro', (shot) => ({
-  endpoint: 'fal-ai/kling-video/o3/pro/reference-to-video',
-  input: {
-    prompt: falPrompt(shot.prompt),
-    image_urls: references(shot),
-    aspect_ratio: '9:16',
-    duration: String(shot.seconds),
-    generate_audio: false,
-  },
+const klingO3Pro = falModel('kling-o3-pro', 'fal-ai/kling-video/o3/pro/reference-to-video', (shot) => ({
+  prompt: falPrompt(shot.prompt),
+  image_urls: references(shot),
+  aspect_ratio: '9:16',
+  duration: String(shot.seconds),
+  generate_audio: false,
 }));
 
 /** Veo 3.1 on fal: 720×1280, 8 s only — a 5 s shot renders 8 s and the cut trims it. */
-const veo31 = falModel('veo-3.1', (shot) => {
+const veo31 = falModel('veo-3.1', 'fal-ai/veo3.1/reference-to-video', (shot) => {
   if (shot.seconds > 8) throw ApplicationFailure.nonRetryable(`veo-3.1 renders 8 s; a ${shot.seconds} s shot does not fit`, 'INVALID_INPUT');
   return {
-    endpoint: 'fal-ai/veo3.1/reference-to-video',
-    input: {
-      prompt: falPrompt(shot.prompt),
-      image_urls: references(shot),
-      aspect_ratio: '9:16',
-      resolution: '720p',
-      duration: '8s',
-      generate_audio: false,
-    },
+    prompt: falPrompt(shot.prompt),
+    image_urls: references(shot),
+    aspect_ratio: '9:16',
+    resolution: '720p',
+    duration: '8s',
+    generate_audio: false,
   };
 });
 
-export const VIDEO_MODELS: Readonly<Record<VideoModelId, VideoModelClient>> = {
+export const VIDEO_MODELS = {
   'seedance-2.0': seedance,
   'kling-o3-pro': klingO3Pro,
   'veo-3.1': veo31,
-};
+} as const satisfies Readonly<Record<VideoModelId, VideoModelClient>>;
 
 /** The client for `id`; throws on a model the worker does not know. */
 export function videoModel(id: VideoModelId): VideoModelClient {
   if (!Object.hasOwn(VIDEO_MODELS, id)) throw new Error(`unknown video model: ${String(id)}`);
-  return VIDEO_MODELS[id];
+  return VIDEO_MODELS[id] as VideoModelClient;
 }

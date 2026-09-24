@@ -38,26 +38,23 @@
  * Kling refused or failed.
  */
 
-import { VIDEO_CLIP_CREDITS, VIDEO_CLIP_USD } from './video-pricing.js';
-
-/** Clip lengths a Preset plans (the shared 5/10 s rule). */
-type ClipSeconds = 5 | 10;
+import { VIDEO_CLIP_CREDITS, VIDEO_CLIP_USD, type VideoClipSeconds } from './video-pricing.js';
 
 export const VIDEO_MODEL_IDS = ['seedance-2.0', 'kling-o3-pro', 'veo-3.1'] as const;
 export type VideoModelId = (typeof VIDEO_MODEL_IDS)[number];
 
 /** What one planned clip costs on a model. A clip length it has no price for, it cannot render. */
 export interface VideoModelPrice {
-  /** Credits charged per planned clip, by the clip's planned length. */
-  credits: Readonly<Partial<Record<ClipSeconds, number>>>;
+  /** Credits charged per planned clip, by the clip's planned length (a Preset plans 5 and 10 s clips). */
+  credits: Readonly<Partial<Record<VideoClipSeconds, number>>>;
   /** Our provider-cost estimate (USD) per planned clip. */
-  usd: Readonly<Partial<Record<ClipSeconds, number>>>;
+  usd: Readonly<Partial<Record<VideoClipSeconds, number>>>;
   /**
    * How long the model really renders a planned clip, in s, where it differs
    * (Veo 3.1 reference-to-video renders 8 s only). Absent = the planned length.
    * A longer render only runs where the cut trims each shot (onScreenMs).
    */
-  renders?: Readonly<Partial<Record<ClipSeconds, number>>>;
+  renders?: Readonly<Partial<Record<VideoClipSeconds, number>>>;
 }
 
 export const VIDEO_MODEL_PRICES: Readonly<Record<VideoModelId, VideoModelPrice>> = {
@@ -94,23 +91,23 @@ export function shotModelChain(video: ShotVideo | undefined): VideoModelId[] {
   return v.fallback && v.fallback !== v.model ? [v.model, v.fallback] : [v.model];
 }
 
-function priceOf(model: VideoModelId, seconds: ClipSeconds, table: 'credits' | 'usd'): number {
+function priceOf(model: VideoModelId, seconds: VideoClipSeconds, table: 'credits' | 'usd'): number {
   const price = VIDEO_MODEL_PRICES[model]?.[table][seconds];
   if (price === undefined) throw new RangeError(`video model ${model} cannot render a ${seconds} s clip`);
   return price;
 }
 
 /** Credits for one planned shot: the most any model in its chain charges for the clip (see the header). */
-export function shotClipCredits(video: ShotVideo | undefined, seconds: ClipSeconds): number {
+export function shotClipCredits(video: ShotVideo | undefined, seconds: VideoClipSeconds): number {
   return Math.max(...shotModelChain(video).map((m) => priceOf(m, seconds, 'credits')));
 }
 
 /** Our provider-cost estimate (USD) for one planned shot: the most any model in its chain costs. */
-export function shotClipUsd(video: ShotVideo | undefined, seconds: ClipSeconds): number {
+export function shotClipUsd(video: ShotVideo | undefined, seconds: VideoClipSeconds): number {
   return Math.max(...shotModelChain(video).map((m) => priceOf(m, seconds, 'usd')));
 }
 
 /** How long `model` really renders a planned clip of `seconds`. */
-export function modelRenderSeconds(model: VideoModelId, seconds: ClipSeconds): number {
+export function modelRenderSeconds(model: VideoModelId, seconds: VideoClipSeconds): number {
   return VIDEO_MODEL_PRICES[model].renders?.[seconds] ?? seconds;
 }
