@@ -189,10 +189,10 @@ describe('choosing a Playbook by the Product Profile category', () => {
     expect(CATEGORY_PLAYBOOKS.other).toBe('general');
   });
 
-  it('falls back to General for a category it does not know, and to none without a Profile', () => {
+  it('falls back to General for a category it does not know, and for a draft with no Product Profile', () => {
     expect(choosePlaybook({ category: 'jewellery' as ProductProfile['category'] })?.playbook.id).toBe('general');
-    expect(choosePlaybook(null)).toBeNull();
-    expect(choosePlaybook(undefined)).toBeNull();
+    expect(playbookChoice(choosePlaybook(null))).toEqual({ id: 'general', version: GENERAL.version, pattern: null });
+    expect(playbookChoice(choosePlaybook(undefined))).toEqual({ id: 'general', version: GENERAL.version, pattern: null });
   });
 
   it('picks the pattern from the Profile: a spray perfume, an oud oil; fragrance always splits (spray by default)', () => {
@@ -237,7 +237,7 @@ describe('choosing a Playbook by the Product Profile category', () => {
     expect(again.playbook).toBe(FRAGRANCE_OUD);
     expect(again.pattern?.id).toBe('spray-then-smell');
     expect(resolvePlaybookChoice(null)).toBeNull();
-    expect(resolvePlaybookChoice({ id: 'general', version: 1, pattern: null })?.pattern).toBeNull();
+    expect(resolvePlaybookChoice({ id: 'general', version: GENERAL.version, pattern: null })?.pattern).toBeNull();
     expect(() => resolvePlaybookChoice({ ...c, version: 99 })).toThrow(/rules changed/);
     expect(() => resolvePlaybookChoice({ ...c, id: 'nope' })).toThrow(/no Playbook nope/);
     expect(() => resolvePlaybookChoice({ ...c, pattern: 'nope' })).toThrow(/no pattern nope/);
@@ -466,7 +466,7 @@ describe('the Shot Plan under a Playbook', () => {
 
   it('general (home): the Preset’s shots, natural energy, one main action', () => {
     const plan = composeShotPlan(REACT, { durationMs: 8_000, modesty: GULF, interaction: 'holds the cushion', playbook: choosePlaybook(profile({ category: 'home' })) });
-    expect(plan.playbook).toEqual({ id: 'general', version: 1, pattern: null });
+    expect(plan.playbook).toEqual({ id: 'general', version: GENERAL.version, pattern: null });
     expect(plan.shots.map((s) => s.shot_id)).toEqual(['reaction', 'product-closer']);
     expect(plan.shots[0].fields.energy).toBe('natural');
     expect(plan.shots[0].guardrails.video.find((g) => g.id === 'playbook')?.text).toContain('One main hand-and-product action');

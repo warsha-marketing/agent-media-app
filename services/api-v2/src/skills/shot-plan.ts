@@ -94,12 +94,13 @@ function renderModesty(preset: PresetDefinition, presetInputs: PresetInputs): Mo
 
 /**
  * The Playbook (#32) a render of `draft` follows: its Product Profile's
- * category's (General for one without its own); none for a draft without a
- * Profile (from before #30) or with one that no longer reads as a Profile.
+ * category's, and General for a category without its own, for a draft without
+ * a Profile (from before #30, or made without a photo) and for one whose
+ * Profile no longer reads as one.
  */
-export function renderPlaybook(draft: Pick<RenderableDraft, 'product_profile'>): ResolvedPlaybook | null {
+export function renderPlaybook(draft: Pick<RenderableDraft, 'product_profile'>): ResolvedPlaybook {
   const parsed = ProductProfileSchema.safeParse(draft.product_profile ?? null);
-  return parsed.success ? choosePlaybook(parsed.data) : null;
+  return choosePlaybook(parsed.success ? parsed.data : null);
 }
 
 /**

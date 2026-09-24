@@ -15,7 +15,8 @@
  *     and every shot edit (422 PRODUCT_INTERACTION_BANNED_MOTION /
  *     SHOT_EDIT_BANNED_MOTION), in English and Arabic;
  *   - negatives — extra locked lines on the video stage of its shots;
- *   - defaults — the energy (and performance) of its hands and person shots;
+ *   - defaults — the energy (and performance) of its hands and person shots,
+ *     where it has its own;
  *   - patterns — per Preset, the shot pattern (roles, in order) and each
  *     role's default fields; the first pattern whose `when` matches the
  *     Product Profile applies.
@@ -99,8 +100,8 @@ export interface Playbook {
   banned_motions: readonly BannedMotion[];
   /** Extra locked lines on the video stage: `people` on hands and person shots, `product` on product shots. */
   negatives: { people: readonly string[]; product?: readonly string[] };
-  /** The defaults of its hands and person shots, over the Preset's. */
-  defaults: { energy: ShotEnergy; performance?: string };
+  /** The defaults of its hands and person shots, over the Preset's (absent: the Preset's). */
+  defaults: { energy?: ShotEnergy; performance?: string };
   /**
    * The first whose `when` matches the Profile applies; none matching = the
    * Preset's shots. A last pattern with no `when` makes the Playbook always

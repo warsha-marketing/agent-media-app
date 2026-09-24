@@ -561,12 +561,12 @@ interface InteractionMotionIssue {
 
 /**
  * The first motion `interaction` asks for that the Playbook of `profile`'s
- * category bans (#32, English or Arabic); null when it asks for none, or
- * there is no Profile (so no Playbook).
+ * category bans (#32, English or Arabic; General without a Profile); null
+ * when it asks for none.
  */
 export function interactionMotionIssue(interaction: string | null, profile: ProductProfile | null): InteractionMotionIssue | null {
+  if (!interaction) return null;
   const chosen = choosePlaybook(profile);
-  if (!interaction || !chosen) return null;
   const issue = bannedMotionIssue(interaction, chosen.playbook);
   if (!issue) return null;
   return {

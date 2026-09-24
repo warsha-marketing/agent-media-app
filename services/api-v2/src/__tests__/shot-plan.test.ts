@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Request, Response } from 'express';
 import { planPresetShots, REACTION } from '@agentmedia/schema';
-import { FRAGRANCE_OUD, NO_SPEAKING_PERSON, REACTION_PROMPTS, SHOT_FIELDS, SHOT_FIELD_MAX_CHARS, SETTING_WORDS, shotIds } from '@agentmedia/shot-prompts';
+import { FRAGRANCE_OUD, GENERAL, NO_SPEAKING_PERSON, REACTION_PROMPTS, SHOT_FIELDS, SHOT_FIELD_MAX_CHARS, SETTING_WORDS, shotIds } from '@agentmedia/shot-prompts';
 
 type Row = Record<string, unknown>;
 const TABLES: Record<string, Row[]> = {};
@@ -258,7 +258,7 @@ describe('POST /v1/skills/{slug}/shot-plan', () => {
     expect(reaction.set_id).toBeNull();
     // A Gulf woman: hijab on by default, locked with the rest. No starting frame: no image stage.
     expect(reaction.guardrails.video.map((g) => g.id)).toEqual([
-      'person_description', 'product_reference', 'realism', 'no_speaking', 'simple_physics', 'modesty', 'hijab', 'format', 'audio_off',
+      'person_description', 'product_reference', 'realism', 'no_speaking', 'simple_physics', 'modesty', 'hijab', 'playbook', 'format', 'audio_off',
     ]);
     // ModelArk never gets the re-hosted face: the saved character in words (ADR 0003).
     expect(reaction.guardrails.video[0].text).toBe('The person is a woman: Gulf woman in her late twenties, warm brown eyes. The same person in every shot.');
@@ -499,9 +499,9 @@ describe('the draft’s Playbook (#32)', () => {
     expect((r.body.playbook as { id: string }).id).toBe(playbook);
   });
 
-  it('a draft without a Profile has no Playbook: the Preset’s shots', async () => {
+  it('a draft without a Profile gets the General Playbook: the Preset’s shots', async () => {
     const r = await call(shotPlanRoute, OWNER, body(seedDraft({ product_interaction: PERFUME })));
-    expect(r.body.playbook).toBeNull();
+    expect(r.body.playbook).toEqual({ id: 'general', version: GENERAL.version, pattern: null });
     expect(shotsOf(r.body).map((s) => s.shot_id)).toEqual(['reaction', 'product-closer']);
   });
 

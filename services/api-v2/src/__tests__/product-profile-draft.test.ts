@@ -657,7 +657,8 @@ describe('the Product Interaction and the Profile category’s Playbook (#32)', 
     const interaction = interactionUserPrompt({ brief: 'b', product_details: null, product_profile: COFFEE_PROFILE });
     expect(interaction).toContain('Playbook: Food & café.');
     expect(interaction).toContain('nothing is poured');
-    expect(userPrompt({ brief: 'b', product_details: null, dialect: 'levantine', delivery_tags: true })).not.toContain('<playbook>');
+    // No Profile: the General Playbook (#32).
+    expect(userPrompt({ brief: 'b', product_details: null, dialect: 'levantine', delivery_tags: true })).toContain('<playbook>\nPlaybook: General.');
     expect(systemPrompt('levantine', { deliveryTags: true })).toMatch(/<playbook>/);
     expect(interactionSystemPrompt()).toMatch(/<playbook>/);
   });

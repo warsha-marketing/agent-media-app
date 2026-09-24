@@ -2,8 +2,8 @@
 
 /**
  * General (#32) — the conservative Playbook for every category without its own
- * rules yet (fashion & modest wear, home, other): hold it, show it, use it
- * once. It bans only what breaks every product on video: taking it apart,
+ * rules yet (fashion & modest wear, home, other), and for every draft with no
+ * Product Profile: hold it, show it, use it once. It bans only what breaks every product on video: taking it apart,
  * unwrapping it, pouring, cutting and throwing.
  */
 
@@ -12,7 +12,7 @@ import { AR_START, THROWING, TAKING_APART } from './common.js';
 
 export const GENERAL: Playbook = {
   id: 'general',
-  version: 1,
+  version: 2,
   name: 'General',
   allowed_interactions: [
     'Hold the product in one hand, already in the state it is used in, and turn it slightly toward the camera.',
@@ -32,8 +32,8 @@ export const GENERAL: Playbook = {
   negatives: {
     people: ['One main hand-and-product action in this shot; the product is already in the state it is used in and stays in one piece.'],
   },
-  defaults: {
-    energy: 'natural',
-  },
+  // No energy or performance of its own: every draft without a Product
+  // Profile renders under General, with the Preset's fields exactly as before.
+  defaults: {},
   patterns: [],
 };

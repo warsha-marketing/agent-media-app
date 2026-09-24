@@ -57,7 +57,7 @@ export function playbookRoleDefaults(
   if (!resolved) return {};
   const out: PlaybookRoleFields = {};
   const { defaults } = resolved.playbook;
-  if (shows === 'hands' || shows === 'person') out.energy = defaults.energy;
+  if ((shows === 'hands' || shows === 'person') && defaults.energy) out.energy = defaults.energy;
   if (shows === 'person' && defaults.performance) out.performance = defaults.performance;
   const roles = playbookPresetPattern(resolved, presetId)?.roles;
   if (roles && Object.hasOwn(roles, role)) Object.assign(out, roles[role]);

@@ -157,7 +157,7 @@ export const SCRIPT_OUTPUT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-/** The Profile's Playbook (#32) as the writer's <playbook> block, or '' without a Profile. */
+/** The Profile's Playbook (#32) as the writer's <playbook> block (General without a Profile). */
 function playbookBlock(profile: ProductProfile | null | undefined): string {
   const rules = playbookWriterRules(choosePlaybook(profile ?? null));
   return rules ? block('playbook', rules) : '';

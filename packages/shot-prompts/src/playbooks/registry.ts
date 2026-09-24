@@ -136,7 +136,7 @@ export function playbookProblems(
       if (issue) at(`negatives.${list}[${i}]`, `breaks a Guardrail ("${issue.matched}")`);
     });
   }
-  if (!isShotEnergy(playbook.defaults.energy)) at('defaults.energy', 'is not an energy');
+  if (playbook.defaults.energy !== undefined && !isShotEnergy(playbook.defaults.energy)) at('defaults.energy', 'is not an energy');
   if (playbook.defaults.performance !== undefined) text('defaults.performance', playbook.defaults.performance, 'performance');
   const patternIds = new Set<string>();
   let alwaysAt: string | null = null;
@@ -270,12 +270,12 @@ export function playbookPattern(playbook: Playbook, profile: PlaybookProfile | n
 
 /**
  * The Playbook (and pattern) a render of a product with `profile` uses: by its
- * category, else General. Null for a draft without a Product Profile (drafts
- * from before #30): its Shorts render exactly as before.
+ * category, else General — also for a draft with no Product Profile (drafts
+ * from before #30, or made without a photo): General's defaults leave the
+ * Preset's shots and fields as they were, and add its one-main-action line.
  */
-export function choosePlaybook(profile: PlaybookProfile | null | undefined, registry: PlaybookRegistry = PLAYBOOK_REGISTRY): ResolvedPlaybook | null {
-  if (!profile) return null;
-  const playbook = playbookForCategory(profile.category, registry);
+export function choosePlaybook(profile: PlaybookProfile | null | undefined, registry: PlaybookRegistry = PLAYBOOK_REGISTRY): ResolvedPlaybook {
+  const playbook = playbookForCategory(profile?.category, registry);
   return { playbook, pattern: playbookPattern(playbook, profile) };
 }
 
