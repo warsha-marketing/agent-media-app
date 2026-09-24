@@ -1,10 +1,9 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * The Shot Plan (CONTEXT.md, #26), reshaped into the Shot List (#28): every
- * shot a render will make, each with a stable id, its structured fields
- * (editable, ./shot-fields.ts) and its Guardrails per stage (locked,
- * ./guardrails.ts), under the Short's one Set.
+ * The Shot Plan (CONTEXT.md, #26, #28): every shot a render will make, each
+ * with a stable id, its structured fields (editable, ./shot-fields.ts) and its
+ * Guardrails per stage (locked, ./guardrails.ts), under the Short's one Set.
  *
  * The ONE composition, used by both sides:
  *   - api-v2 composes it to show the user (POST /v1/skills/{slug}/shot-plan)
@@ -16,13 +15,14 @@
  * quote prices, so an edit never changes the shots, their lengths or models,
  * or the price.
  *
- * Shot ids (#28): `<kind>-<n>`, the shot's kind and its ordinal among the
- * shots of that kind (`reaction-1`, `product-1`, `reaction-2`). Derived, not
- * stored: the worker recomposes the plan from the run input and must arrive at
- * the same ids without a stored plan, and a derived id cannot drift from the
- * plan it names. Never the position: shots of other kinds moving around a
- * shot (a Preset or Playbook changing its order) leave its id, and an edit
- * keyed by it, on the same shot.
+ * Shot ids: the shot's ROLE, from the Preset data (PresetShotSlot: 'reaction',
+ * 'product-closer', …), with an occurrence suffix only when the role repeats
+ * because the order cycles to fill a longer speech (`reaction`, then
+ * `reaction-2`). Derived, not stored: the worker recomposes the plan from the
+ * run input and must arrive at the same ids without a stored plan. Never the
+ * position, and never the kind's ordinal: a Preset or Playbook inserting
+ * another shot of the same kind, or swapping two of them, leaves each role's
+ * id, and an edit keyed by it, on the same shot.
  *
  * Pure: the workflow sandbox imports this.
  */
@@ -67,13 +67,16 @@ export const VIDEO_MODEL_LABELS: Readonly<Record<VideoModelId, string>> = {
   'veo-3.1': 'Veo 3.1',
 };
 
-/** Each shot's id, for shots of these kinds in this order: `<kind>-<ordinal within its kind>` (see the header). */
-export function shotIds(kinds: readonly string[]): string[] {
+/**
+ * Each shot's id, for shots of these roles in this order: the role, then
+ * `<role>-<n>` for its n-th occurrence when it repeats (see the header).
+ */
+export function shotIds(roles: readonly string[]): string[] {
   const seen = new Map<string, number>();
-  return kinds.map((kind) => {
-    const n = (seen.get(kind) ?? 0) + 1;
-    seen.set(kind, n);
-    return `${kind}-${n}`;
+  return roles.map((role) => {
+    const n = (seen.get(role) ?? 0) + 1;
+    seen.set(role, n);
+    return n === 1 ? role : `${role}-${n}`;
   });
 }
 
@@ -214,7 +217,7 @@ function defaultFields(preset: ShotPlanPreset, kind: string, shows: ShotSubject,
  */
 export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, edits?: Readonly<Record<string, unknown>> | null): ShotPlan {
   const planned = planPresetShots(preset, ctx.durationMs);
-  const ids = shotIds(planned.map((s) => s.kind));
+  const ids = shotIds(planned.map((s) => s.role));
   for (const id of Object.keys(edits ?? {})) {
     if (!ids.includes(id)) {
       throw new ShotEditError(id, invalid('unknown_shot', `This render has no shot "${id}"; its shots are ${ids.join(', ')}. Ask for the Shot Plan again.`));

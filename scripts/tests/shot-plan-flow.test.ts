@@ -74,7 +74,7 @@ const PLAN_BODY = {
   ],
   shots: [
     {
-      shot_id: 'reaction-1',
+      shot_id: 'reaction',
       number: 1,
       kind: 'reaction',
       shows: 'person',
@@ -94,7 +94,7 @@ const PLAN_BODY = {
       },
     },
     {
-      shot_id: 'product-1',
+      shot_id: 'product-closer',
       number: 2,
       kind: 'product',
       shows: 'product',
@@ -116,7 +116,7 @@ describe('parseShotPlan', () => {
     assert.equal(plan.shots.length, 2);
     assert.equal(plan.sceneTextMax, 1000);
     const [r, p] = plan.shots;
-    assert.equal(r.shotId, 'reaction-1');
+    assert.equal(r.shotId, 'reaction');
     assert.equal(kindLabel(r.shows), 'Person');
     assert.equal(lengthLabel(r.onScreenMs), '4.5 s');
     assert.equal(modelLine(r), 'Kling O3 Pro → Veo 3.1');
@@ -150,25 +150,25 @@ describe('shotEditsOf: only the fields that changed', () => {
     assert.deepEqual(shotEditsOf(plan, {}), {});
     assert.deepEqual(
       shotEditsOf(plan, {
-        'reaction-1': { scene: '  The person  holds the product and smiles. ', energy: 'natural' },
-        'product-1': { scene: '   ' },
+        'reaction': { scene: '  The person  holds the product and smiles. ', energy: 'natural' },
+        'product-closer': { scene: '   ' },
       }),
       {},
     );
   });
 
   it('sends the changed fields, tidied, by shot id then field', () => {
-    assert.deepEqual(shotEditsOf(plan, { 'reaction-1': { scene: ' The person sniffs\n the wrist. ', energy: 'natural' } }), {
-      'reaction-1': { scene: 'The person sniffs the wrist.' },
+    assert.deepEqual(shotEditsOf(plan, { 'reaction': { scene: ' The person sniffs\n the wrist. ', energy: 'natural' } }), {
+      'reaction': { scene: 'The person sniffs the wrist.' },
     });
-    assert.deepEqual(shotEditsOf(plan, { 'reaction-1': { energy: 'lively' }, 'product-1': { scene: 'A quick whip pan to the product.' } }), {
-      'reaction-1': { energy: 'lively' },
-      'product-1': { scene: 'A quick whip pan to the product.' },
+    assert.deepEqual(shotEditsOf(plan, { 'reaction': { energy: 'lively' }, 'product-closer': { scene: 'A quick whip pan to the product.' } }), {
+      'reaction': { energy: 'lively' },
+      'product-closer': { scene: 'A quick whip pan to the product.' },
     });
   });
 
   it('ignores ids and fields the plan does not have', () => {
-    assert.deepEqual(shotEditsOf(plan, { 'shot-9-x': { scene: 'anything' }, 'reaction-1': { mood: 'happy' } }), {});
+    assert.deepEqual(shotEditsOf(plan, { 'shot-9-x': { scene: 'anything' }, 'reaction': { mood: 'happy' } }), {});
   });
 });
 
@@ -184,8 +184,8 @@ describe('the request with edits', () => {
   it('carries shot_edits only when there are some; the shot plan is always asked without them', () => {
     assert.equal('shot_edits' in renderBody(choice()), false);
     assert.equal('shot_edits' in renderBody(choice({})), false);
-    assert.deepEqual(renderBody(choice({ 'reaction-1': { scene: 'x' } })).shot_edits, { 'reaction-1': { scene: 'x' } });
-    assert.equal('shot_edits' in shotPlanBody(choice({ 'reaction-1': { scene: 'x' } })), false);
+    assert.deepEqual(renderBody(choice({ 'reaction': { scene: 'x' } })).shot_edits, { 'reaction': { scene: 'x' } });
+    assert.equal('shot_edits' in shotPlanBody(choice({ 'reaction': { scene: 'x' } })), false);
   });
 
   it('an edit is a new request: a new Idempotency-Key; the same edits (any shot or field order) keep the key', () => {
@@ -201,8 +201,8 @@ describe('what ran, on the finished Short', () => {
     video_url: 'https://m/s.mp4',
     duration_ms: 9000,
     shots: [
-      { shot_id: 'reaction-1', kind: 'reaction', model: 'veo-3.1', edited: true, fields: {}, guardrails: { image: [], video: [] }, prompt: 'P1' },
-      { shot_id: 'hands-1', kind: 'hands', model: 'seedance-2.0', edited: false, fields: {}, guardrails: { image: [], video: [] }, frame_prompt: 'F2', prompt: 'P2' },
+      { shot_id: 'reaction', kind: 'reaction', model: 'veo-3.1', edited: true, fields: {}, guardrails: { image: [], video: [] }, prompt: 'P1' },
+      { shot_id: 'hands-use', kind: 'hands', model: 'seedance-2.0', edited: false, fields: {}, guardrails: { image: [], video: [] }, frame_prompt: 'F2', prompt: 'P2' },
     ],
   };
 
@@ -214,8 +214,8 @@ describe('what ran, on the finished Short', () => {
     assert.equal(done.render.phase, 'succeeded');
     const shots = done.render.phase === 'succeeded' ? renderedShotsOf(done.render.shots) : [];
     assert.deepEqual(shots.map((s) => [s.shotId, s.modelName, s.edited, s.framePrompt, s.prompt]), [
-      ['reaction-1', 'Veo 3.1', true, null, 'P1'],
-      ['hands-1', 'Seedance 2.0', false, 'F2', 'P2'],
+      ['reaction', 'Veo 3.1', true, null, 'P1'],
+      ['hands-use', 'Seedance 2.0', false, 'F2', 'P2'],
     ]);
   });
 

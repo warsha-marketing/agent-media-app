@@ -154,8 +154,8 @@ export interface PresetRenderInput {
   product_interaction?: string | null;
   /**
    * Shot Plan review (#26, #28): the fields the user changed, by shot id
-   * (`reaction-1`, …: kind and ordinal within the kind), e.g.
-   * { "reaction-1": { "scene": "…", "energy": "lively" } }, as api-v2 validated
+   * (the shot's role: `reaction`, `product-closer`, …), e.g.
+   * { "reaction": { "scene": "…", "energy": "lively" } }, as api-v2 validated
    * them against the same plan. Only shot fields: never a length or model, and
    * the Guardrails are never part of the input — the render adds its own to
    * every stage of every shot. Checked again here (the ids, the fields, the

@@ -40,8 +40,11 @@ export const PRODUCT_HERO = {
   maxSpeechMs: 15_000,
   /** Product only: nobody on screen, so the Modesty Default never reaches a prompt. */
   shotKinds: { hero: { shows: 'product' }, detail: { shows: 'product' } },
-  /** Shot 1 is the hero; a second shot is a detail closer, so the cut reads as an edit. */
-  shotPlan: { order: ['hero', 'detail'] },
+  /**
+   * Shot 1 is the hero; a second shot is a detail closer, so the cut reads as an
+   * edit. The roles are the shots' ids on the Shot Plan (PresetShotSlot).
+   */
+  shotPlan: { order: [{ role: 'hero', kind: 'hero' }, { role: 'detail', kind: 'detail' }] },
   requiredInputs: ['product_image'],
   /** Licensed Music Bed tracks (#9) — data in ./music-bed/; empty until one is licensed. */
   musicBed: musicBedSet('product_hero'),

@@ -157,7 +157,7 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
     const fakes = happyFakes();
     await harness.execute('renderTestPresetWorkflow', [renderInput(14_000)], fakes);
     const clips = fakes.callsTo('presetClip') as PresetClipInput[];
-    expect(clips.map((c) => ({ kind: c.shot_kind, seconds: c.duration }))).toEqual(planPresetShots(INTERCUT, 14_000));
+    expect(clips.map((c) => ({ kind: c.shot_kind, seconds: c.duration }))).toEqual(planPresetShots(INTERCUT, 14_000).map(({ kind, seconds }) => ({ kind, seconds })));
   });
 
   it('refuses a draft outside the Preset’s own speech band before anything is requested', async () => {

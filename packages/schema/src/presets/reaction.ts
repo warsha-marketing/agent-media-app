@@ -47,8 +47,19 @@ export const REACTION = {
     reaction: { shows: 'person', video: { model: 'kling-o3-pro', fallback: 'veo-3.1' } },
     product: { shows: 'product' },
   },
-  /** Reaction, product, … always ending on the product; no shot over 5 s. */
-  shotPlan: { order: ['reaction', 'product'], last: 'product', maxShotMs: REACTION_MAX_SHOT_MS },
+  /**
+   * Reaction, product, … always ending on the product; no shot over 5 s. The
+   * roles are the shots' ids on the Shot Plan (PresetShotSlot): a product shot
+   * between reactions is a cutaway, the final one the closer, at every length.
+   */
+  shotPlan: {
+    order: [
+      { role: 'reaction', kind: 'reaction' },
+      { role: 'product-cutaway', kind: 'product' },
+    ],
+    last: { role: 'product-closer', kind: 'product' },
+    maxShotMs: REACTION_MAX_SHOT_MS,
+  },
   /** The product photo, and the saved character who reacts to it. */
   requiredInputs: ['product_image', 'character'],
   /** Licensed Music Bed tracks (#9) for Reaction; empty until one is licensed. */

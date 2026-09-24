@@ -61,7 +61,14 @@ export const HANDS_ON = {
     hands: { shows: 'hands', frame: 'product_in_hands' },
     product: { shows: 'product' },
   },
-  shotPlan: { order: ['hands', 'product'], last: 'product' },
+  /** The hands use the product, then the product closes; the roles are the shots' ids on the Shot Plan (PresetShotSlot). */
+  shotPlan: {
+    order: [
+      { role: 'hands-use', kind: 'hands' },
+      { role: 'product-closer', kind: 'product' },
+    ],
+    last: { role: 'product-closer', kind: 'product' },
+  },
   requiredInputs: ['product_image', 'hand_gender', 'setting'],
   musicBed: musicBedSet('hands_on'),
   /** Arms covered by default, sleeved at the least; no person on screen, so never a hijab. */

@@ -31,7 +31,7 @@ How a real person uses the product on camera, as one short, simple, continuous E
 _Avoid_: usage, action prompt, demo, gesture
 
 **Shot Plan** (the Shot List):
-Every shot a render will make, composed before it starts from the approved draft and the Preset, under the Short's one Set: each shot's stable id (its kind and its ordinal among shots of that kind, e.g. `reaction-1`, never its position), kind (product, hands or person), on-screen length and video model (with its fallback), its structured fields (framing, scene, blocking, environment interaction, performance, product action, energy — calm, natural or lively —, camera move, lens feel, lighting) and its Shot Prompt. The quote prices it; the user may open it ("Review shots") and edit a shot's fields before Confirm, never its length or model, so never the price. Not opening it renders exactly the Preset's plan.
+Every shot a render will make, composed before it starts from the approved draft and the Preset, under the Short's one Set: each shot's stable id (its role in the Preset, e.g. `reaction` or `product-closer`, with `-2` only when a longer Short repeats the role; never its position, so it survives another shot of the same kind being inserted or two being swapped), kind (product, hands or person), on-screen length and video model (with its fallback), its structured fields (framing, scene, blocking, environment interaction, performance, product action, energy — calm, natural or lively —, camera move, lens feel, lighting) and its Shot Prompt. The quote prices it; the user may open it ("Review shots") and edit a shot's fields before Confirm, never its length or model, so never the price. Not opening it renders exactly the Preset's plan.
 _Avoid_: storyboard, timeline
 
 **Shot Prompt**:

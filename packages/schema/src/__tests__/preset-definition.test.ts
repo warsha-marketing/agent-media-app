@@ -10,11 +10,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   planPresetShots,
+  slotKind,
+  slotRole,
   presetProviderUsd,
   quotePresetCredits,
   type PresetDefinition,
 } from '../preset-definition.js';
 import { PRESETS } from '../preset-registry.js';
+import { HANDS_ON } from '../presets/hands-on.js';
+import { REACTION } from '../presets/reaction.js';
 import { STANDARD_MODESTY } from '../modesty.js';
 import { VIDEO_CLIP_CREDITS } from '../video-pricing.js';
 import { PRODUCT_HERO, planProductHeroShots, productHeroProviderUsd, quoteProductHeroCredits } from '../product-hero.js';
@@ -37,19 +41,19 @@ const INTERCUT: PresetDefinition<'product' | 'person'> = {
 describe('planPresetShots', () => {
   it('gives each clip a kind from the definition’s order, ending on the declared last kind', () => {
     expect(planPresetShots(INTERCUT, 12_000)).toEqual([
-      { kind: 'person', seconds: 10 },
-      { kind: 'product', seconds: 5 },
+      { role: 'person', kind: 'person', seconds: 10 },
+      { role: 'product', kind: 'product', seconds: 5 },
     ]);
   });
 
   it('never collapses a Preset with a last kind to one clip: speech one clip covers is two 5 s clips sharing it', () => {
     expect(planPresetShots(INTERCUT, 5_000)).toEqual([
-      { kind: 'person', seconds: 5, onScreenMs: 2_500 },
-      { kind: 'product', seconds: 5, onScreenMs: 2_500 },
+      { role: 'person', kind: 'person', seconds: 5, onScreenMs: 2_500 },
+      { role: 'product', kind: 'product', seconds: 5, onScreenMs: 2_500 },
     ]);
     expect(planPresetShots(INTERCUT, 8_001)).toEqual([
-      { kind: 'person', seconds: 5, onScreenMs: 4_001 },
-      { kind: 'product', seconds: 5, onScreenMs: 4_000 },
+      { role: 'person', kind: 'person', seconds: 5, onScreenMs: 4_001 },
+      { role: 'product', kind: 'product', seconds: 5, onScreenMs: 4_000 },
     ]);
     // Priced like the one 10 s clip it replaces.
     expect(quotePresetCredits(INTERCUT, 8_001)).toBe(VIDEO_CLIP_CREDITS[10]);
@@ -57,8 +61,8 @@ describe('planPresetShots', () => {
 
   it('a Preset without a last kind still renders one clip for short speech', () => {
     const open = { ...INTERCUT, shotPlan: { order: ['person', 'product'] as const } };
-    expect(planPresetShots(open, 5_000)).toEqual([{ kind: 'person', seconds: 5 }]);
-    expect(planPresetShots(open, 8_000)).toEqual([{ kind: 'person', seconds: 10 }]);
+    expect(planPresetShots(open, 5_000)).toEqual([{ role: 'person', kind: 'person', seconds: 5 }]);
+    expect(planPresetShots(open, 8_000)).toEqual([{ role: 'person', kind: 'person', seconds: 10 }]);
   });
 
   it('cycles the order when a plan has more clips than the order names', () => {
@@ -108,5 +112,48 @@ describe.each(Object.values(PRESETS).map((p) => [p.id, p] as const))('the %s bud
       expect(quotePresetCredits(preset, ms)).toBeLessThanOrEqual(preset.budget.maxCredits);
       expect(presetProviderUsd(preset, ms)).toBeLessThanOrEqual(preset.budget.maxProviderUsd + 1e-9);
     }
+  });
+});
+
+describe('shot roles (the Shot Plan’s stable ids)', () => {
+  const two: PresetDefinition<'person' | 'product'> = {
+    ...INTERCUT,
+    shotPlan: {
+      order: [
+        { role: 'reaction-spray', kind: 'person' },
+        { role: 'product-cutaway', kind: 'product' },
+        { role: 'reaction-smell', kind: 'person' },
+      ],
+      last: { role: 'product-closer', kind: 'product' },
+    },
+  };
+
+  it('gives every planned shot its slot’s role; a bare kind is its own role', () => {
+    expect(planPresetShots(two, 12_000).map((s) => [s.role, s.kind])).toEqual([
+      ['reaction-spray', 'person'],
+      ['product-closer', 'product'],
+    ]);
+    expect(planPresetShots(INTERCUT, 12_000).map((s) => s.role)).toEqual(['person', 'product']);
+    expect(slotRole('person')).toBe('person');
+    expect(slotKind({ role: 'hero', kind: 'hero' })).toBe('hero');
+  });
+
+  it('declares a role on every slot of every registered Preset', () => {
+    for (const p of [PRODUCT_HERO, HANDS_ON, REACTION] as PresetDefinition[]) {
+      for (const slot of [...p.shotPlan.order, ...(p.shotPlan.last ? [p.shotPlan.last] : [])]) {
+        expect(typeof slot, `${p.id}`).toBe('object');
+      }
+    }
+    expect(planPresetShots(REACTION, 12_000).map((s) => s.role)).toEqual(['reaction', 'product-cutaway', 'reaction', 'product-closer']);
+    expect(planPresetShots(HANDS_ON, 12_000).map((s) => s.role)).toEqual(['hands-use', 'product-closer']);
+    expect(planPresetShots(PRODUCT_HERO, 12_000).map((s) => s.role)).toEqual(['hero', 'detail']);
+  });
+
+  it('refuses a misspelled role, or one role naming two kinds', () => {
+    for (const role of ['Reaction', 'reaction-2', 'reaction_spray', '2nd', '']) {
+      expect(() => planPresetShots({ ...two, shotPlan: { order: [{ role, kind: 'person' }] } }, 12_000), role).toThrow(/shot role/);
+    }
+    const clash = { ...two, shotPlan: { order: [{ role: 'shot', kind: 'person' }, { role: 'shot', kind: 'product' }] } } as PresetDefinition;
+    expect(() => planPresetShots(clash, 12_000)).toThrow(/names two kinds/);
   });
 });

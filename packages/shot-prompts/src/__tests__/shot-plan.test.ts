@@ -94,17 +94,12 @@ describe('the Preset prompt registry', () => {
 });
 
 describe('shot ids', () => {
-  it('are the kind and its ordinal among the shots of that kind, never the position', () => {
-    expect(shotIds(['reaction', 'product', 'reaction', 'product'])).toEqual(['reaction-1', 'product-1', 'reaction-2', 'product-2']);
-    expect(shotIds(['hero', 'detail'])).toEqual(['hero-1', 'detail-1']);
-  });
-
-  it('stay with their shot when the shots are reordered', () => {
-    const kinds = ['reaction', 'product', 'reaction', 'product'];
-    const ids = shotIds(kinds);
-    // Move every product shot first: the relative order within a kind is kept, so every shot keeps its id.
-    const reordered = [1, 3, 0, 2];
-    expect(shotIds(reordered.map((i) => kinds[i]))).toEqual(reordered.map((i) => ids[i]));
+  it('are the shot’s role from the Preset data, with an occurrence suffix only when a role repeats', () => {
+    expect(shotIds(['reaction', 'product-cutaway', 'reaction', 'product-closer'])).toEqual(['reaction', 'product-cutaway', 'reaction-2', 'product-closer']);
+    expect(shotIds(['hero', 'detail'])).toEqual(['hero', 'detail']);
+    expect(shotsOf(REACT, { durationMs: 12_000, modesty: HIJAB }).map((s) => s.shot_id)).toEqual(['reaction', 'product-cutaway', 'reaction-2', 'product-closer']);
+    expect(shotsOf(HANDS, { durationMs: 9_000, modesty: COVERED, vars: handsVars }).map((s) => s.shot_id)).toEqual(['hands-use', 'product-closer']);
+    expect(shotsOf(HERO, { durationMs: 12_500, modesty: COVERED }).map((s) => s.shot_id)).toEqual(['hero', 'detail']);
   });
 
   it('are the priced plan’s shots, one id each, the same on every composition', () => {
@@ -112,28 +107,54 @@ describe('shot ids', () => {
       const plan = shotsOf(REACT, { durationMs: ms, modesty: HIJAB });
       const priced = planPresetShots(REACTION, ms);
       expect(plan.map((s) => s.kind)).toEqual(priced.map((s) => s.kind));
-      expect(plan.map((s) => s.shot_id)).toEqual(shotIds(priced.map((s) => s.kind)));
+      expect(plan.map((s) => s.shot_id)).toEqual(shotIds(priced.map((s) => s.role)));
       expect(new Set(plan.map((s) => s.shot_id)).size).toBe(plan.length);
       expect(plan.reduce((sum, s) => sum + s.on_screen_ms, 0)).toBe(ms);
       expect(shotsOf(REACT, { durationMs: ms, modesty: HIJAB }).map((s) => s.shot_id)).toEqual(plan.map((s) => s.shot_id));
     }
   });
 
-  it('keep an edit on its shot when a Preset reorders its shots', () => {
-    const productFirst = {
-      ...REACT,
-      shotPlan: { ...REACT.shotPlan, order: ['product', 'reaction'], last: 'reaction' },
-    } as ShotPlanPreset;
-    const edit = { 'reaction-1': { scene: 'The person sniffs the product and nods.' } };
-    const before = shotsOf(REACT, { durationMs: 9_000, modesty: HIJAB }, edit);
-    const after = shotsOf(productFirst, { durationMs: 9_000, modesty: HIJAB }, edit);
-    expect(before.map((s) => s.shot_id)).toEqual(['reaction-1', 'product-1']);
-    expect(after.map((s) => s.shot_id)).toEqual(['product-1', 'reaction-1']);
-    const edited = (plan: typeof before) => plan.find((s) => s.shot_id === 'reaction-1')!;
-    expect(edited(before).fields.scene).toBe('The person sniffs the product and nods.');
-    expect(edited(after).fields.scene).toBe('The person sniffs the product and nods.');
-    expect(edited(after).kind).toBe('reaction');
-    expect(after.find((s) => s.shot_id === 'product-1')!.edited).toBe(false);
+  // Two reaction shots with their own roles: a Playbook splitting spray and smell (#32).
+  const withOrder = (order: ReadonlyArray<{ role: string; kind: string }>) =>
+    ({ ...REACT, shotPlan: { ...REACT.shotPlan, order, last: { role: 'product-closer', kind: 'product' } } }) as ShotPlanPreset;
+  const SPRAY = { role: 'reaction-spray', kind: 'reaction' };
+  const SMELL = { role: 'reaction-smell', kind: 'reaction' };
+  const CUTAWAY = { role: 'product-cutaway', kind: 'product' };
+  const SPRAY_EDIT = 'The person sprays the inner wrist once and smiles.';
+  const edit = { 'reaction-spray': { scene: SPRAY_EDIT } };
+  const byId = (plan: ReturnType<typeof shotsOf>, id: string) => plan.find((s) => s.shot_id === id)!;
+
+  it('keep an edit on its shot when the Preset inserts another shot of the same kind before it', () => {
+    const before = shotsOf(withOrder([SPRAY, CUTAWAY]), { durationMs: 9_000, modesty: HIJAB }, edit);
+    const after = shotsOf(withOrder([SMELL, SPRAY, CUTAWAY]), { durationMs: 14_000, modesty: HIJAB }, edit);
+    expect(before.map((s) => s.shot_id)).toEqual(['reaction-spray', 'product-closer']);
+    expect(after.map((s) => s.shot_id)).toEqual(['reaction-smell', 'reaction-spray', 'product-closer']);
+    expect(byId(before, 'reaction-spray').fields.scene).toBe(SPRAY_EDIT);
+    expect(byId(after, 'reaction-spray').fields.scene).toBe(SPRAY_EDIT);
+    expect(byId(after, 'reaction-spray').index).toBe(1);
+    expect(byId(after, 'reaction-smell').edited).toBe(false);
+  });
+
+  it('keep an edit on its shot when the Preset swaps two shots of the same kind', () => {
+    const sprayFirst = shotsOf(withOrder([SPRAY, SMELL, CUTAWAY]), { durationMs: 14_000, modesty: HIJAB }, edit);
+    const smellFirst = shotsOf(withOrder([SMELL, SPRAY, CUTAWAY]), { durationMs: 14_000, modesty: HIJAB }, edit);
+    expect(sprayFirst.map((s) => s.shot_id)).toEqual(['reaction-spray', 'reaction-smell', 'product-closer']);
+    expect(smellFirst.map((s) => s.shot_id)).toEqual(['reaction-smell', 'reaction-spray', 'product-closer']);
+    for (const plan of [sprayFirst, smellFirst]) {
+      expect(byId(plan, 'reaction-spray').fields.scene).toBe(SPRAY_EDIT);
+      expect(byId(plan, 'reaction-smell').edited).toBe(false);
+    }
+    expect(effectiveEdits({ set: null, shots: sprayFirst })).toEqual(effectiveEdits({ set: null, shots: smellFirst }));
+  });
+
+  it('keep an edit on its shot when a Preset reorders shots of other kinds', () => {
+    const productFirst = withOrder([CUTAWAY, SPRAY]);
+    const before = shotsOf(withOrder([SPRAY, CUTAWAY]), { durationMs: 14_000, modesty: HIJAB }, edit);
+    const after = shotsOf(productFirst, { durationMs: 14_000, modesty: HIJAB }, edit);
+    expect(before.map((s) => s.shot_id)).toEqual(['reaction-spray', 'product-cutaway', 'reaction-spray-2', 'product-closer']);
+    expect(after.map((s) => s.shot_id)).toEqual(['product-cutaway', 'reaction-spray', 'product-cutaway-2', 'product-closer']);
+    expect(byId(after, 'reaction-spray').fields.scene).toBe(SPRAY_EDIT);
+    expect(byId(after, 'reaction-spray').kind).toBe('reaction');
   });
 });
 
@@ -352,7 +373,7 @@ describe('shot edits', () => {
   it('replace only the fields they name: every Guardrail stays, in place, even when the edit leaves them all out', () => {
     const plain = shotsOf(REACT, ctx);
     const editedPlan = composeShotPlan(REACT, ctx, {
-      'reaction-1': { scene: '  The person   sniffs the product and smiles. ', lighting: 'Flat, even daylight from a window' },
+      'reaction': { scene: '  The person   sniffs the product and smiles. ', lighting: 'Flat, even daylight from a window' },
     });
     const edited = editedPlan.shots;
     expect(edited[0].fields.scene).toBe('The person sniffs the product and smiles.');
@@ -370,13 +391,13 @@ describe('shot edits', () => {
     expect(prompt.indexOf('sniffs')).toBeLessThan(prompt.indexOf(NO_SPEAKING_PERSON));
     expect(edited[1]).toEqual(plain[1]);
     expect(effectiveEdits(editedPlan)).toEqual({
-      'reaction-1': { scene: 'The person sniffs the product and smiles.', lighting: 'Flat, even daylight from a window' },
+      'reaction': { scene: 'The person sniffs the product and smiles.', lighting: 'Flat, even daylight from a window' },
     });
   });
 
   it('may change the energy and the performance, the lively way', () => {
     const [reaction] = shotsOf(REACT, ctx, {
-      'reaction-1': { energy: 'lively', performance: 'She turns to the camera with a small laugh', camera_move: CAMERA_MOVES.whip_to_product },
+      'reaction': { energy: 'lively', performance: 'She turns to the camera with a small laugh', camera_move: CAMERA_MOVES.whip_to_product },
     });
     expect(reaction.edited_fields).toEqual(['performance', 'energy', 'camera_move']);
     const prompt = shotPrompt(reaction, 'video', EVOLINK);
@@ -385,7 +406,7 @@ describe('shot edits', () => {
   });
 
   it('may clear a field other than the scene', () => {
-    const [reaction] = shotsOf(REACT, ctx, { 'reaction-1': { lens_feel: '  ' } });
+    const [reaction] = shotsOf(REACT, ctx, { 'reaction': { lens_feel: '  ' } });
     expect(reaction.fields.lens_feel).toBe('');
     expect(reaction.edited_fields).toEqual(['lens_feel']);
     expect(shotPrompt(reaction, 'video', EVOLINK)).not.toMatch(/depth of field/);
@@ -393,14 +414,14 @@ describe('shot edits', () => {
 
   it('an edit equal to the Preset’s field is no edit', () => {
     const plain = shotsOf(REACT, ctx);
-    const same = composeShotPlan(REACT, ctx, { 'reaction-1': { scene: plain[0].default_fields.scene, framing: ` ${plain[0].default_fields.framing} ` } });
+    const same = composeShotPlan(REACT, ctx, { 'reaction': { scene: plain[0].default_fields.scene, framing: ` ${plain[0].default_fields.framing} ` } });
     expect(same.shots[0].edited).toBe(false);
     expect(effectiveEdits(same)).toEqual({});
   });
 
   it('an edited action goes into the starting frame too (Hands-on), past the frame’s Guardrails check', () => {
     const plan = shotsOf(HANDS, { durationMs: 9_000, modesty: COVERED, vars: handsVars, interaction: PERFUME }, {
-      'hands-1': { action: 'She pours the coffee into a small cup' },
+      'hands-use': { action: 'She pours the coffee into a small cup' },
     });
     expect(shotPrompt(plan[0], 'image', IMAGE_REFERENCES)).toContain('She pours the coffee into a small cup.');
     expect(shotPrompt(plan[0], 'image', IMAGE_REFERENCES)).not.toContain(PERFUME);
@@ -415,10 +436,10 @@ describe('shot edits', () => {
       ['framing', 'تتكلم عن العطر', 'speech'],
       ['performance', 'She laughs and says hello to the camera.', 'speech'],
     ] as const) {
-      const err = refusal(() => shotsOf(REACT, ctx, { 'reaction-1': { [field]: text } }));
+      const err = refusal(() => shotsOf(REACT, ctx, { 'reaction': { [field]: text } }));
       expect(err.code, text).toBe('SHOT_EDIT_BREAKS_GUARDRAIL');
       expect(err.guardrail).toBe(guardrail);
-      expect(err.shotId).toBe('reaction-1');
+      expect(err.shotId).toBe('reaction');
       expect(err.field).toBe(field);
     }
   });
@@ -427,23 +448,24 @@ describe('shot edits', () => {
     const cases: Array<[Record<string, unknown>, string]> = [
       [{ 'reaction-9': { scene: 'The person smiles.' } }, 'unknown_shot'],
       [{ 'shot-1-reaction': { scene: 'The person smiles.' } }, 'unknown_shot'], // #26's positional ids are gone
-      [{ 'reaction-1': 'The person smiles.' }, 'not_object'], // #26's { shot_id: text } shape
-      [{ 'reaction-1': null }, 'not_object'],
-      [{ 'reaction-1': ['The person smiles.'] }, 'not_object'],
-      [{ 'reaction-1': { model: 'veo-3.1' } }, 'unknown_field'],
-      [{ 'reaction-1': { duration: 10 } }, 'unknown_field'],
-      [{ 'reaction-1': { mood: 'happy' } }, 'unknown_field'],
-      [{ 'reaction-1': { energy: 'frantic' } }, 'not_choice'],
-      [{ 'product-1': { performance: 'She waves.' } }, 'field_not_on_shot'],
-      [{ 'product-1': { action: 'Someone sprays it.' } }, 'field_not_on_shot'],
-      [{ 'reaction-1': { scene: '   ' } }, 'empty'],
-      [{ 'reaction-1': { scene: 42 } }, 'not_text'],
-      [{ 'reaction-1': { scene: 'x'.repeat(SHOT_FIELD_MAX_CHARS.scene + 1) } }, 'too_long'],
-      [{ 'reaction-1': { lighting: 'x'.repeat(SHOT_FIELD_MAX_CHARS.lighting + 1) } }, 'too_long'],
-      [{ 'reaction-1': { scene: '[excited] The person smiles.' } }, 'brackets'],
-      [{ 'reaction-1': { camera_move: 'Push in on {person}.' } }, 'brackets'],
-      [{ 'reaction-1': { scene: 'The person in @image2 smiles.' } }, 'reference_syntax'],
-      [{ 'reaction-1': { blocking: 'The woman from the second reference image holds it.' } }, 'reference_syntax'],
+      [{ 'reaction-1': { scene: 'The person smiles.' } }, 'unknown_shot'], // and #28's kind-ordinal ids
+      [{ 'reaction': 'The person smiles.' }, 'not_object'], // #26's { shot_id: text } shape
+      [{ 'reaction': null }, 'not_object'],
+      [{ 'reaction': ['The person smiles.'] }, 'not_object'],
+      [{ 'reaction': { model: 'veo-3.1' } }, 'unknown_field'],
+      [{ 'reaction': { duration: 10 } }, 'unknown_field'],
+      [{ 'reaction': { mood: 'happy' } }, 'unknown_field'],
+      [{ 'reaction': { energy: 'frantic' } }, 'not_choice'],
+      [{ 'product-closer': { performance: 'She waves.' } }, 'field_not_on_shot'],
+      [{ 'product-closer': { action: 'Someone sprays it.' } }, 'field_not_on_shot'],
+      [{ 'reaction': { scene: '   ' } }, 'empty'],
+      [{ 'reaction': { scene: 42 } }, 'not_text'],
+      [{ 'reaction': { scene: 'x'.repeat(SHOT_FIELD_MAX_CHARS.scene + 1) } }, 'too_long'],
+      [{ 'reaction': { lighting: 'x'.repeat(SHOT_FIELD_MAX_CHARS.lighting + 1) } }, 'too_long'],
+      [{ 'reaction': { scene: '[excited] The person smiles.' } }, 'brackets'],
+      [{ 'reaction': { camera_move: 'Push in on {person}.' } }, 'brackets'],
+      [{ 'reaction': { scene: 'The person in @image2 smiles.' } }, 'reference_syntax'],
+      [{ 'reaction': { blocking: 'The woman from the second reference image holds it.' } }, 'reference_syntax'],
     ];
     for (const [edits, reason] of cases) {
       const err = refusal(() => shotsOf(REACT, ctx, edits));

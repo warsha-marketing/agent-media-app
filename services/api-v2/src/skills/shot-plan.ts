@@ -8,8 +8,8 @@
  *   POST /v1/skills/{slug}/shot-plan  — the plan for a draft + Preset + inputs
  *       (the quote's body; owner-only, and operators may preview an unqualified
  *       Preset–Dialect pair, like drafting): the Short's Set (null until #33),
- *       and every shot with its stable id (`reaction-1`: its kind and ordinal
- *       within the kind, never its position), kind, on-screen length, model and
+ *       and every shot with its stable id (its role in the Preset: `reaction`,
+ *       `product-closer`; never its position), kind, on-screen length, model and
  *       fallback, its structured fields (and the Preset's defaults) and its
  *       locked Guardrail lines per stage (image: the starting frame; video).
  *   `shot_edits` on the quote and the run — { shot_id: { scene?, framing?,
@@ -73,7 +73,7 @@ export const shotEditsField = z
   .refine((edits) => Object.keys(edits).length <= 16, { message: 'at most 16 shot edits' })
   .optional()
   .describe(
-    `Optional, from Shot Plan review: your own fields for some shots, by shot_id from POST /v1/skills/{slug}/shot-plan, e.g. { "reaction-1": { "scene": "The person sniffs the inner wrist and nods.", "energy": "lively" } }. ` +
+    `Optional, from Shot Plan review: your own fields for some shots, by shot_id from POST /v1/skills/{slug}/shot-plan, e.g. { "reaction": { "scene": "The person smells the skin of the inner wrist and nods.", "energy": "lively" } }. ` +
       `Fields: ${SHOT_FIELDS.join(', ')} (energy is ${SHOT_ENERGIES.join(' | ')}; performance and action only on shots that show hands or a person; any field but the scene may be cleared with ""). ` +
       `A shot's length and model never change. The Guardrails (references, nobody speaks, one simple hand action, modest styling, no text, audio off) are always added by the server. ` +
       `Plain words (say "the product", "the person"; no [tags] or @image references), at most ${SHOT_FIELD_MAX_CHARS.scene} characters for the scene. Never changes the price.`,

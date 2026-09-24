@@ -38,20 +38,48 @@ export type PresetClipSeconds = 5 | 10;
 export type PresetInput = 'product_image' | 'character' | 'hand_gender' | 'setting';
 
 /**
+ * One place in a Preset's shot order: the shot's ROLE (what it is for in the
+ * Short: 'hero', 'reaction', 'product-closer', …) and its kind (how it renders).
+ * The role is the shot's stable id on the Shot Plan: an edit keyed by it stays
+ * on that shot when the Preset (or a Playbook) inserts another shot of the same
+ * kind or swaps two of them, which an id derived from the kind and its ordinal
+ * could not survive. A bare kind is shorthand for a slot whose role is the kind.
+ *
+ * A role is lower-case words joined by hyphens, each word starting with a
+ * letter (so a role never ends in a number and never collides with the
+ * occurrence suffix the Shot Plan adds when a role repeats, `reaction-2`), and
+ * names one kind throughout the Preset.
+ */
+export type PresetShotSlot<Kind extends string = string> = Kind | { readonly role: string; readonly kind: Kind };
+
+/** A slot's role (a bare kind is its own role). */
+export function slotRole(slot: PresetShotSlot): string {
+  return typeof slot === 'string' ? slot : slot.role;
+}
+
+/** A slot's kind. */
+export function slotKind<Kind extends string>(slot: PresetShotSlot<Kind>): Kind {
+  return typeof slot === 'string' ? slot : slot.kind;
+}
+
+/** What a role may be spelled as (see PresetShotSlot). */
+export const SHOT_ROLE_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*$/;
+
+/**
  * The shot plan's order rule, as data: shot i takes `order[i]`, cycling when a
  * plan has more clips than `order` names; if `last` is set, the final shot is
- * always that kind (e.g. "end on the product").
+ * always that slot (e.g. "end on the product").
  */
 export interface PresetShotOrder<Kind extends string = string> {
-  order: readonly [Kind, ...Kind[]];
+  order: readonly [PresetShotSlot<Kind>, ...PresetShotSlot<Kind>[]];
   /**
-   * The kind every Short of this Preset ends on. A Preset with `last` never
+   * The slot every Short of this Preset ends on. A Preset with `last` never
    * collapses to a single clip (that one shot would have to be both `order[0]`
    * and `last`): speech one clip would cover (≤10 s) renders as two 5 s clips,
    * `order[0]` then `last`, sharing the speech evenly (closingPair) — the same
    * price as the one 10 s clip it replaces. Longer speech keeps the shared rule.
    */
-  last?: Kind;
+  last?: PresetShotSlot<Kind>;
   /**
    * The longest any one shot stays on screen, in ms (at most 5 000: one 5 s
    * clip). Set, the Preset is cut on the intercut rule (intercutShots) instead
@@ -114,8 +142,10 @@ export interface PresetDefinition<Kind extends string = string> {
   // (shotKinds[kind].frame, #18).
 }
 
-/** One planned clip: what kind of shot it is, and how long it renders. */
+/** One planned clip: its role and kind (its order slot's), and how long it renders. */
 export interface PlannedShot<Kind extends string = string> {
+  /** The slot's role (PresetShotSlot): the shot's stable id on the Shot Plan, before any occurrence suffix. */
+  role: string;
   kind: Kind;
   seconds: PresetClipSeconds;
   /**
@@ -160,26 +190,44 @@ export function planPresetShots<Kind extends string>(
       `${preset.name} speech must be ${preset.minSpeechMs}–${preset.maxSpeechMs} ms; got ${durationMs}`,
     );
   }
+  assertShotRoles(preset.shotPlan);
   const { order, last, maxShotMs } = preset.shotPlan;
   if (maxShotMs !== undefined) return intercutShots(preset.shotPlan, durationMs);
   const lengths = clipLengths(durationMs);
   if (last !== undefined && lengths.length === 1) return closingPair(order[0], last, durationMs);
   return lengths.map((seconds, i) => ({
-    kind: last !== undefined && i === lengths.length - 1 ? last : order[i % order.length],
+    ...slotShot(last !== undefined && i === lengths.length - 1 ? last : order[i % order.length]),
     seconds,
   }));
 }
 
+const slotShot = <Kind extends string>(slot: PresetShotSlot<Kind>) => ({ role: slotRole(slot), kind: slotKind(slot) });
+
+/** Throws when a role is misspelled or names two kinds (see PresetShotSlot). */
+function assertShotRoles(plan: PresetShotOrder): void {
+  const kinds = new Map<string, string>();
+  for (const slot of [...plan.order, ...(plan.last !== undefined ? [plan.last] : [])]) {
+    const role = slotRole(slot);
+    const kind = slotKind(slot);
+    if (!SHOT_ROLE_PATTERN.test(role)) {
+      throw new RangeError(`shot role "${role}" must be lower-case words joined by hyphens, each starting with a letter`);
+    }
+    const seen = kinds.get(role);
+    if (seen !== undefined && seen !== kind) throw new RangeError(`shot role "${role}" names two kinds: ${seen} and ${kind}`);
+    kinds.set(role, kind);
+  }
+}
+
 /**
- * A Preset with a `last` kind whose speech one clip would cover (≤10 s): two
+ * A Preset with a `last` slot whose speech one clip would cover (≤10 s): two
  * 5 s clips, `first` then `last`, each on screen for half the speech (the first
  * takes the odd ms). Each share is at most 5 s, so neither clip is ever held.
  */
-function closingPair<Kind extends string>(first: Kind, last: Kind, durationMs: number): PlannedShot<Kind>[] {
+function closingPair<Kind extends string>(first: PresetShotSlot<Kind>, last: PresetShotSlot<Kind>, durationMs: number): PlannedShot<Kind>[] {
   const half = Math.floor(durationMs / 2);
   return [
-    { kind: first, seconds: 5, onScreenMs: durationMs - half },
-    { kind: last, seconds: 5, onScreenMs: half },
+    { ...slotShot(first), seconds: 5, onScreenMs: durationMs - half },
+    { ...slotShot(last), seconds: 5, onScreenMs: half },
   ];
 }
 
@@ -204,7 +252,7 @@ function intercutShots<Kind extends string>(plan: PresetShotOrder<Kind>, duratio
   const base = Math.floor(durationMs / n);
   const extra = durationMs - base * n;
   return Array.from({ length: n }, (_, i) => ({
-    kind: last !== undefined && i === n - 1 ? last : order[i % order.length],
+    ...slotShot(last !== undefined && i === n - 1 ? last : order[i % order.length]),
     seconds: 5 as const,
     onScreenMs: base + (i < extra ? 1 : 0),
   }));

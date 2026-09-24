@@ -233,9 +233,9 @@ describe('POST /v1/skills/{slug}/shot-plan', () => {
     const shots = shotsOf(r.body);
     const planned = planPresetShots(REACTION, 12_000);
     expect(shots.map((s) => [s.shot_id, s.number, s.kind, s.on_screen_ms])).toEqual(
-      planned.map((p, i) => [shotIds(planned.map((q) => q.kind))[i], i + 1, p.kind, p.onScreenMs]),
+      planned.map((p, i) => [shotIds(planned.map((q) => q.role))[i], i + 1, p.kind, p.onScreenMs]),
     );
-    expect(shots.map((s) => s.shot_id)).toEqual(['reaction-1', 'product-1', 'reaction-2', 'product-2']);
+    expect(shots.map((s) => s.shot_id)).toEqual(['reaction', 'product-cutaway', 'reaction-2', 'product-closer']);
     const [reaction, product] = shots;
     expect(reaction.model).toEqual({ id: 'kling-o3-pro', name: 'Kling O3 Pro' });
     expect(reaction.fallback).toEqual({ id: 'veo-3.1', name: 'Veo 3.1' });
@@ -267,20 +267,20 @@ describe('POST /v1/skills/{slug}/shot-plan', () => {
 
   it('shows the edits it is given, and refuses a bad one as the quote would', async () => {
     const id = seedDraft();
-    const ok = await call(shotPlanRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { scene: EDIT, energy: 'lively' } } }));
+    const ok = await call(shotPlanRoute, OWNER, body(id, { shot_edits: { 'reaction': { scene: EDIT, energy: 'lively' } } }));
     expect(ok.status).toBe(200);
     expect(shotsOf(ok.body)[0]).toMatchObject({ fields: { scene: EDIT, energy: 'lively' }, edited_fields: ['scene', 'energy'], edited: true });
-    const bad = await call(shotPlanRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { performance: 'She talks to the camera.' } } }));
+    const bad = await call(shotPlanRoute, OWNER, body(id, { shot_edits: { 'reaction': { performance: 'She talks to the camera.' } } }));
     expect(bad.status).toBe(422);
-    expect(bad.body).toMatchObject({ error: 'SHOT_EDIT_BREAKS_GUARDRAIL', shot_id: 'reaction-1', field: 'performance', guardrail: 'speech' });
+    expect(bad.body).toMatchObject({ error: 'SHOT_EDIT_BREAKS_GUARDRAIL', shot_id: 'reaction', field: 'performance', guardrail: 'speech' });
   });
 
   it('Product Hero and Hands-on: their own shots and scenes, the Hands-on setting filled', async () => {
     const hero = await call(shotPlanRoute, OWNER, { draft_id: seedDraft({ duration_ms: 12_500 }), product_image_url: PHOTO }, 'make_product_hero');
     expect(hero.status).toBe(200);
     expect(shotsOf(hero.body).map((s) => [s.shot_id, s.on_screen_ms])).toEqual([
-      ['hero-1', 10_000],
-      ['detail-1', 2_500],
+      ['hero', 10_000],
+      ['detail', 2_500],
     ]);
     const hands = await call(
       shotPlanRoute,
@@ -337,12 +337,12 @@ describe('shot_edits on the quote and the run', () => {
     const edited = await call(
       quoteSkillRoute,
       OWNER,
-      body(id, { shot_edits: { 'reaction-1': { scene: EDIT, energy: 'lively' }, 'product-2': { camera_move: 'A quick whip pan that lands on the product.' } } }),
+      body(id, { shot_edits: { 'reaction': { scene: EDIT, energy: 'lively' }, 'product-closer': { camera_move: 'A quick whip pan that lands on the product.' } } }),
     );
     expect(plain.status).toBe(200);
     expect(edited.status).toBe(200);
     expect(edited.body.credits).toBe(plain.body.credits);
-    const r = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { scene: EDIT } } }));
+    const r = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction': { scene: EDIT } } }));
     expect(r.status).toBe(202);
     const run = TABLES.skill_runs.find((s) => s.id === r.body.skill_run_id)!;
     expect(quoteSkillCredits('make_reaction', run.input as Record<string, unknown>)).toBe(plain.body.credits);
@@ -356,9 +356,9 @@ describe('shot_edits on the quote and the run', () => {
   ])('refuses an edit that contradicts a Guardrail (%s): 422 SHOT_EDIT_BREAKS_GUARDRAIL, nothing started', async (_l, text, guardrail) => {
     const id = seedDraft();
     for (const route of [quoteSkillRoute, runSkillRoute]) {
-      const r = await call(route, OWNER, body(id, { shot_edits: { 'reaction-1': { scene: text } } }));
+      const r = await call(route, OWNER, body(id, { shot_edits: { 'reaction': { scene: text } } }));
       expect(r.status).toBe(422);
-      expect(r.body).toMatchObject({ error: 'SHOT_EDIT_BREAKS_GUARDRAIL', skill: 'make_reaction', shot_id: 'reaction-1', field: 'scene', reason: 'guardrail', guardrail });
+      expect(r.body).toMatchObject({ error: 'SHOT_EDIT_BREAKS_GUARDRAIL', skill: 'make_reaction', shot_id: 'reaction', field: 'scene', reason: 'guardrail', guardrail });
       expect(String(r.body.detail)).toMatch(/Guardrail/);
     }
     expect(started).toHaveLength(0);
@@ -370,14 +370,15 @@ describe('shot_edits on the quote and the run', () => {
   it.each([
     ['a shot the plan does not have', { 'reaction-9': { scene: EDIT } }, 'unknown_shot'],
     ['#26’s positional id', { 'shot-1-reaction': { scene: EDIT } }, 'unknown_shot'],
-    ['a field a shot does not have', { 'reaction-1': { mood: 'happy' } }, 'unknown_field'],
-    ['a new model', { 'reaction-1': { model: 'veo-3.1' } }, 'unknown_field'],
-    ['a performance on a product shot', { 'product-1': { performance: 'She waves at the camera.' } }, 'field_not_on_shot'],
-    ['an energy off the list', { 'reaction-1': { energy: 'frantic' } }, 'not_choice'],
-    ['an empty scene', { 'reaction-1': { scene: '   ' } }, 'empty'],
-    ['a scene over the cap', { 'reaction-1': { scene: 'a '.repeat(SHOT_FIELD_MAX_CHARS.scene) + 'b' } }, 'too_long'],
-    ['a bracketed tag', { 'reaction-1': { camera_move: '[fast] whip pan to the product' } }, 'brackets'],
-    ['reference syntax', { 'reaction-1': { blocking: 'The person in @image2 holds @image1.' } }, 'reference_syntax'],
+    ['#28’s kind-ordinal id', { 'reaction-1': { scene: EDIT } }, 'unknown_shot'],
+    ['a field a shot does not have', { 'reaction': { mood: 'happy' } }, 'unknown_field'],
+    ['a new model', { 'reaction': { model: 'veo-3.1' } }, 'unknown_field'],
+    ['a performance on a product shot', { 'product-closer': { performance: 'She waves at the camera.' } }, 'field_not_on_shot'],
+    ['an energy off the list', { 'reaction': { energy: 'frantic' } }, 'not_choice'],
+    ['an empty scene', { 'reaction': { scene: '   ' } }, 'empty'],
+    ['a scene over the cap', { 'reaction': { scene: 'a '.repeat(SHOT_FIELD_MAX_CHARS.scene) + 'b' } }, 'too_long'],
+    ['a bracketed tag', { 'reaction': { camera_move: '[fast] whip pan to the product' } }, 'brackets'],
+    ['reference syntax', { 'reaction': { blocking: 'The person in @image2 holds @image1.' } }, 'reference_syntax'],
   ])('refuses %s: 422 SHOT_EDIT_INVALID', async (_l, shot_edits, reason) => {
     const id = seedDraft();
     for (const route of [quoteSkillRoute, runSkillRoute]) {
@@ -390,7 +391,7 @@ describe('shot_edits on the quote and the run', () => {
 
   it('refuses #26’s { shot_id: text } shape before any check: 400 invalid_input', async () => {
     const id = seedDraft();
-    const r = await call(quoteSkillRoute, OWNER, body(id, { shot_edits: { 'reaction-1': EDIT } }));
+    const r = await call(quoteSkillRoute, OWNER, body(id, { shot_edits: { 'reaction': EDIT } }));
     expect(r.status).toBe(400);
     expect(r.body.error).toBe('invalid_input');
   });
@@ -404,17 +405,17 @@ describe('shot_edits on the quote and the run', () => {
       OWNER,
       body(id, {
         shot_edits: {
-          'reaction-1': { scene: `  ${EDIT}\n `, framing: reaction.default_fields.framing },
+          'reaction': { scene: `  ${EDIT}\n `, framing: reaction.default_fields.framing },
           [product.shot_id]: { scene: product.default_fields.scene },
         },
       }),
     );
     expect(r.status).toBe(202);
     const wf = workflowInput();
-    expect(wf.shot_edits).toEqual({ 'reaction-1': { scene: EDIT } });
+    expect(wf.shot_edits).toEqual({ 'reaction': { scene: EDIT } });
     expect(wf).not.toHaveProperty('guardrails');
     const run = TABLES.skill_runs.find((s) => s.id === r.body.skill_run_id)!;
-    expect((run.input as Record<string, unknown>).shot_edits).toEqual({ 'reaction-1': { scene: EDIT } });
+    expect((run.input as Record<string, unknown>).shot_edits).toEqual({ 'reaction': { scene: EDIT } });
   });
 
   it('without edits the workflow input is exactly as before (no shot_edits at all)', async () => {
@@ -428,13 +429,13 @@ describe('shot_edits on the quote and the run', () => {
   it('is part of the Idempotency-Key fingerprint: the same key with other edits is refused, with the same edits replayed', async () => {
     const id = seedDraft();
     const key = 'confirm-26-a';
-    const first = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { scene: EDIT, energy: 'lively' } } }), 'make_reaction', key);
+    const first = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction': { scene: EDIT, energy: 'lively' } } }), 'make_reaction', key);
     expect(first.status).toBe(202);
     // The same edits, fields in another order: the same body.
-    const again = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { energy: 'lively', scene: EDIT } } }), 'make_reaction', key);
+    const again = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction': { energy: 'lively', scene: EDIT } } }), 'make_reaction', key);
     expect(again.status).toBe(202);
     expect(again.body).toMatchObject({ skill_run_id: first.body.skill_run_id, idempotent_replay: true });
-    const other = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { scene: EDIT, energy: 'calm' } } }), 'make_reaction', key);
+    const other = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction': { scene: EDIT, energy: 'calm' } } }), 'make_reaction', key);
     expect(other.status).toBe(409);
     expect(other.body.error).toBe('idempotency_key_reused');
     const none = await call(runSkillRoute, OWNER, body(id), 'make_reaction', key);

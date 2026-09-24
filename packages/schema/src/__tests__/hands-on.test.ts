@@ -49,27 +49,27 @@ describe('the Hands-on definition', () => {
 describe('the Hands-on shot plan: hands first, always ending on the product', () => {
   it('splits speech one clip would cover (≤10 s) into two 5 s clips, hands then product, each on screen for half', () => {
     expect(planPresetShots(HANDS_ON, 5_000)).toEqual([
-      { kind: 'hands', seconds: 5, onScreenMs: 2_500 },
-      { kind: 'product', seconds: 5, onScreenMs: 2_500 },
+      { role: 'hands-use', kind: 'hands', seconds: 5, onScreenMs: 2_500 },
+      { role: 'product-closer', kind: 'product', seconds: 5, onScreenMs: 2_500 },
     ]);
     expect(planPresetShots(HANDS_ON, 9_001)).toEqual([
-      { kind: 'hands', seconds: 5, onScreenMs: 4_501 },
-      { kind: 'product', seconds: 5, onScreenMs: 4_500 },
+      { role: 'hands-use', kind: 'hands', seconds: 5, onScreenMs: 4_501 },
+      { role: 'product-closer', kind: 'product', seconds: 5, onScreenMs: 4_500 },
     ]);
     expect(planPresetShots(HANDS_ON, 10_000)).toEqual([
-      { kind: 'hands', seconds: 5, onScreenMs: 5_000 },
-      { kind: 'product', seconds: 5, onScreenMs: 5_000 },
+      { role: 'hands-use', kind: 'hands', seconds: 5, onScreenMs: 5_000 },
+      { role: 'product-closer', kind: 'product', seconds: 5, onScreenMs: 5_000 },
     ]);
   });
 
   it('over 10 s keeps a 10 s hands clip and a 5 s product closer, played whole', () => {
     expect(planPresetShots(HANDS_ON, 10_001)).toEqual([
-      { kind: 'hands', seconds: 10 },
-      { kind: 'product', seconds: 5 },
+      { role: 'hands-use', kind: 'hands', seconds: 10 },
+      { role: 'product-closer', kind: 'product', seconds: 5 },
     ]);
     expect(planPresetShots(HANDS_ON, 15_000)).toEqual([
-      { kind: 'hands', seconds: 10 },
-      { kind: 'product', seconds: 5 },
+      { role: 'hands-use', kind: 'hands', seconds: 10 },
+      { role: 'product-closer', kind: 'product', seconds: 5 },
     ]);
   });
 

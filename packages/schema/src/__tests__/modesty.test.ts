@@ -15,7 +15,7 @@ import {
   resolveModesty,
   type ModestyDefault,
 } from '../modesty.js';
-import type { PresetDefinition } from '../preset-definition.js';
+import { slotKind, type PresetDefinition } from '../preset-definition.js';
 import { PRESETS } from '../preset-registry.js';
 import { PRODUCT_HERO } from '../product-hero.js';
 
@@ -142,7 +142,7 @@ describe('every registered Preset', () => {
     '%s declares what every shot kind in its plan shows',
     (_id, preset) => {
       const planned = [...preset.shotPlan.order, ...(preset.shotPlan.last ? [preset.shotPlan.last] : [])];
-      for (const kind of planned) expect(preset.shotKinds).toHaveProperty(kind);
+      for (const slot of planned) expect(preset.shotKinds).toHaveProperty(slotKind(slot));
     },
   );
 

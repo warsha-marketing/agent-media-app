@@ -291,8 +291,9 @@ interaction, performance, action, energy, camera move, lens feel, lighting),
 composed in a fixed order, plus its locked **Guardrails** for that stage —
 image (the starting frame) or video (the clip): references, nobody speaks and
 one simple hand action (video), the Modesty Default, no people on a product
-shot, no text, audio off (video). Shots have stable ids (`reaction-1`: kind and
-ordinal within the kind, never the position). The wording lives
+shot, no text, audio off (video). Shots have stable ids: the shot's role from the
+Preset data (`reaction`, `product-closer`; `reaction-2` only when the order
+cycles), never the position or the kind's ordinal. The wording lives
 in `packages/shot-prompts` (`@agentmedia/shot-prompts`), a *private* workspace
 package — never published, unlike `@agentmedia/schema`, because the prompt
 craft is server-side — shared by api-v2 (which composes the **Shot Plan** for

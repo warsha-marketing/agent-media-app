@@ -103,8 +103,8 @@ describe('a render without scene edits', () => {
     expect(clips[1].prompt).toContain(REACTION_RENDER.shots.product.scene);
     const shots = shotsOf(fakes);
     expect(shots.map((s) => [s.shot_id, s.kind, s.model, s.edited])).toEqual([
-      ['reaction-1', 'reaction', 'kling-o3-pro', false],
-      ['product-1', 'product', 'seedance-2.0', false],
+      ['reaction', 'reaction', 'kling-o3-pro', false],
+      ['product-closer', 'product', 'seedance-2.0', false],
     ]);
     // The prompt as the model got it: fields + Guardrails, in its reference syntax.
     expect(shots.map((s) => s.prompt)).toEqual(clips.map((c) => sent(c.prompt)));
@@ -137,7 +137,7 @@ describe('a render with field edits', () => {
     const fakes = happyFakes();
     await harness.execute(
       'makeReactionWorkflow',
-      [reactionInput({ shot_edits: { 'reaction-1': { scene: `  ${EDIT}  `, energy: 'lively', performance: 'She turns to the camera with a small laugh' } } })],
+      [reactionInput({ shot_edits: { 'reaction': { scene: `  ${EDIT}  `, energy: 'lively', performance: 'She turns to the camera with a small laugh' } } })],
       fakes,
     );
 
@@ -156,7 +156,7 @@ describe('a render with field edits', () => {
     expect(product.prompt).toBe(clipsOf(plain)[1].prompt);
 
     const shots = shotsOf(fakes);
-    expect(shots[0]).toMatchObject({ shot_id: 'reaction-1', edited: true, edited_fields: ['scene', 'performance', 'energy'] });
+    expect(shots[0]).toMatchObject({ shot_id: 'reaction', edited: true, edited_fields: ['scene', 'performance', 'energy'] });
     expect(shots[0].fields).toMatchObject({ scene: EDIT, energy: 'lively' });
     expect(shots[0].prompt).toBe(sent(reaction.prompt));
     expect(shots[1].edited).toBe(false);
@@ -164,7 +164,7 @@ describe('a render with field edits', () => {
 
   it('never takes Guardrails from the input: fields that try to are ignored', async () => {
     const fakes = happyFakes();
-    const smuggled = { ...reactionInput({ shot_edits: { 'reaction-1': { scene: EDIT } } }), guardrails: [], shot_prompts: { 'reaction-1': EDIT } };
+    const smuggled = { ...reactionInput({ shot_edits: { 'reaction': { scene: EDIT } } }), guardrails: [], shot_prompts: { 'reaction': EDIT } };
     await harness.execute('makeReactionWorkflow', [smuggled as never], fakes);
     const [reaction] = clipsOf(fakes);
     expect(reaction.prompt).toContain(NO_SPEAKING_PERSON);
@@ -178,7 +178,7 @@ describe('a render with field edits', () => {
   ])('refuses an edit that contradicts a Guardrail (%s) before anything is requested', async (_label, text) => {
     const fakes = happyFakes();
     await expect(
-      harness.execute('makeReactionWorkflow', [reactionInput({ shot_edits: { 'reaction-1': { scene: text } } })], fakes),
+      harness.execute('makeReactionWorkflow', [reactionInput({ shot_edits: { 'reaction': { scene: text } } })], fakes),
     ).rejects.toBeInstanceOf(WorkflowFailedError);
     expect(fakes.names()).not.toContain('fetchDraftAudio');
     expect(fakes.names()).not.toContain('presetClip');
@@ -189,10 +189,11 @@ describe('a render with field edits', () => {
   it.each([
     ['a shot the plan does not have', { 'reaction-3': { scene: 'The person smiles.' } }],
     ['#26’s positional id', { 'shot-1-reaction': { scene: 'The person smiles.' } }],
-    ['#26’s { shot_id: text } shape', { 'reaction-1': 'The person smiles.' }],
-    ['a new model for the shot', { 'reaction-1': { model: 'veo-3.1' } }],
-    ['reference syntax', { 'reaction-1': { scene: 'The person in @image2 smiles.' } }],
-    ['a bracketed tag', { 'reaction-1': { lighting: '[warm] golden light' } }],
+    ['#26’s { shot_id: text } shape', { 'reaction': 'The person smiles.' }],
+    ['#28’s kind-ordinal id', { 'reaction-1': { scene: 'The person smiles.' } }],
+    ['a new model for the shot', { 'reaction': { model: 'veo-3.1' } }],
+    ['reference syntax', { 'reaction': { scene: 'The person in @image2 smiles.' } }],
+    ['a bracketed tag', { 'reaction': { lighting: '[warm] golden light' } }],
   ])('refuses %s with SHOT_EDIT_INVALID', async (_label, shot_edits) => {
     const fakes = happyFakes();
     await expect(harness.execute('makeReactionWorkflow', [reactionInput({ shot_edits: shot_edits as never })], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
@@ -204,7 +205,7 @@ describe('a render with field edits', () => {
     const fakes = happyFakes();
     const { character_image_url: _c, modesty: _m, product_interaction: _p, ...base } = reactionInput({ duration_ms: 12_500 });
     const scene = 'A slow top-down reveal of the product on dark marble, one soft light sweep.';
-    await harness.execute('makeProductHeroWorkflow', [{ ...base, shot_edits: { 'detail-1': { scene } } }], fakes);
+    await harness.execute('makeProductHeroWorkflow', [{ ...base, shot_edits: { 'detail': { scene } } }], fakes);
     const [hero, detail] = clipsOf(fakes);
     expect(hero.prompt).toContain(PRODUCT_HERO_RENDER.shots.hero.scene);
     expect(detail.prompt).toContain(scene);
@@ -230,7 +231,7 @@ describe('a render with field edits', () => {
     await harness.execute('makeHandsOnWorkflow', [input], plain);
     const fakes = happyFakes();
     const scene = 'First-person hands pour the coffee into a small cup and lift it toward the camera.';
-    await harness.execute('makeHandsOnWorkflow', [{ ...input, shot_edits: { 'hands-1': { scene } } }], fakes);
+    await harness.execute('makeHandsOnWorkflow', [{ ...input, shot_edits: { 'hands-use': { scene } } }], fakes);
     const [hands] = clipsOf(fakes);
     expect(hands.prompt).toContain(scene);
     expect(hands.prompt).not.toContain('lift the product clear of its packaging');
@@ -254,7 +255,7 @@ describe('a render with field edits', () => {
       product_interaction: 'lifts the cup and takes one slow sip',
     };
     const fakes = happyFakes();
-    await harness.execute('makeHandsOnWorkflow', [{ ...input, shot_edits: { 'hands-1': { action: 'She pours the coffee into a small cup' } } }], fakes);
+    await harness.execute('makeHandsOnWorkflow', [{ ...input, shot_edits: { 'hands-use': { action: 'She pours the coffee into a small cup' } } }], fakes);
     const [frame] = fakes.callsTo('presetStartingFrame') as PresetStartingFrameInput[];
     expect(frame.prompt).toContain('She pours the coffee into a small cup.');
     expect(frame.prompt).not.toContain('takes one slow sip');
