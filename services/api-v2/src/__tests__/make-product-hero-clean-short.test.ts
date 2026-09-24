@@ -165,7 +165,8 @@ describe('make_product_hero: no Captions in the render', () => {
     const { zodToJsonSchema } = await import('zod-to-json-schema');
     expect(zodToJsonSchema(MakeProductHeroSkillInputSchema)).toEqual(zodToJsonSchema(presetRenderInputSchema(PRODUCT_HERO, {})));
     const props = (s: Parameters<typeof zodToJsonSchema>[0]) => Object.keys((zodToJsonSchema(s) as { properties: object }).properties);
-    expect(props(MakeProductHeroSkillInputSchema)).toEqual(['draft_id', 'product_image_url', 'product_image_base64', 'aspect_ratio', 'music']);
+    // shot_edits: Shot Plan review (#26), scene text per shot id.
+    expect(props(MakeProductHeroSkillInputSchema)).toEqual(['draft_id', 'product_image_url', 'product_image_base64', 'aspect_ratio', 'music', 'shot_edits']);
     // Presets that show hands or a person take the Modesty choice.
     expect(props(presetRenderInputSchema(HANDS_ON, {}))).toContain('modesty');
     expect(props(presetRenderInputSchema(REACTION, {}))).toContain('modesty');

@@ -12,7 +12,7 @@
  * The inputs beyond the draft are the hand gender and the setting; api-v2 picks
  * both from the draft's Product Details when the user does not. The shot and
  * frame prompts per kind (and the words for each setting and hand gender) stay
- * server-side, in the worker's render definition.
+ * server-side, in @agentmedia/shot-prompts (private).
  */
 
 import type { PresetDefinition } from '../preset-definition.js';

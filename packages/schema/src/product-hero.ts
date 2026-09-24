@@ -6,8 +6,8 @@
  *
  * A Product Hero Short is audio-first: the approved draft's speech is measured
  * (5–15 s), then silent 5/10 s product clips are generated to cover it and cut
- * down to the audio. Its shot prompts live with the worker's render definition
- * (server-side), keyed by the shot kinds declared here.
+ * down to the audio. Its scenes and Guardrails live in @agentmedia/shot-prompts
+ * (private, server-side), keyed by the shot kinds declared here.
  */
 
 import { planPresetShots, presetProviderUsd, quotePresetCredits, type PresetDefinition } from './preset-definition.js';

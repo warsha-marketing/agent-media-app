@@ -9,7 +9,7 @@
  * while the approved draft's voice carries every word. Reaction shots are
  * intercut with product shots so no face stays on screen long, and the last
  * shot is always the product. The prompts (closed mouth, no speaking, a
- * reaction only) are server-side, in the worker's render definition.
+ * reaction only) are server-side, in @agentmedia/shot-prompts (private).
  */
 
 import type { PresetDefinition } from '../preset-definition.js';

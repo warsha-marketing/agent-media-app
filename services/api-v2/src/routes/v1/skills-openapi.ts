@@ -104,6 +104,26 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
       },
     },
   };
+  const shotPlan = {
+    post: {
+      operationId: 'shotPlanVnextSkill',
+      summary:
+        'Shot Plan review (Preset render skills only): the shots the render will make, before confirming. Takes the quote’s body (optionally with shot_edits) and answers the same refusals. Read-only and free. Edit a shot’s scene_text by sending shot_edits { shot_id: text } to the quote and the run; the Guardrails are locked and always added by the server; the price never changes.',
+      tags: ['vnext-skills'],
+      security: [{ bearerAuth: [] }],
+      parameters: [SLUG],
+      responses: {
+        '200': {
+          description:
+            'skill, preset, draft_id, duration_ms, scene_text_max_chars, and shots[]: shot_id (stable, e.g. shot-1-reaction), number, kind, shows (product | hands | person), clip_seconds, on_screen_ms, starting_frame, model { id, name }, fallback { id, name } | null, scene_text (editable), default_scene_text (the Preset’s, for "reset"), edited, guardrails[] { id, label, text, enforced_by prompt | request } (locked), prompt_preview (the final prompt with the images named in plain words)',
+        },
+        '400': skillError(sentences('`invalid_input`: the body fails the skill schema', ...refusalLines(400))),
+        '404': skillError(sentences('`unknown_skill`', '`not_a_preset_skill`: only a Preset render skill has a Shot Plan', ...refusalLines(404))),
+        '409': skillError(sentences(...refusalLines(409))),
+        '422': skillError(sentences(...refusalLines(422), presetNotQualified())),
+      },
+    },
+  };
   const runStatus = {
     get: {
       operationId: 'getSkillRun',
@@ -142,7 +162,12 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
     },
   };
   return {
-    paths: { '/v1/skills/{slug}/run': run, '/v1/skills/{slug}/quote': quote, '/v1/skills/runs/{skill_run_id}': runStatus },
+    paths: {
+      '/v1/skills/{slug}/run': run,
+      '/v1/skills/{slug}/quote': quote,
+      '/v1/skills/{slug}/shot-plan': shotPlan,
+      '/v1/skills/runs/{skill_run_id}': runStatus,
+    },
     schemas: {
       SkillError: {
         type: 'object',

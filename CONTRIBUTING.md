@@ -20,7 +20,7 @@ The monorepo layout:
 
 - `services/` — api-v2 (Express control plane), media/primitive/subtitle workers
 - `apps/` — web (Next.js), cli, docs
-- `packages/` — mcp-server, sdk-ts, sdk-python, schema, types, ui
+- `packages/` — mcp-server, sdk-ts, sdk-python, schema, shot-prompts (private, server-only), types, ui
 - `supabase/` — migrations + edge functions
 - `public-skill/`, `skills/` — the agent-facing skill pack
 

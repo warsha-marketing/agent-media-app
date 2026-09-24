@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { VIDEO_MODEL_IDS } from '@agentmedia/schema';
 import { VIDEO_MODELS, falPrompt, videoModel, type VideoShotRequest } from '../video-models/index.js';
+import { REFERENCE_TOKENS, hasReferenceTokens } from '@agentmedia/shot-prompts';
 
 const SHOT: VideoShotRequest = {
   prompt: 'The person in @image2 holds the exact product in @image1 and smiles.',
@@ -83,5 +84,31 @@ describe('falPrompt', () => {
     expect(falPrompt('exact product in @image1; the person in @image2; @image1 again')).toBe(
       'exact product in the first reference image; the person in the second reference image; the first reference image again',
     );
+  });
+});
+
+describe('each adapter puts in its own reference syntax (#26)', () => {
+  const TOKENS = `The person is exactly the person in ${REFERENCE_TOKENS.person}. The product is exactly the product in ${REFERENCE_TOKENS.start}.`;
+
+  it('EvoLink (Seedance): @image1 is the start image, @image2 the person', () => {
+    expect(VIDEO_MODELS['seedance-2.0'].promptFor(TOKENS)).toBe(
+      'The person is exactly the person in @image2. The product is exactly the product in @image1.',
+    );
+  });
+
+  it('fal: the first / second reference image, in the prompt it sends', () => {
+    for (const id of ['kling-o3-pro', 'veo-3.1'] as const) {
+      const words = 'The person is exactly the person in the second reference image. The product is exactly the product in the first reference image.';
+      expect(VIDEO_MODELS[id].promptFor(TOKENS)).toBe(words);
+      expect(VIDEO_MODELS[id].buildRequest({ ...SHOT, prompt: TOKENS }).input.prompt).toBe(words);
+    }
+  });
+
+  it('is idempotent: a prompt already in a model’s syntax is sent as is', () => {
+    for (const id of VIDEO_MODEL_IDS) {
+      const once = videoModel(id).promptFor(TOKENS);
+      expect(videoModel(id).promptFor(once)).toBe(once);
+      expect(hasReferenceTokens(once)).toBe(false);
+    }
   });
 });

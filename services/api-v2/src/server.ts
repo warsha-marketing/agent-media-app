@@ -74,7 +74,7 @@ import {
   characterSheetGpt2PrimitiveRoute,
   getPrimitiveRunRoute,
 } from './routes/v1/primitives.js';
-import { listSkillsRoute, runSkillRoute, getSkillRunRoute, cancelSkillRunRoute, quoteSkillRoute } from './routes/v1/skills.js';
+import { listSkillsRoute, runSkillRoute, getSkillRunRoute, cancelSkillRunRoute, quoteSkillRoute, shotPlanRoute } from './routes/v1/skills.js';
 import { asyncHandler } from './lib/async-handler.js';
 import { getMyGalleryRoute } from './routes/v1/me-gallery.js';
 import { listApiKeysRoute, createApiKeyRoute, revokeApiKeyRoute } from './routes/v1/me-api-keys.js';
@@ -970,6 +970,8 @@ if (isPrimitivesRouteEnabled()) {
   // unauthenticated marketing /skills landing page.
   app.get('/v1/public/skills', readLimiter, listSkillsRoute);
   app.post('/v1/skills/:slug/quote', readLimiter, authMiddleware, asyncHandler(quoteSkillRoute));
+  // Shot Plan review (#26): the shots a Preset render will make, with each Shot Prompt. Read-only.
+  app.post('/v1/skills/:slug/shot-plan', readLimiter, authMiddleware, asyncHandler(shotPlanRoute));
   app.post('/v1/skills/:slug/run', generateLimiter, authMiddleware, videoConcurrencyGate, asyncHandler(runSkillRoute));
   app.get('/v1/skills/runs/:skill_run_id', readLimiter, authMiddleware, asyncHandler(getSkillRunRoute));
   app.post('/v1/skills/runs/:skill_run_id/cancel', generateLimiter, authMiddleware, asyncHandler(cancelSkillRunRoute));

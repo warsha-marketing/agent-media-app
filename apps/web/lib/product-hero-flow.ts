@@ -125,6 +125,12 @@ export interface RenderChoice {
   skill?: string;
   /** The Preset's own request fields (Reaction #19: character, gender, hijab; lib/reaction-flow.ts). */
   presetInputs?: Readonly<Record<string, unknown>> | null;
+  /**
+   * Shot Plan review (#26): the user's scene text for the shots they changed,
+   * by shot id (lib/shot-plan-flow.ts shotEditsOf). Part of the request: an
+   * edit re-quotes and makes the next Confirm a new confirmation.
+   */
+  shotEdits?: Readonly<Record<string, string>> | null;
 }
 
 /** The skill a choice is quoted and run with. */
@@ -143,7 +149,13 @@ export function renderBody(choice: RenderChoice) {
     product_image_url: choice.photoUrl,
     music: choice.music,
     ...(choice.presetInputs ?? {}),
+    ...(choice.shotEdits && Object.keys(choice.shotEdits).length ? { shot_edits: { ...choice.shotEdits } } : {}),
   };
+}
+
+/** The shot-plan body (#26): the request without any edits, so every scene comes back as the Preset's. */
+export function shotPlanBody(choice: RenderChoice) {
+  return renderBody({ ...choice, shotEdits: null });
 }
 
 /** The make_product_hero quote body: the same request the run would send. */
@@ -262,7 +274,7 @@ export function refundOf(run: SkillRunBody): RefundView {
 
 export type RunView =
   | { kind: 'rendering'; stage: RenderStage; shot: number | null; label: string; frame?: boolean }
-  | { kind: 'succeeded'; videoUrl: string; durationMs: number | null }
+  | { kind: 'succeeded'; videoUrl: string; durationMs: number | null; shots?: unknown[] }
   | { kind: 'failed'; canceled: boolean; moderation: boolean; code: string | null; message: string | null; refund: RefundView };
 
 /** The ordered checklist the progress panel draws. */
@@ -313,7 +325,13 @@ export function viewOfRun(run: SkillRunBody): RunView {
     const out = run.final_output ?? {};
     const url = typeof out.video_url === 'string' ? out.video_url : null;
     if (url) {
-      return { kind: 'succeeded', videoUrl: url, durationMs: typeof out.duration_ms === 'number' ? out.duration_ms : null };
+      return {
+        kind: 'succeeded',
+        videoUrl: url,
+        durationMs: typeof out.duration_ms === 'number' ? out.duration_ms : null,
+        // #26: what ran, each shot's final prompt (absent on a Short from before it).
+        ...(Array.isArray(out.shots) ? { shots: out.shots as unknown[] } : {}),
+      };
     }
     // Succeeded without a Short is not a result the user can use.
     return { kind: 'failed', canceled: false, moderation: false, code: 'NO_OUTPUT', message: 'The render finished without a video.', refund: refundOf(run) };
@@ -352,7 +370,7 @@ export type RenderPhase =
   /** A refusal the user must act on (credits, moderation, re-voice, …). */
   | { phase: 'refused'; outcome: ApiOutcome; quote: Quote | null }
   | { phase: 'rendering'; runId: string; view: Extract<RunView, { kind: 'rendering' }> | null; quote: Quote | null }
-  | { phase: 'succeeded'; runId: string; videoUrl: string; durationMs: number | null; quote: Quote | null }
+  | { phase: 'succeeded'; runId: string; videoUrl: string; durationMs: number | null; quote: Quote | null; shots?: unknown[] }
   | { phase: 'failed'; runId: string; canceled: boolean; moderation: boolean; message: string | null; refund: RefundView; quote: Quote | null };
 
 export interface RenderState {
@@ -386,8 +404,15 @@ export function sameChoice(a: RenderChoice, b: RenderChoice): boolean {
     a.photoUrl === b.photoUrl &&
     a.music === b.music &&
     skillOf(a) === skillOf(b) &&
-    JSON.stringify(a.presetInputs ?? {}) === JSON.stringify(b.presetInputs ?? {})
+    JSON.stringify(a.presetInputs ?? {}) === JSON.stringify(b.presetInputs ?? {}) &&
+    sameEdits(a.shotEdits, b.shotEdits)
   );
+}
+
+/** The same scene edits (#26), whatever order their keys came in. */
+function sameEdits(a: RenderChoice['shotEdits'], b: RenderChoice['shotEdits']): boolean {
+  const flat = (e: RenderChoice['shotEdits']) => JSON.stringify(Object.entries(e ?? {}).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
+  return flat(a) === flat(b);
 }
 
 /** The key for confirming this choice: the pending one only if it is the same request. */
@@ -446,7 +471,17 @@ export function renderReducer(state: RenderState, event: RenderEvent): RenderSta
       const view = viewOfRun(event.run);
       if (view.kind === 'rendering') return { ...state, render: { ...r, view } };
       if (view.kind === 'succeeded') {
-        return { ...state, render: { phase: 'succeeded', runId: r.runId, videoUrl: view.videoUrl, durationMs: view.durationMs, quote: r.quote } };
+        return {
+          ...state,
+          render: {
+            phase: 'succeeded',
+            runId: r.runId,
+            videoUrl: view.videoUrl,
+            durationMs: view.durationMs,
+            quote: r.quote,
+            ...(view.shots ? { shots: view.shots } : {}),
+          },
+        };
       }
       // The run that key started is over and refunded: the next Confirm is a new run.
       return {

@@ -11,10 +11,11 @@
  *
  * Every model is asked for a silent 9:16 clip (`generate_audio: false`: the
  * draft's voice is the only audio, ADR 0001) from the shot's start image, plus
- * the person's reference on a shot that shows one. The prompts are written with
- * EvoLink's `@image1` / `@image2`; fal has no such syntax, so its builders name
- * them "the first / second reference image" (falPrompt), the wording the
- * 2026-09-24 bake-off rendered with.
+ * the person's reference on a shot that shows one. A Shot Prompt names those
+ * images with provider-neutral tokens (#26, @agentmedia/shot-prompts
+ * REFERENCE_TOKENS); each model's adapter puts in its own syntax (promptFor):
+ * EvoLink's `@image1` / `@image2`, and on fal "the first / second reference
+ * image", the wording the 2026-09-24 bake-off rendered with.
  *
  * Content refusals map to the one content-policy refusal
  * (CONTENT_POLICY_REFUSED, ../failure-policy.ts) whichever provider refused.
@@ -25,6 +26,7 @@
 
 import { ApplicationFailure } from '@temporalio/activity';
 import type { VideoModelId } from '@agentmedia/schema';
+import { withReferences, type ReferenceWords } from '@agentmedia/shot-prompts';
 import { generateSimpleSelfieEvolink } from '../client/evolink.js';
 import { runFalQueue } from '../client/fal.js';
 import { providerFailure } from '../client/provider-failure.js';
@@ -69,8 +71,16 @@ export interface VideoModelClient {
    * model is its only retry (#25).
    */
   resubmitOnRetry: boolean;
+  /** A Shot Prompt in this model's reference syntax: exactly what generate() sends (idempotent). */
+  promptFor(prompt: string): string;
   generate(shot: VideoShotRequest): Promise<GeneratedVideo>;
 }
+
+/** EvoLink's reference syntax: the start image is `@image1`, the person `@image2` (the order of image_urls). */
+export const EVOLINK_REFERENCES: ReferenceWords = { start: '@image1', person: '@image2' };
+
+/** fal has no reference syntax: the images are named by their order in image_urls. */
+export const FAL_REFERENCES: ReferenceWords = { start: 'the first reference image', person: 'the second reference image' };
 
 /** A video model on fal's queue: its endpoint, and the request it sends for a shot (pure, tested). */
 export interface FalVideoModel extends VideoModelClient {
@@ -79,9 +89,14 @@ export interface FalVideoModel extends VideoModelClient {
   buildRequest(shot: VideoShotRequest): FalRequest;
 }
 
-/** EvoLink's `@image1` / `@image2` as fal prompts name them. */
+/**
+ * A prompt as fal gets it: the reference tokens in fal's words, and any
+ * EvoLink `@image1` / `@image2` too (a prompt from before #26).
+ */
 export function falPrompt(prompt: string): string {
-  return prompt.replace(/@image1\b/g, 'the first reference image').replace(/@image2\b/g, 'the second reference image');
+  return withReferences(prompt, FAL_REFERENCES)
+    .replace(/@image1\b/g, FAL_REFERENCES.start)
+    .replace(/@image2\b/g, FAL_REFERENCES.person);
 }
 
 function references(shot: VideoShotRequest): string[] {
@@ -103,6 +118,7 @@ function falModel(id: VideoModelId, endpoint: string, buildInput: (shot: VideoSh
     endpoint,
     modelName: () => endpoint,
     resubmitOnRetry: false,
+    promptFor: falPrompt,
     buildRequest,
     async generate(shot) {
       const { input } = buildRequest(shot);
@@ -118,6 +134,7 @@ const seedance: VideoModelClient = {
   modelName: () => process.env.EVOLINK_SEEDANCE_MODEL || 'seedance-2.0-mini-reference-to-video',
   // EvoLink's transient failures (a 5xx, a timeout) have always been retried.
   resubmitOnRetry: true,
+  promptFor: (prompt) => withReferences(prompt, EVOLINK_REFERENCES),
   async generate(shot) {
     const evolinkKey = process.env.EVOLINK_API_KEY?.trim() || process.env.EVOLINK_API_KEYS?.trim();
     if (!evolinkKey) {
@@ -125,7 +142,7 @@ const seedance: VideoModelClient = {
     }
     try {
       const result = await generateSimpleSelfieEvolink({
-        prompt: shot.prompt,
+        prompt: withReferences(shot.prompt, EVOLINK_REFERENCES),
         // @image1 the start image; @image2 the person, on a shot that shows one.
         imageUrls: references(shot),
         duration: shot.seconds,
