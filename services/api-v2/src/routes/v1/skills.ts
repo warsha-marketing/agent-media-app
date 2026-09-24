@@ -29,6 +29,7 @@ import { PresetError, assertPresetAvailable } from '../../presets/qualification.
 import { supabasePresetAccess } from '../../presets/providers.js';
 import type { PresetInputStage, PresetInputs } from '../../skills/preset-inputs.js'; // #19
 import { composeRenderShotPlan, shotPlanView } from '../../skills/shot-plan.js'; // #26
+import { inUseReferenceView, renderMakesInUseReference } from '../../skills/in-use-reference.js'; // #31
 import { effectiveEdits, type ShotPlan } from '@agentmedia/shot-prompts';
 
 /**
@@ -213,9 +214,11 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     if (!presetInputs) return;
     // Shot Plan review (#26): field edits are refused here as on the run; they never change the price.
     if (!shotPlanOrRespond(render, presetInputs)) return;
-    input = { ...input, duration_ms: draft.duration_ms };
+    // #31: the In-use Reference step is priced when the render makes one (quote == charge).
+    input = { ...input, duration_ms: draft.duration_ms, in_use_reference: renderMakesInUseReference(skill.preset, draft, input) };
     quoteExtras = {
       music_bed: musicBedView(presetMusicBed(skill.preset, input.music, draft.id)),
+      in_use_reference: inUseReferenceView(skill.preset, draft, input),
       ...presetInputs.quote,
     };
   }
@@ -818,7 +821,13 @@ interface PresetRenderContext extends PresetCall {
 function shotPlanOrRespond(call: PresetRenderContext, presetInputs: PresetInputs): ShotPlan | null {
   const { res, slug } = call;
   try {
-    return composeRenderShotPlan(call.preset, call.draft, presetInputs, call.body.shot_edits);
+    return composeRenderShotPlan(
+      call.preset,
+      call.draft,
+      presetInputs,
+      call.body.shot_edits,
+      renderMakesInUseReference(call.preset, call.draft, call.body),
+    );
   } catch (err) {
     if (err instanceof RenderRefusal) sendRenderRefusal(res, slug, err);
     else res.status(500).json({ error: 'shot_plan_failed', skill: slug, detail: errorMessage(err) });
@@ -967,6 +976,9 @@ async function dispatchPresetRender(
     duration_ms: draft.duration_ms,
     music: body.music !== false,
     music_bed: musicBed.on ? musicBed.track.id : null,
+    // #31: whether the render makes (and charges) an In-use Reference — the in-flight reservation prices it.
+    in_use_reference: renderMakesInUseReference(preset, draft, body),
+    ...(body.use_original_product_photo === true ? { use_original_product_photo: true } : {}),
     ...presetInputs.run,
     // #26: the fields the user edited, by shot id (the Short's final_output.shots has each final prompt).
     ...(edited ? { shot_edits: shotEdits } : {}),
@@ -1052,6 +1064,9 @@ async function dispatchPresetRender(
     music_bed: musicBedWorkflowInput(musicBed), // #9
     // #25: the draft's Product Interaction, for every hands and person prompt.
     product_interaction: draft.product_interaction ?? null,
+    // #30/#31: the Product Profile (the Scale Anchor; the In-use Reference when it differs) and the override.
+    product_profile: draft.product_profile ?? null,
+    use_original_product_photo: body.use_original_product_photo === true,
     ...presetInputs.workflow,
     // #26: only validated field edits; the worker re-checks them and adds its own Guardrails.
     ...(edited ? { shot_edits: shotEdits } : {}),
@@ -1087,6 +1102,7 @@ async function dispatchPresetRender(
     draft_id: draft.id,
     status: 'submitted',
     music_bed: musicBedView(musicBed), // #9
+    in_use_reference: inUseReferenceView(preset, draft, body), // #31
     ...presetInputs.quote, // preset_inputs: what renders (#18, #19)
   });
 }

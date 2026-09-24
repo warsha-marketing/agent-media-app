@@ -151,7 +151,9 @@ export function quoteSkillCredits(
     // rather than quoting 0. The routes resolve the draft first, so only a
     // bug reaches this; the quote route answers it with 422 unpriceable_input.
     const raw = (i as { duration_ms?: unknown }).duration_ms;
-    return quotePresetCredits(preset, typeof raw === 'number' ? raw : Number.NaN);
+    // #31: the In-use Reference step, as the route decided it (renderMakesInUseReference) and the run stored it.
+    const inUseReference = (i as { in_use_reference?: unknown }).in_use_reference === true;
+    return quotePresetCredits(preset, typeof raw === 'number' ? raw : Number.NaN, { inUseReference });
   }
   switch (slug) {
     case 'make_portrait':
