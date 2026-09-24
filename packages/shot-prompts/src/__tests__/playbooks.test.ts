@@ -199,12 +199,13 @@ describe('choosing a Playbook by the Product Profile category', () => {
     const v = FRAGRANCE_OUD.version;
     expect(playbookChoice(choosePlaybook(PERFUME_PROFILE))).toEqual({ id: 'fragrance_oud', version: v, pattern: 'spray-then-smell' });
     expect(playbookChoice(choosePlaybook(OUD_OIL_PROFILE))).toEqual({ id: 'fragrance_oud', version: v, pattern: 'dab-then-smell' });
-    expect(playbookChoice(choosePlaybook(BAKHOOR_PROFILE))).toEqual({ id: 'fragrance_oud', version: v, pattern: 'spray-then-smell' });
+    // Bakhoor is burned in a mabkhara, never sprayed (owner review 2026-09-24).
+    expect(playbookChoice(choosePlaybook(BAKHOOR_PROFILE))).toEqual({ id: 'fragrance_oud', version: v, pattern: 'waft-then-smell' });
     expect(playbookChoice(choosePlaybook(PHONE_PROFILE))).toEqual({ id: 'electronics', version: 1, pattern: 'one-tap' });
     expect(playbookChoice(choosePlaybook(COFFEE_PROFILE))).toEqual({ id: 'food_cafe', version: 1, pattern: null });
   });
 
-  it('fragrance ALWAYS applies a pattern: dab-then-smell when the Profile says oil, attar or dab (verbs), else spray-then-smell', () => {
+  it('fragrance ALWAYS applies a pattern: dab-then-smell for oil/attar/dab, waft-then-smell for bakhoor, else spray-then-smell', () => {
     const pattern = (p: Partial<ProductProfile>) => choosePlaybook(profile({ category: 'fragrance_oud', ...p }))?.pattern?.id;
     // Oil, attar, a dab: by the verbs.
     for (const verbs of [['dab'], ['apply', 'smell'], ['anoint'], ['rub'], ['apply oil'], ['dab attar'], ['roll on']]) {
@@ -213,15 +214,20 @@ describe('choosing a Playbook by the Product Profile category', () => {
     // A spray wins over an "apply" (verbs or the liquid_spray risk).
     expect(pattern({ interaction_verbs: ['spray', 'apply'] })).toBe('spray-then-smell');
     expect(pattern({ interaction_verbs: ['apply'], physics_risks: ['liquid_spray'] })).toBe('spray-then-smell');
+    // Bakhoor is burned in a mabkhara and wafted, never sprayed.
+    for (const verbs of [['burn', 'waft'], ['incense'], ['bakhoor']]) {
+      expect(pattern({ interaction_verbs: verbs }), verbs.join()).toBe('waft-then-smell');
+    }
     // Anything else: spray-then-smell by default — never the single shot.
-    for (const verbs of [['hold'], ['smell'], ['wear'], ['burn', 'waft']]) {
+    for (const verbs of [['hold'], ['smell'], ['wear']]) {
       expect(pattern({ interaction_verbs: verbs }), verbs.join()).toBe('spray-then-smell');
     }
-    // And it splits the spray (or dab) and the smell into two person shots wherever the Preset can host it.
+    // And it splits the spray (or dab, or waft) and the smell into two person shots wherever the Preset can host it.
     for (const p of [PERFUME_PROFILE, OUD_OIL_PROFILE, BAKHOOR_PROFILE]) {
       const plan = composeShotPlan(REACT, { durationMs: 8_000, modesty: GULF, playbook: choosePlaybook(p) });
       const people = plan.shots.filter((s) => s.shows === 'person').map((s) => s.shot_id);
-      expect(people).toEqual([plan.playbook?.pattern === 'dab-then-smell' ? 'reaction-apply' : 'reaction-spray', 'reaction-smell']);
+      const first = { 'dab-then-smell': 'reaction-apply', 'waft-then-smell': 'reaction-waft' }[plan.playbook?.pattern ?? ''] ?? 'reaction-spray';
+      expect(people).toEqual([first, 'reaction-smell']);
     }
   });
 
@@ -435,7 +441,7 @@ describe('the Shot Plan under a Playbook', () => {
 
   it('fragrance on a Preset that cannot host the split (Product Hero: no person): its own shots', () => {
     const plan = composeShotPlan(HERO, { durationMs: 8_000, modesty: GULF, playbook: choosePlaybook(BAKHOOR_PROFILE) });
-    expect(plan.playbook?.pattern).toBe('spray-then-smell');
+    expect(plan.playbook?.pattern).toBe('waft-then-smell');
     expect(plan.shots.every((s) => s.shows === 'product')).toBe(true);
   });
 

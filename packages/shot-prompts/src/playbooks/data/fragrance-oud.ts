@@ -28,7 +28,7 @@ const AR_FACE = String.raw`(?:ال)?(?:انف|وجه|فم|شفا|خد)\S*`;
 
 export const FRAGRANCE_OUD: Playbook = {
   id: 'fragrance_oud',
-  version: 2,
+  version: 3,
   name: 'Fragrance & oud',
   allowed_interactions: [
     'Perfume: the bottle is already uncapped; hold it at chest height, spray once onto the inner wrist and set the bottle down. Smelling is a separate shot: with empty hands, the wrist rises to the nose.',
@@ -131,8 +131,53 @@ export const FRAGRANCE_OUD: Playbook = {
       },
     },
     {
+      id: 'waft-then-smell',
+      // Bakhoor / incense: burned in a mabkhara, never sprayed. The burner is
+      // already smoking on a surface (nothing is lit on camera), a hand wafts
+      // the smoke toward the sleeve, and smelling the scented sleeve is its
+      // own shot. Checked before the spray default.
+      when: {
+        verbs_any: ['burn', 'burns', 'light', 'waft', 'wafts', 'fumigate', 'smoke', 'incense', 'bakhoor', 'bukhoor', 'mabkhara'],
+        unless: { verbs_any: ['spray', 'spritz', 'mist'], risks_any: ['liquid_spray'] },
+      },
+      presets: {
+        reaction: {
+          order: [
+            { role: 'reaction-waft', kind: 'reaction' },
+            { role: 'reaction-smell', kind: 'reaction' },
+            { role: 'product-cutaway', kind: 'product' },
+          ],
+          last: { role: 'product-closer', kind: 'product' },
+          roles: {
+            'reaction-waft': {
+              framing: 'UGC-style medium shot, filmed on a phone.',
+              scene: 'Bakhoor is already smoking in a mabkhara resting on a surface; the person gently wafts the smoke toward the sleeve of their abaya with one hand.',
+              blocking:
+                'The mabkhara stays on the surface the whole time and is never lifted toward the face; nothing is lit on camera. The face stays well above the smoke.',
+              action: 'With one open hand, the person wafts the thin bakhoor smoke toward their sleeve two or three times.',
+            },
+            'reaction-smell': {
+              framing: 'UGC-style close-up on the sleeve and the face, filmed on a phone.',
+              scene: 'The person smells the bakhoor scent on their sleeve.',
+              blocking:
+                'The mabkhara is out of the hands, still on the surface or out of frame. The shot starts with the sleeve already rising toward the nose, cut on the action.',
+              action: 'With empty hands, the person raises the scented sleeve near the nose, breathes in and smiles.',
+            },
+          },
+        },
+        hands_on: {
+          roles: {
+            'hands-use': {
+              scene: '{hands} gently waft the thin smoke rising from the already lit mabkhara toward a sleeve; the burner stays on the surface.',
+              action: 'One hand wafts the bakhoor smoke toward the sleeve; the mabkhara is never lifted.',
+            },
+          },
+        },
+      },
+    },
+    {
       id: 'spray-then-smell',
-      // Always, when the Profile says no oil, attar or dab: the default split.
+      // Always, when no other pattern applies (not oil/attar/dab, not bakhoor): the default split.
       presets: {
         reaction: {
           order: [
