@@ -10,7 +10,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ApplicationFailure } from '@temporalio/activity';
-import { STARTING_FRAME_CREDITS, VIDEO_CLIP_CREDITS, type StartingFrame } from '@agentmedia/schema';
+import { STARTING_FRAME_CREDITS, VIDEO_CLIP_CREDITS, shotClipCredits, type ShotVideo, type StartingFrame } from '@agentmedia/schema';
 
 /**
  * Is billing explicitly disabled for this deployment?
@@ -54,19 +54,27 @@ const SELFIE_CREDITS_BY_DURATION = VIDEO_CLIP_CREDITS;
  * Credits for one run of `primitive`. `duration` prices a clip; `frame` prices a
  * Preset's starting frame (`preset_frame`) by its kind, from the same table
  * api-v2 quotes from — so a second frame kind is charged its own price.
+ * `video` (#25) is a Preset clip's model chain: the clip is charged
+ * shotClipCredits for it — the price the quote summed, whichever model of the
+ * chain ran. Absent = Seedance, the shared clip table.
  */
 export function quotePrimitiveCredits(
   primitive: PrimitiveCreditableId,
   duration?: 5 | 10 | 15,
   frame?: StartingFrame,
+  video?: ShotVideo,
 ): number {
   if (primitive === 'product_hero_clip') {
-    // A silent clip costs what any clip of its length costs; api-v2 quotes the
-    // planned clips from the same table, so the quote is exactly these charges.
+    // A silent clip costs what the quote priced its shot at (the same table and
+    // function api-v2 quotes from), so the quote is exactly these charges.
     if (duration !== 5 && duration !== 10) {
       throw ApplicationFailure.nonRetryable(`product_hero_clip has no ${duration}s price`, 'INVALID_INPUT');
     }
-    return VIDEO_CLIP_CREDITS[duration];
+    try {
+      return shotClipCredits(video, duration);
+    } catch (err) {
+      throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
+    }
   }
   switch (primitive) {
     case 'portrait_gpt2':
@@ -108,6 +116,8 @@ export async function deductPrimitiveCredits(args: {
   duration?: 5 | 10 | 15;
   /** The starting frame's kind: prices a `preset_frame`. */
   frame?: StartingFrame;
+  /** A Preset clip's model chain (#25): prices a `product_hero_clip`. */
+  video?: ShotVideo;
   description: string;
   /** Charge this exact amount instead of the list price — pass 0 to make the
    *  primitive free (e.g. a character sheet generated inside a video). */
@@ -125,7 +135,7 @@ export async function deductPrimitiveCredits(args: {
   // and every worker.
   if (isBillingDisabled()) return 0;
 
-  const credits = args.creditsOverride ?? quotePrimitiveCredits(args.primitive, args.duration, args.frame);
+  const credits = args.creditsOverride ?? quotePrimitiveCredits(args.primitive, args.duration, args.frame, args.video);
   // Free primitive (portrait, or a sheet inside a video): stamp 0 and skip the
   // ledger RPC entirely — there is nothing to charge.
   if (credits <= 0) {

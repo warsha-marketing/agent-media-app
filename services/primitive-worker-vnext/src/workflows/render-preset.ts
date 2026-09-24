@@ -29,7 +29,14 @@
  *                        come from the SAME plan the quote priced (planPresetShots
  *                        over the draft's duration), so the charge is the quote.
  *                        A shot showing a person also gets the person's reference
- *                        (character_image_url, Reaction #19).
+ *                        (character_image_url, Reaction #19). Each shot renders
+ *                        on its kind's video model (#25, data on the Preset);
+ *                        if that model refuses or fails and the kind names a
+ *                        fallback, the failed attempt is refunded and the
+ *                        fallback renders the shot. Both refusing is the
+ *                        non-retryable content-policy failure. Every hands and
+ *                        person prompt also carries the draft's Product
+ *                        Interaction, after the Modesty Default (#25).
  *   3. presetMux  — hard-cuts the clips on the 9:16 canvas (shots with a
  *                        planned on-screen share each cut to it), trims (or, if a
  *                        clip ran a few ms short, holds) the visuals to the audio's
@@ -58,8 +65,11 @@
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
 import {
   armsAtLeast,
+  modelRenderSeconds,
   planPresetShots,
   presetShows,
+  shotModelChain,
+  shotVideo,
   type Modesty,
   type PlannedShot,
   type PresetInput,
@@ -115,6 +125,14 @@ export interface PresetRenderInput {
   hand_gender?: HandGender;
   /** Hands-on (#18): where the hands use the product; api-v2 defaults it from the Product Details. */
   setting?: HandsOnSetting;
+  /**
+   * Product Interaction (#25): how a real person uses the product (e.g. perfume:
+   * "removes the cap, sprays once on the inner wrist, …"), from the draft. Added
+   * to every hands and person prompt (clip and starting frame), after — and
+   * never overriding — the Modesty Default and the no-speaking wording; never
+   * to a product shot. Absent/null on drafts from before it: prompts unchanged.
+   */
+  product_interaction?: string | null;
 }
 
 export interface PresetRenderResult {
@@ -137,7 +155,8 @@ const PRESET_INPUT_FIELDS: Record<PresetInput, keyof PresetRenderInput> = {
 /** A finished cut may differ from the audio by at most about one frame. */
 const MAX_CUT_DRIFT_MS = 50;
 
-const NON_RETRYABLE = [
+/** Failure types the render never retries (exported for tests). */
+export const NON_RETRYABLE_TYPES: readonly string[] = [
   'INVALID_INPUT', 'BUDGET_CAP_DAY',
   'REFERENCE_URL_NOT_ALLOWED', 'PROVIDER_UNCONFIGURED', 'INSUFFICIENT_CREDITS',
   'DRAFT_AUDIO_MISSING', 'DRAFT_STORAGE_UNCONFIGURED', 'MUSIC_BED_TRACK_MISSING', 'MUSIC_BED_STORAGE_UNCONFIGURED',
@@ -145,17 +164,27 @@ const NON_RETRYABLE = [
   // photo that will be refused again.
   'EVOLINK_CONTENT_POLICY_VIOLATION',
   'EVOLINK_400', 'EVOLINK_401', 'EVOLINK_403', 'EVOLINK_404', 'EVOLINK_413', 'EVOLINK_415', 'EVOLINK_422', 'EVOLINK_451',
+  // fal (#25): a bad request is final; a job that timed out is not resubmitted
+  // (that pays again) — the shot's fallback model is its retry.
+  'FAL_400', 'FAL_401', 'FAL_403', 'FAL_404', 'FAL_413', 'FAL_415', 'FAL_422', 'FAL_TIMEOUT',
 ];
+
+/**
+ * Failures a shot's fallback model cannot fix: the account, the day cap, the
+ * input. Anything else (a refusal, a provider failure, a timeout) on a model
+ * with a fallback tries the fallback (#25).
+ */
+const NO_FALLBACK = new Set(['INSUFFICIENT_CREDITS', 'BUDGET_CAP_DAY', 'REFERENCE_URL_NOT_ALLOWED', 'INVALID_INPUT']);
 
 const { presetClip, presetStartingFrame } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '20 minutes',
   heartbeatTimeout: '5 minutes',
-  retry: { initialInterval: '10s', maximumInterval: '2m', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: NON_RETRYABLE },
+  retry: { initialInterval: '10s', maximumInterval: '2m', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: [...NON_RETRYABLE_TYPES] },
 });
 const { fetchDraftAudio, presetMux, mixMusicBed } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '10 minutes',
   heartbeatTimeout: '2 minutes',
-  retry: { initialInterval: '5s', maximumInterval: '60s', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: NON_RETRYABLE },
+  retry: { initialInterval: '5s', maximumInterval: '60s', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: [...NON_RETRYABLE_TYPES] },
 });
 const { composedSkillState } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '30 seconds',
@@ -200,6 +229,7 @@ export async function renderPreset(
 
     const modesty = modestyFor(preset, input.modesty ?? null);
     const vars = promptVarsFor(preset, input);
+    const interaction = input.product_interaction ?? null;
 
     // ── 1. The draft's audio, first ─────────────────────────────────────────
     const audio = await fetchDraftAudio({
@@ -222,12 +252,15 @@ export async function renderPreset(
     let framePrompts: Array<string | null>;
     let clipPrompts: string[];
     try {
-      framePrompts = shots.map((s) => (preset.shotKinds[s.kind].frame ? presetFramePrompt(preset, s.kind, modesty, vars) : null));
-      clipPrompts = shots.map((s) => presetShotPrompt(preset, s.kind, modesty, vars));
+      framePrompts = shots.map((s) =>
+        preset.shotKinds[s.kind].frame ? presetFramePrompt(preset, s.kind, modesty, vars, interaction) : null,
+      );
+      clipPrompts = shots.map((s) => presetShotPrompt(preset, s.kind, modesty, vars, interaction));
     } catch (err) {
       throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
     }
     let totalUsd = 0;
+    const overruns = overrunsFor(preset);
     // ── 1b. Starting frames (#18), every one before any clip ────────────────
     const frameUrls: Array<string | null> = shots.map(() => null);
     for (let i = 0; i < shots.length; i += 1) {
@@ -252,24 +285,42 @@ export async function renderPreset(
     const clipUrls: string[] = [];
     for (let i = 0; i < shots.length; i += 1) {
       await composedSkillState({ skill_run_id: skillRunId, current_step: `clip_${i + 1}` });
-      const clip = await presetClip({
-        primitive_run_id: mint(`clip_${i}`),
-        user_id: input.user_id,
-        skill_run_id: skillRunId,
-        // The shot's start image: its starting frame if it has one, else the photo.
-        start_image_url: frameUrls[i] ?? input.product_image_url,
-        duration: shots[i].seconds,
-        shot_index: i,
-        shot_count: shots.length,
-        preset: preset.id,
-        shot_kind: shots[i].kind,
-        prompt: clipPrompts[i],
-        generate_audio: false,
-        // The person's reference only where the shot shows that person (#19).
-        ...(preset.shotKinds[shots[i].kind].shows === 'person' && input.character_image_url
-          ? { character_image_url: input.character_image_url }
-          : {}),
-      });
+      // The models this shot may render on (#25): its kind's model, then its
+      // fallback — as the Preset declares them, never chosen by vendor here.
+      const chain = shotModelChain(shotVideo(preset, shots[i].kind));
+      let clip: Awaited<ReturnType<typeof presetClip>> | undefined;
+      for (let a = 0; a < chain.length && !clip; a += 1) {
+        const childId = mint(a === 0 ? `clip_${i}` : `clip_${i}_${chain[a]}`);
+        try {
+          clip = await presetClip({
+            primitive_run_id: childId,
+            user_id: input.user_id,
+            skill_run_id: skillRunId,
+            // The shot's start image: its starting frame if it has one, else the photo.
+            start_image_url: frameUrls[i] ?? input.product_image_url,
+            duration: shots[i].seconds,
+            shot_index: i,
+            shot_count: shots.length,
+            preset: preset.id,
+            shot_kind: shots[i].kind,
+            model: chain[a],
+            prompt: clipPrompts[i],
+            generate_audio: false,
+            // The person's reference only where the shot shows that person (#19).
+            ...(preset.shotKinds[shots[i].kind].shows === 'person' && input.character_image_url
+              ? { character_image_url: input.character_image_url }
+              : {}),
+          });
+        } catch (err) {
+          const f = failureInfo(err);
+          if (a === chain.length - 1 || NO_FALLBACK.has(f.code)) throw err;
+          // This model refused or failed: give its charge back, record it, and
+          // try the fallback. The shot is charged the same whichever model runs.
+          await refundCredits({ primitive_run_id: childId });
+          await markPrimitiveRunFailed({ primitive_run_id: childId, error_code: f.code, error_message: f.message });
+        }
+      }
+      if (!clip) throw ApplicationFailure.nonRetryable(`no model rendered shot ${i + 1}`, 'CLIP_FAILED');
       clipUrls.push(clip.video_url);
       totalUsd += clip.credits_actual_usd;
     }
@@ -286,8 +337,12 @@ export async function renderPreset(
       aspect_ratio: preset.aspectRatio,
       preset: preset.id,
       // A plan that shares the speech between its shots (Reaction's intercut, a
-      // closing pair like Hands-on ≤10 s) cuts each shot to its planned share.
-      ...(shots.every((s) => s.onScreenMs !== undefined) ? { shot_ms: shots.map((s) => s.onScreenMs!) } : {}),
+      // closing pair like Hands-on ≤10 s) cuts each shot to its planned share;
+      // so does one with a shot whose model may render longer than planned
+      // (#25: Veo 3.1 renders 8 s for a 5 s shot).
+      ...(shots.every((s) => s.onScreenMs !== undefined) || shots.some(overruns)
+        ? { shot_ms: shots.map((s) => s.onScreenMs ?? s.seconds * 1000) }
+        : {}),
     });
     // ── 3b. Music Bed (#9): ducked under the voice; never lengthens the Short ─
     const musicBed = input.music_bed ?? null;
@@ -365,6 +420,12 @@ export async function renderPreset(
     }
     throw err;
   }
+}
+
+/** Whether a model of this shot's chain may render longer than the planned clip (#25). */
+function overrunsFor(preset: PresetRenderDefinition) {
+  return (s: PlannedShot): boolean =>
+    shotModelChain(shotVideo(preset, s.kind)).some((m) => modelRenderSeconds(m, s.seconds) > s.seconds);
 }
 
 /**

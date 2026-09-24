@@ -353,6 +353,9 @@ services:
       context: .
       dockerfile: services/primitive-worker-vnext/Dockerfile
     depends_on: [api-v2, temporal]
+    # Provider keys (EVOLINK_API_KEYS, FAL_KEY, OPENAI_API_KEY, …) come from .env
+    # through env_file; they are deliberately not repeated under environment,
+    # which would override them.
     env_file: [.env]
     environment:
       <<: [*supabase-keys, *internal-secrets]

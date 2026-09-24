@@ -13,7 +13,7 @@
  * Pure data: the workflow sandbox imports this.
  */
 
-import { PRODUCT_HERO, type Modesty, type PresetDefinition, type ProductHeroShotKind } from '@agentmedia/schema';
+import { PRODUCT_HERO, type Modesty, type PresetDefinition, type ProductHeroShotKind, type ShotSubject } from '@agentmedia/schema';
 import { modestyPrompt } from './modesty.js';
 import { REACTION_RENDER } from './reaction.js';
 import type { PresetRenderInput } from '../workflows/render-preset.js';
@@ -60,38 +60,67 @@ export const PRODUCT_HERO_RENDER: PresetRenderDefinition<ProductHeroShotKind> = 
   },
 };
 
+/** The longest Product Interaction a prompt carries (api-v2 bounds it the same). */
+export const PRODUCT_INTERACTION_PROMPT_MAX = 300;
+
+/**
+ * The Product Interaction's words for one shot showing `subject` (#25): how a
+ * real person uses the product, for hands and person shots only (empty for a
+ * product shot, or when the draft has none). It comes after the shot prompt's
+ * no-speaking wording and the Modesty Default, and says it keeps both: it adds
+ * the action, never a less modest look or speech.
+ */
+export function productInteractionPrompt(subject: ShotSubject, interaction: string | null | undefined): string {
+  if (subject !== 'hands' && subject !== 'person') return '';
+  const text = (interaction ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, PRODUCT_INTERACTION_PROMPT_MAX)
+    .replace(/[.\s]+$/, '');
+  if (!text) return '';
+  return (
+    `How the product is used, as a real person uses it: ${text}. ` +
+    'This only adds the action: every instruction above still holds — nobody speaks or mouths words, and the clothing stays exactly as modest as described.'
+  );
+}
+
+/** `base` + the Modesty Default + the Product Interaction, for a shot showing `subject`. */
+function withPersonWords(base: string, subject: ShotSubject, modesty: Modesty, interaction: string | null | undefined): string {
+  return [base, modestyPrompt(subject, modesty), productInteractionPrompt(subject, interaction)].filter(Boolean).join(' ');
+}
+
 /**
  * The full prompt for one shot of `kind`: the Preset's shot prompt, plus the
- * Modesty Default (#17) when that kind shows a person or hands. Product shots
- * get the shot prompt unchanged. The pipeline builds every clip prompt here.
+ * Modesty Default (#17) and then the draft's Product Interaction (#25) when
+ * that kind shows a person or hands. Product shots get the shot prompt
+ * unchanged. The pipeline builds every clip prompt here.
  */
 export function presetShotPrompt<Kind extends string>(
   preset: PresetRenderDefinition<Kind>,
   kind: Kind,
   modesty: Modesty,
   vars: Readonly<Record<string, string>> = {},
+  interaction: string | null = null,
 ): string {
-  const base = fillPrompt(preset.shotPrompts[kind], vars);
-  const extra = modestyPrompt(preset.shotKinds[kind].shows, modesty);
-  return extra ? `${base} ${extra}` : base;
+  return withPersonWords(fillPrompt(preset.shotPrompts[kind], vars), preset.shotKinds[kind].shows, modesty, interaction);
 }
 
 /**
  * The full image prompt for the starting frame of a shot of `kind` (#18): the
- * Preset's frame prompt, plus the Modesty Default when that kind shows a person
- * or hands — the frame is what the clip animates, so it must be modest too.
+ * Preset's frame prompt, plus the Modesty Default and then the Product
+ * Interaction (#25) when that kind shows a person or hands — the frame is what
+ * the clip animates, so it must be modest too, and already mid-use.
  */
 export function presetFramePrompt<Kind extends string>(
   preset: PresetRenderDefinition<Kind>,
   kind: Kind,
   modesty: Modesty,
   vars: Readonly<Record<string, string>> = {},
+  interaction: string | null = null,
 ): string {
   const template = preset.framePrompts?.[kind];
   if (!template) throw new Error(`${preset.name} has no frame prompt for ${kind} shots`);
-  const base = fillPrompt(template, vars);
-  const extra = modestyPrompt(preset.shotKinds[kind].shows, modesty);
-  return extra ? `${base} ${extra}` : base;
+  return withPersonWords(fillPrompt(template, vars), preset.shotKinds[kind].shows, modesty, interaction);
 }
 
 /** Every Preset the worker can render, by id. Server-side only. */

@@ -38,7 +38,15 @@ export const REACTION = {
   /** Same speech band as Product Hero: a draft of either renders as either. */
   minSpeechMs: 5_000,
   maxSpeechMs: 15_000,
-  shotKinds: { reaction: { shows: 'person' }, product: { shows: 'product' } },
+  /**
+   * Person shots render on Kling O3 Pro, falling back to Veo 3.1 when Kling
+   * refuses or fails (#25: Seedance on EvoLink blocks hijab-wearing women);
+   * product shots stay on Seedance. Priced per ../video-models.ts.
+   */
+  shotKinds: {
+    reaction: { shows: 'person', video: { model: 'kling-o3-pro', fallback: 'veo-3.1' } },
+    product: { shows: 'product' },
+  },
   /** Reaction, product, … always ending on the product; no shot over 5 s. */
   shotPlan: { order: ['reaction', 'product'], last: 'product', maxShotMs: REACTION_MAX_SHOT_MS },
   /** The product photo, and the saved character who reacts to it. */
@@ -50,7 +58,11 @@ export const REACTION = {
   budget: {
     /** The most one render may charge: four 5 s clips (two pairs) for 10–15 s of speech. */
     maxCredits: 560,
-    /** The most one render may cost us at the provider (the same four clips). */
-    maxProviderUsd: 2.4,
+    /**
+     * The most one render may cost us at the provider (the same four clips):
+     * two person shots at the costliest model of their chain (a Veo 3.1
+     * fallback, $1.60) and two product clips ($0.60).
+     */
+    maxProviderUsd: 4.4,
   },
 } as const satisfies PresetDefinition<ReactionShotKind>;
