@@ -29,6 +29,8 @@ import { makeMixMusicBedActivity } from './music-bed.js';
 import { makeBurnCaptionsActivity } from './captions.js';
 // Starting frames (#18) — e.g. Hands-on's product-in-hands image, made before its clip.
 import { makePresetStartingFrameActivity } from './preset-frame.js';
+// The Preset render's plan (#32): composed in an activity so a replay never depends on deployed Playbook data.
+import { makePresetPlanActivity } from './preset-plan.js';
 
 export function createActivities(cfg: WorkerConfig) {
   return {
@@ -55,6 +57,7 @@ export function createActivities(cfg: WorkerConfig) {
     mixMusicBed: makeMixMusicBedActivity(cfg),
     burnCaptions: makeBurnCaptionsActivity(cfg),
     presetStartingFrame: makePresetStartingFrameActivity(cfg),
+    presetPlan: makePresetPlanActivity(),
   };
 }
 

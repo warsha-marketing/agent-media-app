@@ -25,6 +25,9 @@ import { Context, ApplicationFailure } from '@temporalio/activity';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { bundleWorkflowCode, DefaultLogger, Runtime, Worker, type WorkflowBundle } from '@temporalio/worker';
 import type { PrimitiveActivities } from '../../activities/index.js';
+import { makePresetPlanActivity, type PresetPlanInput } from '../../activities/preset-plan.js';
+import { presetRender, type PresetRenderDefinition } from '../../presets/index.js';
+import { PLAYBOOK_REGISTRY } from '@agentmedia/shot-prompts';
 import type * as workflows from './test-workflows.js';
 
 type Workflows = typeof workflows;
@@ -54,7 +57,12 @@ export interface FakeActivities {
   names(): string[];
   /** Inputs of every call to one activity, in order. */
   callsTo(name: keyof PrimitiveActivities): unknown[];
+  /** Every Preset render plan the real presetPlan activity composed (when not canned). */
+  plans: PresetPlanInput[];
 }
+
+/** Test-driver Preset definitions by id, as seen in workflow inputs (renderTestPresetWorkflow). */
+const TEST_PRESETS = new Map<string, PresetRenderDefinition>();
 
 /**
  * Fake activities keyed by the real activity names. Any activity the workflow
@@ -67,6 +75,19 @@ export function fakeActivities(canned: CannedActivities): FakeActivities {
   const record = (name: string, input: unknown) => calls.push({ name, order: calls.length, input });
 
   const activities: FakeActivities['activities'] = {};
+  // The Preset render's plan (#32) is pure, free and no pipeline step: unless a
+  // test cans it, the REAL activity runs (so every Preset workflow test plans as
+  // production does) and its calls go to `plans`, not `calls`. A test-driver
+  // Preset (./test-preset-workflow.ts) is resolved from the definitions the
+  // harness saw in its workflow inputs.
+  const plans: PresetPlanInput[] = [];
+  if (!('presetPlan' in canned)) {
+    const plan = makePresetPlanActivity(PLAYBOOK_REGISTRY, (id) => TEST_PRESETS.get(id) ?? presetRender(id));
+    activities.presetPlan = async (input: unknown) => {
+      plans.push(input as PresetPlanInput);
+      return plan(input as PresetPlanInput);
+    };
+  }
   for (const [name, result] of Object.entries(canned)) {
     activities[name] = async (input: unknown) => {
       record(name, input);
@@ -83,6 +104,7 @@ export function fakeActivities(canned: CannedActivities): FakeActivities {
   return {
     activities,
     calls,
+    plans,
     names: () => calls.map((c) => c.name),
     callsTo: (name) => calls.filter((c) => c.name === name).map((c) => c.input),
   };
@@ -90,6 +112,8 @@ export function fakeActivities(canned: CannedActivities): FakeActivities {
 
 export interface WorkflowHarness {
   env: TestWorkflowEnvironment;
+  /** The bundled workflows (for a test that runs its own Worker, e.g. to fetch and replay a history). */
+  bundle: WorkflowBundle;
   /** Run one workflow to completion on a fresh task queue with the given fakes. */
   execute<K extends WorkflowName>(
     workflowType: K,
@@ -122,6 +146,12 @@ export async function startWorkflowHarness(): Promise<WorkflowHarness> {
 
   // Untyped inside; the WorkflowHarness signature types calls per workflow.
   const execute = async (workflowType: WorkflowName, args: unknown[], fakes: FakeActivities) => {
+    // A test-driver Preset travels in its (test-only) input: let the plan activity resolve it by id.
+    // Only the test driver's: a production workflow never reads a definition from its input.
+    const preset = workflowType === 'renderTestPresetWorkflow' ? (args[0] as { preset?: unknown } | undefined)?.preset : undefined;
+    if (preset && typeof preset === 'object' && typeof (preset as PresetRenderDefinition).id === 'string') {
+      TEST_PRESETS.set((preset as PresetRenderDefinition).id, preset as PresetRenderDefinition);
+    }
     const taskQueue = `test-${workflowType}-${randomUUID()}`;
     const worker = await Worker.create({
       connection: env.nativeConnection,
@@ -134,6 +164,7 @@ export async function startWorkflowHarness(): Promise<WorkflowHarness> {
 
   return {
     env,
+    bundle: workflowBundle,
     execute: execute as WorkflowHarness['execute'],
     teardown: () => env.teardown(),
   };

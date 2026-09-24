@@ -82,7 +82,7 @@
  * requires, or with a Modesty less modest than the Preset allows.
  */
 
-import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
+import { proxyActivities, ApplicationFailure, patched } from '@temporalio/workflow';
 import {
   armsAtLeast,
   modelClipUsd,
@@ -102,15 +102,10 @@ import { makeChildRunId } from './child-run-id.js';
 import { failureInfo } from './failure-info.js';
 import { CONTENT_POLICY_REFUSED, NON_RETRYABLE_TYPES, failurePolicy } from '../failure-policy.js';
 import type { PresetRenderDefinition } from '../presets/index.js';
+import { PRESET_PLAN_IN_ACTIVITY, PresetPlanRefusal, planPresetRender, type PresetPlan, type PresetPlanInput } from './preset-plan.js';
 import {
-  IMAGE_REFERENCES,
-  REFERENCE_TOKENS,
-  ShotEditError,
   VIDEO_MODEL_LABELS,
-  composeShotPlan,
-  resolvePlaybookChoice,
   shotHasPersonReference,
-  shotPrompt,
   type ShotEdit,
   type ShotField,
   type ShotFields,
@@ -274,6 +269,10 @@ const { composedSkillState } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '30 seconds',
   retry: { maximumAttempts: 3 },
 });
+const { presetPlan } = proxyActivities<PrimitiveActivities>({
+  startToCloseTimeout: '1 minute',
+  retry: { maximumAttempts: 3, nonRetryableErrorTypes: [...NON_RETRYABLE_TYPES] },
+});
 const { refundCredits, markPrimitiveRunFailed, releaseDraftRender } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '30 seconds',
   retry: { initialInterval: '2s', maximumInterval: '20s', backoffCoefficient: 2, maximumAttempts: 5 },
@@ -322,35 +321,34 @@ export async function renderPreset(
     // so a refused edit costs nothing. The plan is planPresetShots' (the one the
     // quote priced), planned once, inside composeShotPlan; each shot's fields
     // are the user's edits (checked again) over the Preset's, and every prompt
-    // gets this worker's own Guardrails for its stage (#26, #28).
-    let shots: ShotPlanShot[];
-    let framePrompts: Array<string | null>;
-    let clipPrompts: Array<Partial<Record<VideoModelId, string>>>;
-    let playbook: PlaybookChoice | null = null;
-    try {
-      const person = { gender: input.character_gender ?? null, description: input.character_description ?? null };
-      const product = { profile, inUseReference: inUseUrl !== null, handGender: input.hand_gender ?? null };
-      // #32: the Playbook the quote priced, resolved from this worker's own copy of the data.
-      const chosen = resolvePlaybookChoice(input.playbook ?? null);
-      const plan = composeShotPlan(
-        preset,
-        { durationMs: input.duration_ms, modesty, vars, interaction, person, product, playbook: chosen },
-        input.shot_edits ?? null,
-      );
-      shots = plan.shots;
-      playbook = plan.playbook;
-      // A starting frame is an image edit of the product photo: its one reference image.
-      framePrompts = shots.map((s) => (s.starting_frame ? shotPrompt(s, 'image', IMAGE_REFERENCES) : null));
-      // Each model of the shot's chain gets its own prompt (the face, or the
-      // person in words); the provider adapter (presetClip) swaps the
-      // reference tokens for its own syntax.
-      clipPrompts = shots.map((s) =>
-        Object.fromEntries(shotModelChain(s.video).map((m) => [m, shotPrompt(s, 'video', REFERENCE_TOKENS, m)])),
-      );
-    } catch (err) {
-      if (err instanceof ShotEditError) throw ApplicationFailure.nonRetryable(err.message.slice(0, 500), err.code);
-      throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
+    // gets this worker's own Guardrails for its stage (#26, #28), under the
+    // Playbook the quote priced (#32). Composed in the presetPlan ACTIVITY, so a
+    // replay after a deploy reads the recorded plan instead of re-resolving
+    // Playbook data that may have changed (workflows/preset-plan.ts).
+    const planInput: PresetPlanInput = {
+      preset: preset.id,
+      duration_ms: input.duration_ms,
+      modesty,
+      vars,
+      interaction,
+      person: { gender: input.character_gender ?? null, description: input.character_description ?? null },
+      product: { profile, inUseReference: inUseUrl !== null, handGender: input.hand_gender ?? null },
+      playbook: input.playbook ?? null,
+      shot_edits: input.shot_edits ?? null,
+    };
+    let plan: PresetPlan;
+    if (patched(PRESET_PLAN_IN_ACTIVITY)) {
+      plan = await presetPlan(planInput);
+    } else {
+      // A history from before the patch composed the plan here (no Playbook choice ever reached it).
+      try {
+        plan = planPresetRender(planInput, preset);
+      } catch (err) {
+        if (err instanceof PresetPlanRefusal) throw ApplicationFailure.nonRetryable(err.message, err.code);
+        throw err;
+      }
     }
+    const { shots, playbook, frame_prompts: framePrompts, clip_prompts: clipPrompts } = plan;
     const rendered: RenderedShot[] = [];
 
     // ── 1. The draft's audio, first ─────────────────────────────────────────

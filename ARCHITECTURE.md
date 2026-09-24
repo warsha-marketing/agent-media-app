@@ -312,7 +312,13 @@ package — never published, unlike `@agentmedia/schema`, because the prompt
 craft is server-side — shared by api-v2 (which composes the **Shot Plan** for
 `POST /v1/skills/{slug}/shot-plan` and checks a quote's or run's
 `shot_edits`) and the worker (which re-checks the edits and always adds its
-own Guardrails). Every hands and person stage also carries the realism
+own Guardrails). The worker composes that plan in the `presetPlan` activity,
+not in workflow code: Playbook and Preset data change with a deploy (a
+Playbook's version is bumped on every change, and a stale choice is refused),
+so a render started before a deploy must replay the plan its history
+recorded rather than compose it again (`patched('preset-plan-in-activity')`;
+a history from before the patch composes inline, and a test replays a render
+on bumped Playbooks). Every hands and person stage also carries the realism
 Guardrail (a raw phone look, flat everyday light, a sharp background, matte
 skin with pores, no beauty filter; ADR 0003), never a product shot. Fields and
 Guardrails name images with provider-neutral tokens; each video model adapter
