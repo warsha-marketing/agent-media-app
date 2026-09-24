@@ -131,7 +131,7 @@ export interface ShotGuardrailContext {
   modesty: Modesty;
   /**
    * #31 (./product-reference.ts): the In-use Reference line, when the render
-   * made one (inUseReferenceLine), and the Scale Anchor line (scaleAnchorLine).
+   * uses the draft's (inUseReferenceLine), and the Scale Anchor line (scaleAnchorLine).
    * Both go on hands and person shots only, both stages; ignored elsewhere.
    */
   inUseReference?: string | null;

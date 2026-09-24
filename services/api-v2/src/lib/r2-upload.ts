@@ -142,6 +142,17 @@ export async function putPrivateObject(key: string, body: Buffer, contentType: s
 }
 
 /**
+ * Store server-produced bytes (an image api-v2 made itself, e.g. a draft's
+ * In-use Reference, #31: never a user upload, so no sniffing or moderation
+ * applies) under `key` in the PUBLIC bucket; returns its public URL.
+ */
+export async function putPublicObject(key: string, body: Buffer, contentType: string): Promise<string> {
+  const env = readEnv();
+  await getClient().send(new PutObjectCommand({ Bucket: env.bucket, Key: key, Body: body, ContentType: contentType }));
+  return `${env.publicUrl}/${key}`;
+}
+
+/**
  * Read one object of the PUBLIC bucket by key (e.g. a user's uploaded product
  * photo, for the Product Profile's vision call, #30), refusing one over
  * `maxBytes`. Straight from the bucket: no outbound web fetch.

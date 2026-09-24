@@ -55,6 +55,15 @@
  * edit it, which re-voices into a new draft and, unless they also edit the
  * Product Interaction, re-writes the Product Interaction from the edited
  * Profile.
+ * The In-use Reference (#31, owner decision) — the product photo edited into
+ * the state it is used in (a perfume uncapped), product only — is made right
+ * after the Product Profile when the Profile says the used state differs from
+ * the photo, while the Script is written and voiced, and stored on the draft
+ * (in_use_reference). Drafting stays free: a render reuses it and never makes
+ * or charges it. An edit that fails never fails the draft: it is stored as
+ * `failed` (the render then uses the original photo). A re-voice inherits the
+ * parent's; an edited Profile whose used state differs, a changed product
+ * photo, or a parent whose edit failed makes a new one.
  * Delivery Tags are voiced only by a TTS model that honours them (eleven_v3);
  * with any other model they are stripped before voicing, and the draft stores
  * the Script exactly as it was spoken.
@@ -70,10 +79,15 @@ import {
   SCRIPT_DIALECTS,
   ProductProfileSchema,
   formatDeliveryTags,
+  IN_USE_REFERENCE_FAILED_MESSAGE,
+  inUseReferenceNeeded,
+  parseDraftInUseReference,
   productProfileIssues,
+  removableParts,
   modelHonoursDeliveryTags,
   stripDeliveryTags,
   tidyProductInteraction,
+  type DraftInUseReference,
   type ProductProfile,
   type ScriptDialect,
 } from '@agentmedia/schema';
@@ -83,6 +97,7 @@ import {
   bannedMotionMessage,
   choosePlaybook,
   guardrailIssue,
+  inUseReferencePrompt,
   productInteractionGuardrailIssue,
   type InteractionGuardrailIssue,
 } from '@agentmedia/shot-prompts';
@@ -159,8 +174,11 @@ export const RevoiceDraftInputSchema = z
      */
     product_profile: ProductProfileSchema.optional(),
     /**
-     * Only used when there is no parent and no product_profile: the product
-     * photo to read the Product Profile from (a first draft that was refused).
+     * The product photo (this user's own upload). Without a parent and a
+     * product_profile, the Product Profile is read from it (a first draft that
+     * was refused). With a parent, it is the draft's product photo: when it is
+     * another photo than the parent's In-use Reference was edited from, a new
+     * In-use Reference is made from it (#31); the Profile carries over.
      */
     product_image_url: productImageUrlField,
     /** An Approved Voice of `dialect`. Optional with a parent: the parent's Voice is reused. */
@@ -203,6 +221,12 @@ export interface DraftRow {
    * user's edit; null otherwise (and on every draft before #30).
    */
   product_profile: ProductProfile | null;
+  /**
+   * In-use Reference (#31): the product photo edited into its used state, made
+   * at drafting when the Profile says it differs from the photo (`made`), or
+   * the flag that the edit failed (`failed`); null when none was needed.
+   */
+  in_use_reference: DraftInUseReference | null;
   script: string;
   script_source: 'generated' | 'edited';
   parent_draft_id: string | null;
@@ -300,6 +324,17 @@ export interface WriteInteractionInput {
   rejected?: { product_interaction: string; reasons: string[] };
 }
 
+/** What the In-use Reference is made from (#31): the user's own photo, by key, and the edit prompt. */
+export interface MakeInUseReferenceInput {
+  userId: string;
+  /** The draft it is made for (its storage key is per draft). */
+  draftId: string;
+  /** The storage key of the user's own product photo (product-photo.ts). */
+  photoKey: string;
+  /** inUseReferencePrompt (@agentmedia/shot-prompts): product only, the used state, everything else identical. */
+  prompt: string;
+}
+
 export interface VoicedScript {
   audio: Buffer;
   mime: string;
@@ -327,6 +362,8 @@ export interface DraftDeps {
    * storage; null for any other URL (product-photo.ts).
    */
   productPhotoKey(url: string, userId: string): string | null;
+  /** gpt-image: the In-use Reference (#31), stored in the public bucket; its key, URL and the model that made it. */
+  makeInUseReference(input: MakeInUseReferenceInput): Promise<{ key: string; url: string; model: string }>;
   voiceScript(input: SpokenScript): Promise<VoicedScript>;
   /** The TTS model voiceScript speaks with: decides whether Delivery Tags are voiced or stripped. */
   ttsModel: string;
@@ -505,13 +542,20 @@ function assertInBand(take: VoiceTake): void {
 async function persist(
   deps: DraftDeps,
   userId: string,
+  id: string,
   fields: Pick<
     NewDraftRow,
-    'brief' | 'product_details' | 'product_interaction' | 'product_profile' | 'script_source' | 'parent_draft_id' | 'script_model'
+    | 'brief'
+    | 'product_details'
+    | 'product_interaction'
+    | 'product_profile'
+    | 'in_use_reference'
+    | 'script_source'
+    | 'parent_draft_id'
+    | 'script_model'
   >,
   take: VoiceTake,
 ): Promise<DraftRow> {
-  const id = deps.newId();
   const { voiced } = take;
   const stored = await deps.storeAudio({ userId, draftId: id, audio: voiced.audio, mime: voiced.mime });
   return deps.repo.insert({
@@ -750,6 +794,64 @@ async function interactionFromProfile(deps: DraftDeps, request: WriteInteraction
   return text;
 }
 
+// ── The In-use Reference (#31) ───────────────────────────────────────────────
+
+/**
+ * The In-use Reference of a new draft with `profile`: none unless the Profile
+ * says the used state differs from the photo; else the product photo
+ * (`photoKey`) edited into that state. NEVER rejects: a missing photo or a
+ * failed edit is stored as `failed` (the render then uses the original photo),
+ * so a draft never fails for it.
+ */
+async function makeInUseReference(
+  deps: DraftDeps,
+  userId: string,
+  draftId: string,
+  photoKey: string | null,
+  profile: ProductProfile | null,
+): Promise<DraftInUseReference | null> {
+  if (!profile || !inUseReferenceNeeded(profile)) return null;
+  const failed = (reason: string): DraftInUseReference => ({
+    status: 'failed',
+    source_photo_key: photoKey,
+    reason: reason.slice(0, 300),
+    failed_at: new Date().toISOString(),
+  });
+  if (!photoKey) return failed('no product photo to edit');
+  try {
+    const made = await deps.makeInUseReference({ userId, draftId, photoKey, prompt: inUseReferencePrompt(profile) });
+    return {
+      status: 'made',
+      key: made.key,
+      url: made.url,
+      source_photo_key: photoKey,
+      used_state: profile.used_state,
+      removed_parts: removableParts(profile),
+      model: made.model,
+      made_at: new Date().toISOString(),
+    };
+  } catch (err) {
+    return failed(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * A re-voice's In-use Reference: the parent's when nothing it was made from
+ * changed; a new one when the Profile was edited (and still differs from the
+ * photo), the product photo changed, or the parent's edit failed; none when
+ * the (edited) Profile's used state is the photo's.
+ */
+function inheritedInUseReference(
+  parent: DraftInUseReference | null,
+  profile: ProductProfile | null,
+  opts: { profileEdited: boolean; photoKey: string | null },
+): DraftInUseReference | null | 'make' {
+  if (!profile || !inUseReferenceNeeded(profile)) return null;
+  const photoChanged = opts.photoKey !== null && opts.photoKey !== (parent?.source_photo_key ?? null);
+  if (opts.profileEdited || photoChanged || parent?.status !== 'made') return 'make';
+  return parent;
+}
+
 /** Write a checked Script, then voice and measure it. */
 async function writeAndVoice(
   deps: DraftDeps,
@@ -775,6 +877,10 @@ export async function createDraftFromBrief(deps: DraftDeps, userId: string, inpu
   const profile = photoKey
     ? (await profileChecked(deps, { photo_key: photoKey, brief: input.brief, product_details: productDetails })).profile
     : null;
+  // #31: the In-use Reference right after the Profile, made while the Script
+  // is written and voiced (it never rejects: a failed edit is a flag).
+  const id = deps.newId();
+  const inUse = makeInUseReference(deps, userId, id, photoKey, profile);
   const request: WriteScriptInput = {
     brief: input.brief,
     product_details: productDetails,
@@ -794,11 +900,12 @@ export async function createDraftFromBrief(deps: DraftDeps, userId: string, inpu
     }, voice);
   }
   assertInBand(take);
-  return persist(deps, userId, {
+  return persist(deps, userId, id, {
     brief: input.brief,
     product_details: productDetails,
     product_interaction: take.productInteraction,
     product_profile: profile,
+    in_use_reference: await inUse,
     script_source: 'generated',
     parent_draft_id: null,
     script_model: take.model,
@@ -824,6 +931,7 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
   let productInteraction = tidyProductInteraction(input.product_interaction);
   let profile: ProductProfile | null = input.product_profile ?? null;
   let parentProfile: ProductProfile | null = null;
+  let parentInUse: DraftInUseReference | null = null;
   let voiceId = input.voice_id ?? null;
   if (input.parent_draft_id) {
     const parent = await deps.repo.getOwned(input.parent_draft_id, userId);
@@ -844,13 +952,13 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
     // The user's edit of the Product Profile (#30), else the parent's.
     parentProfile = parent.product_profile ?? null;
     profile ??= parentProfile;
+    parentInUse = parseDraftInUseReference(parent.in_use_reference);
     voiceId ??= parent.voice_catalog_id;
   }
+  // The product photo, when given: this user's own upload (checked before anything is paid).
+  const givenPhotoKey = input.product_image_url ? photoKeyOrRefuse(deps, input.product_image_url, userId) : null;
   // A first draft that was refused: its photo is read again unless the Profile is given.
-  const photoKey =
-    !input.parent_draft_id && !input.product_profile && input.product_image_url
-      ? photoKeyOrRefuse(deps, input.product_image_url, userId)
-      : null;
+  const photoKey = !input.parent_draft_id && !input.product_profile ? givenPhotoKey : null;
   await assertQualified(deps, userId, input.dialect);
   const issues = scriptTextIssues(input.script);
   if (issues.length) throw refuseEditedScript(issues);
@@ -884,17 +992,35 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
   if (profile && profileEdited && input.product_interaction === undefined) {
     productInteraction = await interactionFromProfile(deps, { brief, product_details: productDetails, product_profile: profile });
   }
+  // #31: the parent's In-use Reference, or a new one (made while the Script is voiced).
+  const id = deps.newId();
+  const kept = inheritedInUseReference(parentInUse, profile, { profileEdited, photoKey: givenPhotoKey });
+  const inUse =
+    kept === 'make'
+      ? makeInUseReference(deps, userId, id, givenPhotoKey ?? parentInUse?.source_photo_key ?? null, profile)
+      : Promise.resolve(kept);
   const take = await voiceAndMeasure(deps, { script: forVoice(deps, input.script), dialect: input.dialect, voice: voiceRef(voice) }, voice.id);
   assertInBand(take);
-  return persist(deps, userId, {
+  return persist(deps, userId, id, {
     brief,
     product_details: productDetails,
     product_interaction: productInteraction,
     product_profile: profile,
+    in_use_reference: await inUse,
     script_source: 'edited',
     parent_draft_id: input.parent_draft_id ?? null,
     script_model: null,
   }, take);
+}
+
+/**
+ * A draft's In-use Reference as the API shows it: the image and what it shows,
+ * the failed-edit flag, or null when none was needed.
+ */
+export function inUseReferenceView(ref: DraftInUseReference | null) {
+  if (!ref) return null;
+  if (ref.status === 'failed') return { status: 'failed' as const, message: IN_USE_REFERENCE_FAILED_MESSAGE };
+  return { status: 'made' as const, image_url: ref.url, used_state: ref.used_state, removed_parts: ref.removed_parts };
 }
 
 /**
@@ -910,6 +1036,7 @@ export function toDraftView(row: DraftRow, audio: SignedAudioUrl) {
     product_details: row.product_details ?? null,
     product_interaction: row.product_interaction ?? null,
     product_profile: row.product_profile ?? null,
+    in_use_reference: inUseReferenceView(parseDraftInUseReference(row.in_use_reference)),
     script: row.script,
     script_source: row.script_source,
     parent_draft_id: row.parent_draft_id,

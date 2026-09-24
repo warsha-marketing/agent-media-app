@@ -207,7 +207,7 @@ export interface ShotPlanContext {
   /** Where the person's reference image came from; absent = 'rehosted' (every saved character today). */
   personImage?: PersonImageSource;
   /**
-   * #31: the Product Profile and whether the render made an In-use Reference —
+   * #31: the Product Profile and whether the render uses the draft's In-use Reference —
    * the Scale Anchor and In-use Reference lines of every hands and person shot.
    * Absent: neither line (drafts from before the Product Profile).
    */
@@ -240,6 +240,13 @@ export interface ShotPlanShot {
   frame_scene: string | null;
   /** The model it renders on, and the one it falls back to (#25) — the model field: priced, never edited. */
   video: ShotVideo;
+  /**
+   * #31: the product image the shot is made from — the draft's In-use Reference
+   * on a hands or person shot of a render that uses one, else (and always on a
+   * product shot) the product photo. The worker picks the image by it and the
+   * Shot Plan names it by it.
+   */
+  product_reference: ShotProductReference;
   /** The Short's Set, by id (#33); null until Shorts have one. */
   set_id: string | null;
   /** The Preset's fields for this shot. */
@@ -259,6 +266,9 @@ export interface ShotPlanShot {
    */
   video_guardrails_by_model: Partial<Record<VideoModelId, Guardrail[]>>;
 }
+
+/** Which product image a shot is made from (#31). */
+export type ShotProductReference = 'in_use_reference' | 'product_photo';
 
 export interface ShotPlan {
   /** The Short's Set (#33), or null. */
@@ -349,6 +359,8 @@ export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, ed
       starting_frame: frame,
       frame_scene: frameScene ? fillPrompt(frameScene, ctx.vars ?? {}) : null,
       video,
+      // The In-use Reference goes exactly where its Guardrail line does: hands and person shots.
+      product_reference: inUseLine !== null && shows !== 'product' ? 'in_use_reference' : 'product_photo',
       set_id: set?.set_id ?? null,
       default_fields: defaults,
       fields,

@@ -533,7 +533,7 @@ describe('the draft’s Playbook (#32)', () => {
     const { playbookPreset, resolvePlaybookChoice } = await import('@agentmedia/shot-prompts');
     const { quotePresetCredits } = await import('@agentmedia/schema');
     const priced = quoteSkillCredits('make_reaction', input);
-    expect(priced).toBe(quotePresetCredits(playbookPreset(REACTION, resolvePlaybookChoice(FRAGRANCE)), 9_000, { inUseReference: input.in_use_reference === true }));
+    expect(priced).toBe(quotePresetCredits(playbookPreset(REACTION, resolvePlaybookChoice(FRAGRANCE)), 9_000));
     expect(priced).toBeGreaterThan(quoteSkillCredits('make_reaction', { ...input, playbook: undefined }));
     expect(priced).toBeLessThanOrEqual(REACTION.budget.maxCredits);
     // A stale or unknown choice is never priced (fails closed).

@@ -29,8 +29,6 @@ import { makeMixMusicBedActivity } from './music-bed.js';
 import { makeBurnCaptionsActivity } from './captions.js';
 // Starting frames (#18) — e.g. Hands-on's product-in-hands image, made before its clip.
 import { makePresetStartingFrameActivity } from './preset-frame.js';
-// In-use Reference (#31) — the product photo edited into its used state, before any frame or clip.
-import { makePresetInUseReferenceActivity } from './in-use-reference.js';
 
 export function createActivities(cfg: WorkerConfig) {
   return {
@@ -57,7 +55,6 @@ export function createActivities(cfg: WorkerConfig) {
     mixMusicBed: makeMixMusicBedActivity(cfg),
     burnCaptions: makeBurnCaptionsActivity(cfg),
     presetStartingFrame: makePresetStartingFrameActivity(cfg),
-    presetInUseReference: makePresetInUseReferenceActivity(cfg),
   };
 }
 

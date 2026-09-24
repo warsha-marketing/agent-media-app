@@ -10,7 +10,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ApplicationFailure } from '@temporalio/activity';
-import { IN_USE_REFERENCE_CREDITS, STARTING_FRAME_CREDITS, VIDEO_CLIP_CREDITS, shotClipCredits, type ShotVideo, type StartingFrame } from '@agentmedia/schema';
+import { STARTING_FRAME_CREDITS, VIDEO_CLIP_CREDITS, shotClipCredits, type ShotVideo, type StartingFrame } from '@agentmedia/schema';
 
 /**
  * Is billing explicitly disabled for this deployment?
@@ -38,8 +38,7 @@ export type PrimitiveCreditableId =
   | 'wireframe_gpt2'
   | 'lip_sync'
   | 'product_hero_clip'
-  | 'preset_frame'
-  | 'in_use_reference';
+  | 'preset_frame';
 
 // Portraits are not charged (free identity prep). Character sheets are charged
 // ONLY when generated standalone (make_character_sheet); inside a video flow the
@@ -98,9 +97,6 @@ export function quotePrimitiveCredits(
         throw ApplicationFailure.nonRetryable(`preset_frame has no price for frame ${String(frame)}`, 'INVALID_INPUT');
       }
       return STARTING_FRAME_CREDITS[frame];
-    case 'in_use_reference':
-      // #31: the product photo edited into its used state — the price api-v2 quotes (quotePresetCredits).
-      return IN_USE_REFERENCE_CREDITS;
   }
 }
 

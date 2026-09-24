@@ -165,6 +165,8 @@ async function start(opts: { seed?: Record<string, Seed>; candidates?: VoiceCand
     profileProduct: async () => { throw new Error('no product photo in this test'); },
     writeProductInteraction: async () => ({ product_interaction: null, model: 'claude-test' }),
     productPhotoKey: () => null,
+    // No photo, so no In-use Reference (#31, product-profile-draft.test.ts).
+    makeInUseReference: async () => { throw new Error('no product photo in this test'); },
     ttsModel: 'eleven_v3',
     storeAudio: async ({ userId, draftId }) => ({ key: `vnext/drafts/${userId}/${draftId}.mp3` }),
     signAudioUrl: async (key) => ({ url: `https://signed.r2.test/${key}`, expires_at: new Date(Date.now() + 900_000).toISOString() }),

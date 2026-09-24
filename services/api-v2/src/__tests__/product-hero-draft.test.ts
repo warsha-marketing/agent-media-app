@@ -119,6 +119,8 @@ async function start(opts: { durations: number[]; scripts?: Written[]; ttsModel?
     profileProduct: async () => { throw new Error('no product photo in this test'); },
     writeProductInteraction: async () => ({ product_interaction: null, model: 'claude-test' }),
     productPhotoKey: () => null,
+    // No photo, so no In-use Reference (#31, product-profile-draft.test.ts).
+    makeInUseReference: async () => { throw new Error('no product photo in this test'); },
     ttsModel: opts.ttsModel ?? 'eleven_v3',
     storeAudio: async ({ userId, draftId }) => {
       const key = `vnext/drafts/${userId}/${draftId}.mp3`;

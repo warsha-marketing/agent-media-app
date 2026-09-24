@@ -50,8 +50,6 @@ export interface Quote {
    * #18). Each Preset's flow reads its own (lib/hands-on-flow.ts).
    */
   presetInputs?: Record<string, unknown>;
-  /** #31: the In-use Reference the render makes (or could make), when the quote says so. */
-  inUseReference?: InUseReferenceQuote;
 }
 
 /** The quote's Music Bed (#9): a bed will play, or why the Short is voice only. */
@@ -68,7 +66,6 @@ export function parseQuote(body: unknown): Quote | null {
   if (typeof b.credits !== 'number' || !Number.isFinite(b.credits)) return null;
   const available = typeof b.available === 'number' ? b.available : null;
   const musicBed = parseMusicBed(b.music_bed);
-  const inUseReference = parseInUseReference(b.in_use_reference);
   const presetInputs =
     b.preset_inputs && typeof b.preset_inputs === 'object' && !Array.isArray(b.preset_inputs)
       ? (b.preset_inputs as Record<string, unknown>)
@@ -79,44 +76,41 @@ export function parseQuote(body: unknown): Quote | null {
     sufficient: b.sufficient !== false,
     ...(musicBed ? { musicBed } : {}),
     ...(presetInputs ? { presetInputs } : {}),
-    ...(inUseReference ? { inUseReference } : {}),
   };
 }
 
 // ── In-use Reference (#31) ──────────────────────────────────────────────────
 //
-// What the quote says about it (`in_use_reference`), the line next to the
-// product photo, and the image the render made (final_output.in_use_reference).
-// The server decides whether one is made and prices it; the page only offers
-// "use original instead" (use_original_product_photo), part of the request.
+// Made free when drafting (the draft's `in_use_reference`), shown next to the
+// product photo before the user confirms, with "Use original photo instead"
+// (use_original_product_photo, part of the request: it never changes the
+// price). A finished Short names the image it used (final_output.in_use_reference).
 
-/** The quote's In-use Reference: null when the render could never make one. */
-export interface InUseReferenceQuote {
-  made: boolean;
-  usedState: string;
-  removedParts: string[];
-  credits: number;
-}
+/** The draft's In-use Reference: the image and what it shows, or the flag that its edit failed. */
+export type DraftInUseReference =
+  | { status: 'made'; imageUrl: string; usedState: string; removedParts: string[] }
+  | { status: 'failed'; message: string };
 
-/** The quote's `in_use_reference`, or null. */
-export function parseInUseReference(v: unknown): InUseReferenceQuote | null {
+/** The draft's `in_use_reference`, or null (none needed, or not one). */
+export function parseDraftInUseReference(v: unknown): DraftInUseReference | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>;
-  if (typeof o.made !== 'boolean' || typeof o.used_state !== 'string') return null;
+  if (o.status === 'failed') return { status: 'failed', message: typeof o.message === 'string' ? o.message : 'Hands and person shots will use your original photo.' };
+  if (o.status !== 'made' || typeof o.image_url !== 'string' || !/^https:\/\//.test(o.image_url) || typeof o.used_state !== 'string') return null;
   return {
-    made: o.made,
+    status: 'made',
+    imageUrl: o.image_url,
     usedState: o.used_state,
     removedParts: Array.isArray(o.removed_parts) ? o.removed_parts.filter((p): p is string => typeof p === 'string') : [],
-    credits: typeof o.credits === 'number' ? o.credits : 0,
   };
 }
 
 /** The line next to the product photo. */
-export function inUseReferenceLine(q: InUseReferenceQuote): string {
-  const removed = q.removedParts.length ? ` (${q.removedParts.join(', ')} removed)` : '';
-  return q.made
-    ? `Hands and person shots will show your product as it is used: ${q.usedState}${removed}. We make this image from your photo at render${q.credits ? ` (${q.credits} credits, in the quote)` : ''}.`
-    : 'Hands and person shots will use your original photo.';
+export function inUseReferenceLine(r: DraftInUseReference, useOriginal: boolean): string {
+  if (r.status === 'failed') return r.message;
+  if (useOriginal) return 'Hands and person shots will use your original photo.';
+  const removed = r.removedParts.length ? ` (${r.removedParts.join(', ')} removed)` : '';
+  return `Hands and person shots will show your product as it is used: ${r.usedState}${removed}.`;
 }
 
 /** The In-use Reference a finished render made, from its final_output; null when none. */
@@ -356,7 +350,6 @@ const STEP_STAGE: Readonly<Record<string, RenderStage>> = {
   mux: 'cut',
   music_bed: 'cut',
   done: 'cut',
-  in_use_reference: 'visuals', // #31: made before any frame or shot
 };
 
 /**
@@ -403,9 +396,7 @@ export function viewOfRun(run: SkillRunBody): RunView {
       ? frame
         ? `Making the starting frame for shot ${shot}`
         : `Generating shot ${shot}`
-      : run.current_step === 'in_use_reference'
-        ? 'Making the In-use Reference of your product'
-        : RENDER_STAGES.find((s) => s.stage === stage)!.label;
+      : RENDER_STAGES.find((s) => s.stage === stage)!.label;
   return { kind: 'rendering', stage, shot, label, ...(frame ? { frame } : {}) };
 }
 

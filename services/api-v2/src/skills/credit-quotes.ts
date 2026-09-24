@@ -14,8 +14,47 @@ import { decideMakeUgcRoute, type MakeUgcProps } from './make-ugc-router.js';
 // Shared take planner — the SAME module the worker plans with, so quote and run
 // cannot disagree. See packages/schema/src/take-planner.ts.
 import { countWords, fitDuration, planTakeDurations, quotePresetCredits, VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
-import { playbookPreset, resolvePlaybookChoice } from '@agentmedia/shot-prompts';
+import { playbookPreset, resolvePlaybookChoice, type PlaybookChoice } from '@agentmedia/shot-prompts';
+import { z } from 'zod';
 import { SKILLS } from './registry.js';
+
+// ── What a Preset render is priced from ─────────────────────────────────────
+
+/**
+ * The priced part of a Preset render's input: the draft's measured speech
+ * (the shots are planned from it) and the Playbook the plan follows (#32: its
+ * pattern may reorder the shots). The quote and the run put exactly this on
+ * the input (presetPricedFields), and the skill run stores it, so the
+ * in-flight reservation prices the run as the quote did. (The In-use
+ * Reference, #31, is the draft's, made free at drafting: nothing to price.)
+ */
+export interface PresetPricedInput {
+  duration_ms: number;
+  playbook: PlaybookChoice | null;
+}
+
+const PresetPricedInputSchema = z
+  .object({
+    duration_ms: z.number().finite(),
+    playbook: z.object({ id: z.string(), version: z.number().int(), pattern: z.string().nullable() }).nullable().optional(),
+  })
+  .passthrough();
+
+/**
+ * The priced part of a stored or quoted Preset render input. FAILS CLOSED:
+ * without a numeric duration there is no plan to price, and a render is never
+ * free — RangeError, answered as 422 unpriceable_input.
+ */
+export function presetPricedInput(input: Record<string, unknown>): PresetPricedInput {
+  const parsed = PresetPricedInputSchema.safeParse(input);
+  if (!parsed.success) throw new RangeError(`a Preset render is priced from its draft's duration_ms and Playbook: ${parsed.error.issues[0]?.message ?? 'invalid'}`);
+  return { duration_ms: parsed.data.duration_ms, playbook: parsed.data.playbook ?? null };
+}
+
+/** The priced fields a quote or run adds to a Preset render's input (what presetPricedInput reads back). */
+export function presetPricedFields(draft: { duration_ms: number }, plan: { playbook: PlaybookChoice | null }): PresetPricedInput {
+  return { duration_ms: Number(draft.duration_ms), playbook: plan.playbook };
+}
 
 // Portraits are free; a character sheet is charged only standalone (a sheet
 // generated inside make_ugc_video is free — see the make_ugc_video case).
@@ -151,14 +190,12 @@ export function quoteSkillCredits(
     // plan to price, and a render is never free — so this throws (RangeError)
     // rather than quoting 0. The routes resolve the draft first, so only a
     // bug reaches this; the quote route answers it with 422 unpriceable_input.
-    const raw = (i as { duration_ms?: unknown }).duration_ms;
-    // #31: the In-use Reference step, as the route decided it (renderMakesInUseReference) and the run stored it.
-    const inUseReference = (i as { in_use_reference?: unknown }).in_use_reference === true;
+    const priced = presetPricedInput(i);
     // A Playbook's shot pattern (#32) replaces the Preset's order with its own
     // kinds: priced as the worker plans it. An unknown or stale choice throws
     // (PlaybookError): fail closed, like a missing duration.
-    const planned = playbookPreset(preset, resolvePlaybookChoice((i as { playbook?: unknown }).playbook));
-    return quotePresetCredits(planned, typeof raw === 'number' ? raw : Number.NaN, { inUseReference });
+    const planned = playbookPreset(preset, resolvePlaybookChoice(priced.playbook));
+    return quotePresetCredits(planned, priced.duration_ms);
   }
   switch (slug) {
     case 'make_portrait':

@@ -124,6 +124,9 @@ describe('where the lines go', () => {
       expect(prompt).toContain('about the height of her palm');
       expect(prompt).toContain('the silver crown cap is removed and nowhere in the scene');
     }
+    // Each shot says which product reference it is made from (#31): no reading of its Guardrails.
+    expect(hands.product_reference).toBe('in_use_reference');
+    expect(product.product_reference).toBe('product_photo');
     const productPrompt = shotPrompt(product, 'video', IMAGE_REFERENCES);
     expect(product.guardrails.video.map((g) => g.id)).not.toContain('scale_anchor');
     expect(productPrompt).not.toContain('Real size');
@@ -136,6 +139,7 @@ describe('where the lines go', () => {
     const ids = hands.guardrails.video.map((g) => g.id);
     expect(ids).toContain('scale_anchor');
     expect(ids).not.toContain('in_use_reference');
+    expect(plan.shots.map((s) => s.product_reference)).toEqual(['product_photo', 'product_photo']);
   });
 
   it('Reaction: on every person shot, on every model of its chain, never on a product shot', () => {
@@ -176,5 +180,6 @@ describe('where the lines go', () => {
     const a = composeShotPlan(preset, bare);
     const b = composeShotPlan(preset, { ...bare, product: { profile: null, inUseReference: true } });
     expect(b).toEqual(a);
+    expect(b.shots.every((s) => s.product_reference === 'product_photo')).toBe(true);
   });
 });

@@ -19,16 +19,14 @@
  *
  *   1. fetchDraftAudio — reads the draft's private audio by key and measures it.
  *                        Nothing visual is requested until the audio is in hand.
- *   1a. presetInUseReference — (#31) only when the render needs one
- *                        (inUseReferenceNeeded: a hands or person shot, the
- *                        draft's Product Profile says the used state differs
- *                        from the photo, and the user did not choose the
- *                        original): the product photo edited into its used
- *                        state, product only. It is the product reference of
- *                        every hands and person shot (their starting frames
- *                        are edited from it; their clips animate it when they
- *                        have no frame); product-only shots keep the photo.
- *                        Priced in the quote (quotePresetCredits).
+ *   (#31) The In-use Reference is the DRAFT's: api-v2 made it free at
+ *                        drafting and hands its URL over (in_use_reference_url)
+ *                        only when this render uses it. It is the product
+ *                        reference of every hands and person shot (their
+ *                        starting frames are edited from it; their clips
+ *                        animate it when they have no frame), as each shot's
+ *                        `product_reference` says; product-only shots keep
+ *                        the photo. Nothing is made or charged for it here.
  *   1b. presetStartingFrame — (#18) only for shot kinds that declare a starting
  *                        frame (e.g. Hands-on's product-in-hands image): one
  *                        image per such planned shot, all before any clip. The
@@ -87,7 +85,6 @@
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
 import {
   armsAtLeast,
-  inUseReferenceNeeded,
   modelClipUsd,
   modelRenderSeconds,
   presetShows,
@@ -111,7 +108,6 @@ import {
   ShotEditError,
   VIDEO_MODEL_LABELS,
   composeShotPlan,
-  inUseReferencePrompt,
   resolvePlaybookChoice,
   shotHasPersonReference,
   shotPrompt,
@@ -120,6 +116,7 @@ import {
   type ShotFields,
   type PlaybookChoice,
   type ShotPlanShot,
+  type ShotProductReference,
 } from '@agentmedia/shot-prompts';
 
 /**
@@ -197,17 +194,19 @@ export interface PresetRenderInput {
    */
   shot_edits?: Readonly<Record<string, ShotEdit>> | null;
   /**
-   * Product Profile (#30, #31): the draft's, from api-v2. Its size becomes the
-   * Scale Anchor of every hands and person prompt; its used state and parts
-   * make the In-use Reference when it differs from the photo. Absent/null on
-   * drafts from before it: neither.
+   * Product Profile (#30, #31): the draft's, from api-v2 (validated there).
+   * Its size becomes the Scale Anchor of every hands and person prompt; its
+   * removable parts, the In-use Reference line. Absent/null on drafts from
+   * before it: neither.
    */
   product_profile?: ProductProfile | null;
   /**
-   * "Use original instead" (#31): the user chose the product photo over an
-   * In-use Reference. The quote priced the same choice.
+   * In-use Reference (#31): the draft's image (made free at drafting, R2),
+   * set by api-v2 only when this render uses it (the Preset shows hands or a
+   * person, the draft has one, and the user did not choose the original
+   * photo). The product reference of every hands and person shot.
    */
-  use_original_product_photo?: boolean;
+  in_use_reference_url?: string | null;
   /**
    * Playbook (#32): the choice api-v2 made from the draft's Product Profile
    * category and priced ({ id, version, pattern }). This worker resolves the
@@ -237,8 +236,8 @@ export interface RenderedShot {
   frame_prompt?: string;
   /** The final clip prompt exactly as sent to that model (fields + Guardrails, its reference syntax). */
   prompt: string;
-  /** #31: the product reference it was made from — the In-use Reference, or the product photo. */
-  product_reference: 'in_use_reference' | 'product_photo';
+  /** #31: the product reference it was made from — the In-use Reference, or the product photo (the plan's). */
+  product_reference: ShotProductReference;
 }
 
 export interface PresetRenderResult {
@@ -261,7 +260,7 @@ const PRESET_INPUT_FIELDS: Record<PresetInput, keyof PresetRenderInput> = {
 /** A finished cut may differ from the audio by at most about one frame. */
 const MAX_CUT_DRIFT_MS = 50;
 
-const { presetClip, presetStartingFrame, presetInUseReference } = proxyActivities<PrimitiveActivities>({
+const { presetClip, presetStartingFrame } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '20 minutes',
   heartbeatTimeout: '5 minutes',
   retry: { initialInterval: '10s', maximumInterval: '2m', backoffCoefficient: 2, maximumAttempts: 3, nonRetryableErrorTypes: [...NON_RETRYABLE_TYPES] },
@@ -316,8 +315,8 @@ export async function renderPreset(
     const vars = promptVarsFor(preset, input);
     const interaction = input.product_interaction ?? null;
     const profile = input.product_profile ?? null;
-    // #31: the same decision the quote priced.
-    const inUse = inUseReferenceNeeded(preset, profile, input.use_original_product_photo);
+    // #31: the draft's In-use Reference, when api-v2 says this render uses it.
+    const inUseUrl = input.in_use_reference_url ?? null;
 
     // The shots and every prompt of the render, before anything is requested,
     // so a refused edit costs nothing. The plan is planPresetShots' (the one the
@@ -327,11 +326,10 @@ export async function renderPreset(
     let shots: ShotPlanShot[];
     let framePrompts: Array<string | null>;
     let clipPrompts: Array<Partial<Record<VideoModelId, string>>>;
-    let inUsePrompt: string | null = null;
     let playbook: PlaybookChoice | null = null;
     try {
       const person = { gender: input.character_gender ?? null, description: input.character_description ?? null };
-      const product = { profile, inUseReference: inUse, handGender: input.hand_gender ?? null };
+      const product = { profile, inUseReference: inUseUrl !== null, handGender: input.hand_gender ?? null };
       // #32: the Playbook the quote priced, resolved from this worker's own copy of the data.
       const chosen = resolvePlaybookChoice(input.playbook ?? null);
       const plan = composeShotPlan(
@@ -341,7 +339,6 @@ export async function renderPreset(
       );
       shots = plan.shots;
       playbook = plan.playbook;
-      if (inUse && profile) inUsePrompt = inUseReferencePrompt(profile);
       // A starting frame is an image edit of the product photo: its one reference image.
       framePrompts = shots.map((s) => (s.starting_frame ? shotPrompt(s, 'image', IMAGE_REFERENCES) : null));
       // Each model of the shot's chain gets its own prompt (the face, or the
@@ -367,24 +364,12 @@ export async function renderPreset(
     });
 
     let totalUsd = 0;
-    // ── 1a. The In-use Reference (#31), before any frame or clip ─────────────
-    let inUseUrl: string | null = null;
-    if (inUsePrompt) {
-      await composedSkillState({ skill_run_id: skillRunId, current_step: 'in_use_reference' });
-      const made = await presetInUseReference({
-        primitive_run_id: mint('in_use_reference'),
-        user_id: input.user_id,
-        skill_run_id: skillRunId,
-        product_image_url: input.product_image_url,
-        preset: preset.id,
-        prompt: inUsePrompt,
-      });
-      inUseUrl = made.image_url;
-      totalUsd += made.credits_actual_usd;
-    }
-    // The product reference of each shot: the In-use Reference where hands or a
-    // person handle the product, else (and always on a product shot) the photo.
-    const productRefs = shots.map((s) => (inUseUrl && s.shows !== 'product' ? inUseUrl : input.product_image_url));
+    // The product image of each shot, as the plan names it (#31): the draft's
+    // In-use Reference where hands or a person handle the product, else (and
+    // always on a product shot) the photo.
+    const productImage = (s: ShotPlanShot): string =>
+      s.product_reference === 'in_use_reference' && inUseUrl ? inUseUrl : input.product_image_url;
+    const usedInUse = shots.some((s) => s.product_reference === 'in_use_reference');
     // ── 1b. Starting frames (#18), every one before any clip ────────────────
     const frameUrls: Array<string | null> = shots.map(() => null);
     for (let i = 0; i < shots.length; i += 1) {
@@ -396,7 +381,7 @@ export async function renderPreset(
         primitive_run_id: mint(`frame_${i}`),
         user_id: input.user_id,
         skill_run_id: skillRunId,
-        product_image_url: productRefs[i],
+        product_image_url: productImage(shots[i]),
         frame,
         preset: preset.id,
         shot_kind: shots[i].kind,
@@ -426,7 +411,7 @@ export async function renderPreset(
             user_id: input.user_id,
             skill_run_id: skillRunId,
             // The shot's start image: its starting frame if it has one, else its product reference (#31).
-            start_image_url: frameUrls[i] ?? productRefs[i],
+            start_image_url: frameUrls[i] ?? productImage(shots[i]),
             duration: shots[i].clip_seconds,
             shot_index: i,
             shot_count: shots.length,
@@ -487,7 +472,7 @@ export async function renderPreset(
         },
         ...(framePrompt ? { frame_prompt: framePrompt } : {}),
         prompt: clip.prompt ?? clipPrompts[i][model as VideoModelId] ?? clipPrompts[i][chain[0]]!,
-        product_reference: productRefs[i] === inUseUrl ? 'in_use_reference' : 'product_photo',
+        product_reference: shots[i].product_reference,
       });
       totalUsd += clip.credits_actual_usd;
     }
@@ -547,7 +532,7 @@ export async function renderPreset(
       credits_actual_usd: totalUsd,
       music_bed: musicBed?.track_id ?? null, // #9
       // #31: the In-use Reference the hands and person shots used, for the user to see.
-      in_use_reference: inUseUrl ? { image_url: inUseUrl, source_product_image_url: input.product_image_url } : null,
+      in_use_reference: usedInUse && inUseUrl ? { image_url: inUseUrl, source_product_image_url: input.product_image_url } : null,
       // #32: the Playbook the shots followed ({ id, version, pattern }), or null.
       playbook,
       // #26: what ran — each shot's final prompt as sent, for the owner.

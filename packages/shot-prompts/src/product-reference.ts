@@ -6,7 +6,8 @@
  *   In-use Reference — the product photo edited into the state it is used in
  *       (a perfume uncapped), product only. inUseReferencePrompt is the edit's
  *       prompt; inUseReferenceLine is the Guardrail every hands and person
- *       shot carries (both stages) when the render made one: the product looks
+ *       shot carries (both stages) when the render uses the draft's (made at
+ *       drafting, api-v2): the product looks
  *       exactly as in its reference, and the parts it is used without are
  *       nowhere in the scene (owner test M1b, 2026-09-24: the uncapped
  *       reference plus "no cap anywhere in the scene" ended the duplicate cap).
@@ -27,10 +28,10 @@ import { REFERENCE_TOKENS } from './references.js';
 /** What a Shot Prompt reads from the Product Profile. */
 export type ProfileWords = Pick<ProductProfile, 'size_class' | 'dimensions' | 'parts'>;
 
-/** The product side of a Shot Plan (#31): the Profile, and whether the render made an In-use Reference. */
+/** The product side of a Shot Plan (#31): the Profile, and whether the render uses the draft's In-use Reference. */
 export interface ShotProductContext {
   profile: ProfileWords | null;
-  /** The render made an In-use Reference (inUseReferenceNeeded), the product reference of every hands and person shot. */
+  /** The render uses the draft's In-use Reference (renderUsesInUseReference): the product reference of every hands and person shot. */
   inUseReference: boolean;
   /** Hands-on: whose hands (the Scale Anchor says "her palm" / "his palm"). */
   handGender?: PersonGender | null;
@@ -98,7 +99,7 @@ export function scaleAnchorLine(profile: Pick<ProfileWords, 'size_class' | 'dime
 
 /**
  * The In-use Reference Guardrail line for a hands or person shot, when the
- * render made one: the product exactly as in its reference image, and every
+ * render uses one: the product exactly as in its reference image, and every
  * removable part nowhere in the scene.
  */
 export function inUseReferenceLine(profile: Pick<ProductProfile, 'parts'> | null | undefined): string {

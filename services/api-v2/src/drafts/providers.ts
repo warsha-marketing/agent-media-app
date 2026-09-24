@@ -27,6 +27,9 @@
  *   R2_PRIVATE_BUCKET            REQUIRED bucket without public access for the audio. Unset →
  *                                drafting answers 503 DRAFT_STORAGE_UNCONFIGURED; the audio is
  *                                never written to the public R2_BUCKET instead.
+ *   OPENAI_API_KEY               (existing) gpt-image makes the draft's In-use Reference (#31); unset →
+ *                                drafts are still made, with the In-use Reference flagged failed
+ *   GPT_IMAGE_MODEL              (existing, optional) the image model (default gpt-image-2)
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -36,6 +39,7 @@ import {
   presignPrivateGet,
   putPrivateObject,
 } from '../lib/r2-upload.js';
+import { gptImageInUseReference } from './in-use-reference-image.js';
 import {
   DraftError,
   MAX_SPEECH_MS,
@@ -492,6 +496,11 @@ export function productionDraftDeps(supabase: SupabaseClient): { deps: DraftDeps
   const scriptModel = process.env.PRODUCT_HERO_SCRIPT_MODEL?.trim() || 'claude-opus-5-5';
   const profileModel = process.env.PRODUCT_PROFILE_MODEL?.trim() || scriptModel;
   const claudeReady = Boolean(anthropicKey && storageReady);
+  const openaiKey = process.env.OPENAI_API_KEY?.trim();
+  // Unconfigured: the draft is still made, its In-use Reference flagged failed (#31).
+  const inUseUnconfigured: DraftDeps['makeInUseReference'] = async () => {
+    throw new Error('OPENAI_API_KEY not configured on api-v2: no In-use Reference');
+  };
   return {
     missing,
     deps: {
@@ -501,6 +510,9 @@ export function productionDraftDeps(supabase: SupabaseClient): { deps: DraftDeps
       profileProduct: claudeReady ? anthropicProductProfiler({ apiKey: anthropicKey!, model: profileModel }) : unconfigured,
       writeProductInteraction: claudeReady ? anthropicInteractionWriter({ apiKey: anthropicKey!, model: profileModel }) : unconfigured,
       productPhotoKey: storageProductPhotoKey,
+      makeInUseReference: openaiKey
+        ? gptImageInUseReference({ apiKey: openaiKey, model: process.env.GPT_IMAGE_MODEL?.trim() || 'gpt-image-2' })
+        : inUseUnconfigured,
       voiceScript:
         elevenKey && storageReady
           ? elevenLabsVoicer({

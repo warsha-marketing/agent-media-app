@@ -62,6 +62,7 @@ import {
   initialRenderState,
   insertDeliveryTag,
   isRunSettled,
+  parseDraftInUseReference, // #31
   parseQuote,
   PRODUCT_DETAILS_MAX,
   PRODUCT_INTERACTION_MAX,
@@ -121,6 +122,8 @@ interface Draft {
   product_interaction?: string | null;
   /** What the system understood about the product from its photo (#30); null without a photo. */
   product_profile?: ProductProfile | null;
+  /** The product as it is used (#31): made when drafting, when the Profile says it differs from the photo. */
+  in_use_reference?: unknown;
   script: string;
   /** Short-lived signed URL; re-read the draft for a fresh one. */
   audio_url: string;
@@ -433,9 +436,10 @@ export default function ProductHeroPage() {
         ...interactionEdit(draft, interaction),
         // The Product Profile only when the user changed it (#30); else the parent's carries over.
         ...profileEdit(draft?.product_profile, profileFields),
-        // With a parent, its Brief, Product Details and Product Profile carry over server-side.
+        // With a parent, its Brief, Product Details, Product Profile and In-use Reference carry over
+        // server-side; the photo is sent so another photo makes a new In-use Reference (#31).
         ...(draft
-          ? { parent_draft_id: draft.id }
+          ? { parent_draft_id: draft.id, ...(photo?.url ? { product_image_url: photo.url } : {}) }
           : {
               ...(brief.trim() ? { brief: brief.trim() } : {}),
               ...(productDetails.trim() ? { product_details: productDetails.trim() } : {}),
@@ -807,9 +811,8 @@ export default function ProductHeroPage() {
         )}
         {photo ? (
           <InUseReferenceNote
-            quote={('quote' in render ? render.quote?.inUseReference : null) ?? null}
+            reference={parseDraftInUseReference(draft?.in_use_reference)}
             useOriginal={useOriginalPhoto}
-            imageUrl={render.phase === 'succeeded' ? render.inUseReferenceUrl ?? null : null}
             disabled={renderLocked}
             onUseOriginal={setUseOriginalPhoto}
           />

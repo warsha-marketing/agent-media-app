@@ -27,7 +27,14 @@
 
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { CharacterAlignment, PresetDefinition, ProductProfile } from '@agentmedia/schema';
+import {
+  ProductProfileSchema,
+  parseDraftInUseReference,
+  type CharacterAlignment,
+  type DraftInUseReference,
+  type PresetDefinition,
+  type ProductProfile,
+} from '@agentmedia/schema';
 
 /** Where the run holding a draft's claim is. */
 export type RenderRunStatus = 'submitted' | 'running' | 'succeeded' | 'failed' | 'canceled';
@@ -53,10 +60,19 @@ export interface RenderableDraft {
   product_interaction?: string | null;
   /**
    * Product Profile (#30): the render reads its size (the Scale Anchor) and
-   * its used state and parts (the In-use Reference, #31), and its category
-   * picks the render's Playbook (#32). Null on drafts from before it.
+   * its parts (the In-use Reference line, #31), and its category picks the
+   * render's Playbook (#32). Validated ONCE, when the draft is resolved
+   * (resolveRenderableDraft): null on drafts from before it, or one that no
+   * longer reads as a Profile. The Playbook, the In-use line and the worker
+   * all read this value.
    */
   product_profile?: ProductProfile | null;
+  /**
+   * In-use Reference (#31): made at drafting, reused by the render
+   * (skills/in-use-reference.ts). Validated when the draft is resolved; null
+   * when there is none (or the stored value is not one).
+   */
+  in_use_reference?: DraftInUseReference | null;
   /** That run's status (null when there is no claim, or its run is missing). */
   render_run_status: RenderRunStatus | null;
 }
@@ -218,7 +234,13 @@ export async function resolveRenderableDraft(
   if (!draft.voice_catalog_id) throw voiceNotApproved(true);
   const voice = await store.getVoice(draft.voice_catalog_id);
   if (!voice || voice.state !== 'approved' || voice.dialect !== draft.dialect) throw voiceNotApproved(false);
-  return draft;
+  // The ONE validated read of the stored Profile and In-use Reference (#30, #31).
+  const profile = ProductProfileSchema.safeParse(draft.product_profile ?? null);
+  return {
+    ...draft,
+    product_profile: profile.success ? profile.data : null,
+    in_use_reference: parseDraftInUseReference(draft.in_use_reference ?? null),
+  };
 }
 
 const TABLE = 'short_drafts';
@@ -229,7 +251,9 @@ export function supabaseProductHeroDraftStore(supabase: SupabaseClient): Product
       // Service-role client bypasses RLS, so ownership is enforced here.
       const { data, error } = await supabase
         .from(TABLE)
-        .select('id, user_id, dialect, voice_catalog_id, audio_key, duration_ms, alignment, render_run_id, brief, product_details, product_interaction, product_profile')
+        .select(
+          'id, user_id, dialect, voice_catalog_id, audio_key, duration_ms, alignment, render_run_id, brief, product_details, product_interaction, product_profile, in_use_reference',
+        )
         .eq('id', id)
         .eq('user_id', userId)
         .maybeSingle();

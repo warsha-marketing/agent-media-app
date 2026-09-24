@@ -29,7 +29,8 @@ import { PresetError, assertPresetAvailable } from '../../presets/qualification.
 import { supabasePresetAccess } from '../../presets/providers.js';
 import type { PresetInputStage, PresetInputs } from '../../skills/preset-inputs.js'; // #19
 import { composeRenderShotPlan, shotPlanView } from '../../skills/shot-plan.js'; // #26
-import { inUseReferenceView, renderMakesInUseReference } from '../../skills/in-use-reference.js'; // #31
+import { inUseReferenceView, renderInUseReference, type RenderInUseReference } from '../../skills/in-use-reference.js'; // #31
+import { presetPricedFields } from '../../skills/credit-quotes.js';
 import { effectiveEdits, type ShotPlan } from '@agentmedia/shot-prompts';
 
 /**
@@ -208,24 +209,19 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     const call: PresetCall = { res, userId, slug, preset: skill.preset, body: input };
     const draft = await resolveDraftOrRespond(call);
     if (!draft) return;
-    const render: PresetRenderContext = { ...call, draft };
+    const render = presetRenderContext(call, draft);
     // A Preset's own inputs (Reaction: character, Modesty Default) refuse here as on the run.
     const presetInputs = await presetInputsOrRespond(render, 'preview');
     if (!presetInputs) return;
     // Shot Plan review (#26): field edits are refused here as on the run; they never change the price.
     const plan = shotPlanOrRespond(render, presetInputs);
     if (!plan) return;
-    // #31: the In-use Reference step is priced when the render makes one (quote == charge).
-    // #32: the Playbook's pattern is priced exactly as it plans (the run records the same choice).
-    input = {
-      ...input,
-      duration_ms: draft.duration_ms,
-      in_use_reference: renderMakesInUseReference(skill.preset, draft, input),
-      ...(plan.playbook ? { playbook: plan.playbook } : {}),
-    };
+    // Priced from the draft's duration and the plan's Playbook (#32), exactly as
+    // the run stores them. The In-use Reference (#31) is the draft's: never priced.
+    input = { ...input, ...presetPricedFields(draft, plan) };
     quoteExtras = {
       music_bed: musicBedView(presetMusicBed(skill.preset, input.music, draft.id)),
-      in_use_reference: inUseReferenceView(skill.preset, draft, input),
+      in_use_reference: inUseReferenceView(skill.preset, render.inUse),
       ...presetInputs.quote,
     };
   }
@@ -304,7 +300,7 @@ export async function shotPlanRoute(req: Request, res: Response): Promise<void> 
   const call: PresetCall = { res, userId, slug, preset: skill.preset, body: parsed.data as Record<string, unknown> };
   const draft = await resolveDraftOrRespond(call);
   if (!draft) return;
-  const render: PresetRenderContext = { ...call, draft };
+  const render = presetRenderContext(call, draft);
   const presetInputs = await presetInputsOrRespond(render, 'preview');
   if (!presetInputs) return;
   const plan = shotPlanOrRespond(render, presetInputs);
@@ -818,6 +814,13 @@ interface PresetCall {
 /** A Preset render call once its draft is resolved (resolveDraftOrRespond). */
 interface PresetRenderContext extends PresetCall {
   draft: RenderableDraft;
+  /** #31: whether (and which) In-use Reference the render uses — decided once, here. */
+  inUse: RenderInUseReference;
+}
+
+/** The render context of a call and its resolved draft: every per-request decision made once. */
+function presetRenderContext(call: PresetCall, draft: RenderableDraft): PresetRenderContext {
+  return { ...call, draft, inUse: renderInUseReference(call.preset, draft, call.body) };
 }
 
 /**
@@ -828,13 +831,7 @@ interface PresetRenderContext extends PresetCall {
 function shotPlanOrRespond(call: PresetRenderContext, presetInputs: PresetInputs): ShotPlan | null {
   const { res, slug } = call;
   try {
-    return composeRenderShotPlan(
-      call.preset,
-      call.draft,
-      presetInputs,
-      call.body.shot_edits,
-      renderMakesInUseReference(call.preset, call.draft, call.body),
-    );
+    return composeRenderShotPlan(call.preset, call.draft, presetInputs, call.body.shot_edits, call.inUse.url !== null);
   } catch (err) {
     if (err instanceof RenderRefusal) sendRenderRefusal(res, slug, err);
     else res.status(500).json({ error: 'shot_plan_failed', skill: slug, detail: errorMessage(err) });
@@ -949,7 +946,7 @@ async function dispatchPresetRender(
   const call: PresetCall = { res, userId, slug, preset, body };
   const draft = await resolveDraftOrRespond(call);
   if (!draft) return;
-  const render: PresetRenderContext = { ...call, draft };
+  const render = presetRenderContext(call, draft);
   // The Preset's own inputs (Reaction #19: saved character, Modesty Default).
   const presetInputs = await presetInputsOrRespond(render, 'run');
   if (!presetInputs) return;
@@ -980,17 +977,15 @@ async function dispatchPresetRender(
     draft_id: draft.id,
     product_image_url: productImageUrl,
     aspect_ratio: preset.aspectRatio,
-    duration_ms: draft.duration_ms,
     music: body.music !== false,
     music_bed: musicBed.on ? musicBed.track.id : null,
-    // #31: whether the render makes (and charges) an In-use Reference — the in-flight reservation prices it.
-    in_use_reference: renderMakesInUseReference(preset, draft, body),
-    ...(body.use_original_product_photo === true ? { use_original_product_photo: true } : {}),
+    // #31: "use original instead", for the record (never priced: the In-use Reference is the draft's).
+    ...(render.inUse.useOriginal ? { use_original_product_photo: true } : {}),
     ...presetInputs.run,
     // #26: the fields the user edited, by shot id (the Short's final_output.shots has each final prompt).
     ...(edited ? { shot_edits: shotEdits } : {}),
-    // #32: the Playbook the plan follows; priced (and reserved) from it, and rendered with it.
-    ...(plan.playbook ? { playbook: plan.playbook } : {}),
+    // The draft's duration and the Playbook the plan follows (#32): what the in-flight reservation prices, as the quote did.
+    ...presetPricedFields(draft, plan),
   };
 
   const preflight = await preflightCreditCheck(userId, slug, runInput);
@@ -1073,9 +1068,10 @@ async function dispatchPresetRender(
     music_bed: musicBedWorkflowInput(musicBed), // #9
     // #25: the draft's Product Interaction, for every hands and person prompt.
     product_interaction: draft.product_interaction ?? null,
-    // #30/#31: the Product Profile (the Scale Anchor; the In-use Reference when it differs) and the override.
+    // #30/#31: the Product Profile (validated once: the Scale Anchor and the In-use line's parts).
     product_profile: draft.product_profile ?? null,
-    use_original_product_photo: body.use_original_product_photo === true,
+    // #31: the draft's In-use Reference, only when this render uses it (the product reference of hands and person shots).
+    ...(render.inUse.url ? { in_use_reference_url: render.inUse.url } : {}),
     ...presetInputs.workflow,
     // #26: only validated field edits; the worker re-checks them and adds its own Guardrails.
     ...(edited ? { shot_edits: shotEdits } : {}),
@@ -1113,7 +1109,7 @@ async function dispatchPresetRender(
     draft_id: draft.id,
     status: 'submitted',
     music_bed: musicBedView(musicBed), // #9
-    in_use_reference: inUseReferenceView(preset, draft, body), // #31
+    in_use_reference: inUseReferenceView(preset, render.inUse), // #31
     ...presetInputs.quote, // preset_inputs: what renders (#18, #19)
   });
 }

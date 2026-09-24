@@ -115,10 +115,9 @@ describe('a shot kind’s model chain', () => {
 
 describe('Reaction’s person shots render on ModelArk Mini, falling back to Kling O3 Pro, then Veo 3.1 (ADR 0003)', () => {
   it('budgets the provider cost for the worst case: both person shots failing on ModelArk and Kling and rendering on Veo', () => {
-    // Two person shots (ModelArk $0.60, Kling $0.56, then Veo $1.60 each), two product clips ($0.60 each)
-    // and the In-use Reference ($0.25, #31) when the Profile's used state differs from the photo.
-    expect(REACTION.budget.maxProviderUsd).toBeCloseTo(2 * (0.6 + 0.56 + 1.6) + 2 * VIDEO_CLIP_USD[5] + 0.25, 9);
-    expect(presetProviderUsd(REACTION, 15_000, { inUseReference: true })).toBeCloseTo(REACTION.budget.maxProviderUsd, 9);
+    // Two person shots (ModelArk $0.60, Kling $0.56, then Veo $1.60 each) and two product clips ($0.60 each).
+    expect(REACTION.budget.maxProviderUsd).toBeCloseTo(2 * (0.6 + 0.56 + 1.6) + 2 * VIDEO_CLIP_USD[5], 9);
+    expect(presetProviderUsd(REACTION, 15_000)).toBeCloseTo(REACTION.budget.maxProviderUsd, 9);
   });
 
   it('declares it as data on the shot kind; product shots keep the default', () => {

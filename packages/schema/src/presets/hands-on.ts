@@ -49,9 +49,8 @@ export type HandsOnShotKind = 'hands' | 'product';
  *   10.001–15 s → hands 10 s + product 5 s, played whole, tail trimmed
  *                (280 + 140 = 420) + 35 frame = 455
  *
- * Budget: the longest plan (10 s hands + 5 s product) plus the one hands frame,
- * plus the In-use Reference (+35, #31) when the Product Profile's used state
- * differs from the photo.
+ * Budget: the longest plan (10 s hands + 5 s product) plus the one hands frame.
+ * (The In-use Reference, #31, is the draft's, made free at drafting.)
  */
 export const HANDS_ON = {
   id: 'hands_on',
@@ -76,9 +75,9 @@ export const HANDS_ON = {
   /** Arms covered by default, sleeved at the least; no person on screen, so never a hijab. */
   modesty: STANDARD_MODESTY,
   budget: {
-    /** 280 + 140 for the clips + 35 for the hands frame + 35 for the In-use Reference (#31), when made. */
-    maxCredits: 490,
-    /** 1.2 + 0.6 for the clips + 0.25 for the hands frame + 0.25 for the In-use Reference. */
-    maxProviderUsd: 2.3,
+    /** 280 + 140 for the clips + 35 for the hands frame. */
+    maxCredits: 455,
+    /** 1.2 + 0.6 for the clips + 0.25 for the hands frame. */
+    maxProviderUsd: 2.05,
   },
 } as const satisfies PresetDefinition<HandsOnShotKind>;

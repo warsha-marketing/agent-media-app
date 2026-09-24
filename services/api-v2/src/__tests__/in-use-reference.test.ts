@@ -2,15 +2,18 @@
 //
 // #31 In-use Reference + Scale Anchors at the API, through the real quote, run
 // and shot-plan routes (Hands-on; only the edges faked, as in
-// make-hands-on.test.ts): the render reads the draft's Product Profile; the
-// In-use Reference step is quoted only when the used state differs from the
-// photo and the user kept it ("use original instead" drops it); the stored run
-// prices like the quote; the workflow gets the Profile and the override; the
-// Shot Plan shows the Scale Anchor and the In-use line on the hands shot only.
+// make-hands-on.test.ts). The In-use Reference is made at DRAFTING time (free,
+// product-profile-draft.test.ts) and stored on the draft; a render REUSES it:
+// no step, no charge (quote == charge, with or without it). "Use original
+// instead" renders from the photo; a draft whose edit failed renders from the
+// photo too. The workflow gets the Profile (Scale Anchor) and the In-use
+// Reference's URL only when it is used; the Shot Plan names each shot's
+// product reference and shows the Scale Anchor and the In-use line on the
+// hands shot only.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Request, Response } from 'express';
-import { HANDS_ON, IN_USE_REFERENCE_CREDITS, PRODUCT_HERO, quotePresetCredits, type ProductProfile } from '@agentmedia/schema';
+import { HANDS_ON, PRODUCT_HERO, quotePresetCredits, type DraftInUseReference, type ProductProfile } from '@agentmedia/schema';
 
 // ── In-memory tables behind a supabase-shaped client ────────────────────────
 
@@ -219,79 +222,100 @@ const PERFUME: ProductProfile = {
   confidence: 0.9,
 };
 
-const body = (id: string, over: Record<string, unknown> = {}) => ({ draft_id: id, product_image_url: PHOTO, ...over });
-const handsDraft = (profile: ProductProfile | null, ms = 12_000) => seedDraft({ preset: 'hands_on', duration_ms: ms, product_profile: profile });
+const MADE: DraftInUseReference = {
+  status: 'made',
+  key: `vnext/in-use/${OWNER}/draft.png`,
+  url: `https://r2.test/vnext/in-use/${OWNER}/draft.png`,
+  source_photo_key: `vnext/uploads/${OWNER}/photo.png`,
+  used_state: PERFUME.used_state,
+  removed_parts: ['silver crown cap'],
+  model: 'gpt-image-2',
+  made_at: '2026-09-24T10:00:00.000Z',
+};
+const FAILED: DraftInUseReference = {
+  status: 'failed',
+  source_photo_key: `vnext/uploads/${OWNER}/photo.png`,
+  reason: 'openai 400: refused',
+  failed_at: '2026-09-24T10:00:00.000Z',
+};
 
-describe('the quote prices the In-use Reference only when the render makes one', () => {
+const body = (id: string, over: Record<string, unknown> = {}) => ({ draft_id: id, product_image_url: PHOTO, ...over });
+const handsDraft = (profile: ProductProfile | null, inUse: DraftInUseReference | null = profile?.differs_from_photo ? MADE : null, ms = 12_000) =>
+  seedDraft({ preset: 'hands_on', duration_ms: ms, product_profile: profile, in_use_reference: inUse });
+
+describe('the quote never prices it: the render reuses the draft’s In-use Reference', () => {
   it.each([
-    ['the used state differs', PERFUME, {}, true],
-    ['the user chose the original photo', PERFUME, { use_original_product_photo: true }, false],
-    ['the used state is the photo’s', { ...PERFUME, differs_from_photo: false }, {}, false],
-    ['the draft has no Profile', null, {}, false],
-  ] as const)('%s', async (_why, profile, over, made) => {
+    ['the draft has one', PERFUME, MADE, {}],
+    ['the user chose the original photo', PERFUME, MADE, { use_original_product_photo: true }],
+    ['its edit failed at drafting', PERFUME, FAILED, {}],
+    ['the used state is the photo’s', { ...PERFUME, differs_from_photo: false }, null, {}],
+    ['the draft has no Profile', null, null, {}],
+  ] as const)('%s: the planned shots alone', async (_why, profile, inUse, over) => {
     process.env.BILLING_MODE = 'enabled';
-    const id = handsDraft(profile);
-    const q = await call(quoteSkillRoute, OWNER, body(id, over));
+    const q = await call(quoteSkillRoute, OWNER, body(handsDraft(profile, inUse), over));
     expect(q.status).toBe(200);
-    expect(q.body.credits).toBe(quotePresetCredits(HANDS_ON, 12_000, { inUseReference: made }));
-    expect(q.body.credits).toBe(quotePresetCredits(HANDS_ON, 12_000) + (made ? IN_USE_REFERENCE_CREDITS : 0));
+    expect(q.body.credits).toBe(quotePresetCredits(HANDS_ON, 12_000));
   });
 
-  it('says what it will show, and that the original can be chosen instead', async () => {
+  it('says what the hands shots will show, and that the original can be chosen instead', async () => {
     const id = handsDraft(PERFUME);
     const on = await call(quoteSkillRoute, OWNER, body(id));
     expect(on.body.in_use_reference).toEqual({
-      made: true,
+      status: 'made',
+      used: true,
       use_original_product_photo: false,
+      image_url: MADE.url,
       used_state: PERFUME.used_state,
       removed_parts: ['silver crown cap'],
-      credits: IN_USE_REFERENCE_CREDITS,
     });
     const off = await call(quoteSkillRoute, OWNER, body(id, { use_original_product_photo: true }));
-    expect(off.body.in_use_reference).toMatchObject({ made: false, use_original_product_photo: true, credits: 0 });
+    expect(off.body.in_use_reference).toMatchObject({ status: 'made', used: false, use_original_product_photo: true, image_url: MADE.url });
+    const failed = await call(quoteSkillRoute, OWNER, body(handsDraft(PERFUME, FAILED)));
+    expect(failed.body.in_use_reference).toMatchObject({ status: 'failed', used: false, message: expect.stringMatching(/original photo/) });
     const none = await call(quoteSkillRoute, OWNER, body(handsDraft({ ...PERFUME, differs_from_photo: false })));
     expect(none.body.in_use_reference).toBeNull();
   });
 
-  it('a body cannot price itself out of the step: the route decides `in_use_reference`', async () => {
-    process.env.BILLING_MODE = 'enabled';
-    const q = await call(quoteSkillRoute, OWNER, body(handsDraft(PERFUME), { in_use_reference: false }));
-    expect(q.body.credits).toBe(quotePresetCredits(HANDS_ON, 12_000, { inUseReference: true }));
+  it('a stored value that is not an In-use Reference is none', async () => {
+    const q = await call(quoteSkillRoute, OWNER, body(handsDraft(PERFUME, { status: 'made', url: 'javascript:alert(1)' } as never)));
+    expect(q.status).toBe(200);
+    expect(q.body.in_use_reference).toBeNull();
   });
 
-  it('a Preset with nobody on screen never quotes one, and takes no override', () => {
-    expect(quoteSkillCredits('make_product_hero', { duration_ms: 12_000, in_use_reference: true })).toBe(quotePresetCredits(PRODUCT_HERO, 12_000));
+  it('a Preset with nobody on screen never uses one, and takes no override', async () => {
     expect('use_original_product_photo' in (SKILLS.make_product_hero.inputSchema.safeParse(body('00000000-0000-4000-8000-000000000000')) as { data: object }).data).toBe(false);
+    expect(quoteSkillCredits('make_product_hero', { duration_ms: 12_000, in_use_reference: true })).toBe(quotePresetCredits(PRODUCT_HERO, 12_000));
   });
 });
 
 describe('the run', () => {
   it.each([
-    [{}, true],
-    [{ use_original_product_photo: true }, false],
-  ] as const)('stores the step for the reservation and hands the worker the Profile and the override (%o)', async (over, made) => {
-    const id = handsDraft(PERFUME, 12_400);
+    ['uses the draft’s In-use Reference', {}, MADE, MADE.url],
+    ['uses the original photo when asked', { use_original_product_photo: true }, MADE, null],
+    ['uses the original photo when the edit failed', {}, FAILED, null],
+  ] as const)('%s: nothing more to reserve, the worker gets the image only when used', async (_why, over, inUse, url) => {
+    process.env.BILLING_MODE = 'enabled';
+    TABLES.user_credits = [{ user_id: OWNER, monthly_credits_remaining: 10_000, purchased_balance: 0 }];
+    const id = handsDraft(PERFUME, inUse, 12_400);
     const r = await call(runSkillRoute, OWNER, body(id, over));
     expect(r.status).toBe(202);
     const run = TABLES.skill_runs.find((s) => s.id === r.body.skill_run_id)!;
-    expect((run.input as Row).in_use_reference).toBe(made);
-    // The in-flight reservation prices exactly what the quote did.
-    expect(quoteSkillCredits('make_hands_on', run.input as Record<string, unknown>)).toBe(
-      quotePresetCredits(HANDS_ON, 12_400, { inUseReference: made }),
-    );
-    const [wf] = started;
-    const args = wf.opts.args[0] as Row;
+    expect(run.input as Row).not.toHaveProperty('in_use_reference');
+    // The in-flight reservation prices exactly what the quote did: the shots alone.
+    expect(quoteSkillCredits('make_hands_on', run.input as Record<string, unknown>)).toBe(quotePresetCredits(HANDS_ON, 12_400));
+    const args = started[0].opts.args[0] as Row;
     expect(args.product_profile).toEqual(PERFUME);
-    expect(args.use_original_product_photo).toBe(!made);
-    expect((r.body.in_use_reference as Row).made).toBe(made);
+    expect(args.in_use_reference_url ?? null).toBe(url);
+    expect(args).not.toHaveProperty('use_original_product_photo');
+    expect((r.body.in_use_reference as Row).used).toBe(url !== null);
   });
 
-  it('a draft from before the Profile renders as before: no Profile, no step', async () => {
+  it('a draft from before the Profile renders as before: no Profile, no In-use Reference', async () => {
     const r = await call(runSkillRoute, OWNER, body(handsDraft(null)));
     expect(r.status).toBe(202);
     const args = started[0].opts.args[0] as Row;
     expect(args.product_profile).toBeNull();
-    expect((TABLES.skill_runs[0].input as Row).in_use_reference).toBe(false);
+    expect(args.in_use_reference_url ?? null).toBeNull();
   });
 });
 
@@ -311,8 +335,11 @@ describe('the Shot Plan shows the lines the worker adds', () => {
     expect(product.product_reference).toBe('product_photo');
   });
 
-  it('with the original photo: the Scale Anchor only', async () => {
-    const r = await call(shotPlanRoute, OWNER, body(handsDraft(PERFUME), { use_original_product_photo: true }));
+  it.each([
+    ['with the original photo', MADE, { use_original_product_photo: true }],
+    ['when the edit failed', FAILED, {}],
+  ] as const)('%s: the Scale Anchor only', async (_why, inUse, over) => {
+    const r = await call(shotPlanRoute, OWNER, body(handsDraft(PERFUME, inUse), over));
     const hands = (r.body.shots as Row[]).find((s) => s.shows === 'hands')!;
     expect(ids(hands, 'video')).toContain('scale_anchor');
     expect(ids(hands, 'video')).not.toContain('in_use_reference');

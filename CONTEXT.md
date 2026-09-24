@@ -49,7 +49,7 @@ What the system understands about one product from its photo and Product Details
 _Avoid_: product metadata, product analysis
 
 **In-use Reference**:
-An edited product image showing the product in the state it is used in (e.g. a perfume bottle uncapped), product only, used as the product reference of hands and person shots instead of the packshot (product shots keep the packshot). Made by the render, only when the Product Profile says the used state differs from the photo; priced in the quote, shown to the user, and skipped when the user chooses the original photo instead.
+An edited product image showing the product in the state it is used in (e.g. a perfume bottle uncapped), product only, used as the product reference of hands and person shots instead of the packshot (product shots keep the packshot). Made when the draft is made, right after the Product Profile and only when it says the used state differs from the photo (free, like the rest of drafting), stored on the draft and shown next to the photo before the user confirms, with "use original photo instead" always offered. A render reuses it, never making or charging it again. A failed edit leaves the draft without one, flagged, and the render uses the original photo; a re-voice keeps it, and an edited Profile that still differs, or another product photo, makes a new one.
 _Avoid_: modified product photo
 
 **Scale Anchor**:

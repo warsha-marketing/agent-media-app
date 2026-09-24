@@ -25,7 +25,6 @@ import { DEFAULT_SHOT_VIDEO, shotClipCredits, shotClipUsd, type ShotVideo } from
 import type { MusicBedTrack } from './music-bed/types.js';
 import type { ModestyDefault, ShotSubject } from './modesty.js';
 import { STARTING_FRAME_CREDITS, STARTING_FRAME_USD, type StartingFrame } from './starting-frames.js';
-import { IN_USE_REFERENCE_CREDITS, IN_USE_REFERENCE_USD, presetTakesInUseReference } from './in-use-reference.js';
 
 /** Clip lengths a Preset renders from. 15 s clips are never needed: two clips
  *  (10 + 5) already cover the longest allowed speech. */
@@ -269,38 +268,24 @@ export function shotVideo(preset: Pick<PresetDefinition, 'shotKinds'>, kind: str
   return (preset.shotKinds as Record<string, { video?: ShotVideo }>)[kind]?.video ?? DEFAULT_SHOT_VIDEO;
 }
 
-/** The render steps a quote prices beyond the Preset's own plan (#31). */
-export interface PresetQuoteOptions {
-  /**
-   * The render makes an In-use Reference (inUseReferenceNeeded: the Profile's
-   * used state differs from the photo and the user kept it). Ignored for a
-   * Preset with no hands or person shot, which never makes one.
-   */
-  inUseReference?: boolean;
-}
-
-const takesInUse = (preset: PresetDefinition, opts?: PresetQuoteOptions) =>
-  opts?.inUseReference === true && presetTakesInUseReference(preset);
-
 /**
  * Credits for rendering `durationMs` of speech under `preset`: its planned
  * clips, each priced from its kind's model chain (shotClipCredits: the same
  * price the worker charges whichever model of the chain runs), plus their
- * starting frames, plus the In-use Reference when the render makes one (#31).
+ * starting frames. (The In-use Reference, #31, is made free at drafting: the
+ * render reuses it and never prices it.)
  */
-export function quotePresetCredits(preset: PresetDefinition, durationMs: number, opts?: PresetQuoteOptions): number {
-  const shots = planPresetShots(preset, durationMs).reduce((sum, s) => {
+export function quotePresetCredits(preset: PresetDefinition, durationMs: number): number {
+  return planPresetShots(preset, durationMs).reduce((sum, s) => {
     const frame = shotFrame(preset, s.kind);
     return sum + shotClipCredits(shotVideo(preset, s.kind), s.seconds) + (frame ? STARTING_FRAME_CREDITS[frame] : 0);
   }, 0);
-  return shots + (takesInUse(preset, opts) ? IN_USE_REFERENCE_CREDITS : 0);
 }
 
-/** Provider USD for rendering `durationMs` of speech under `preset`: its planned clips (each shot worst case: every model of its chain run) plus their starting frames, plus the In-use Reference when made. */
-export function presetProviderUsd(preset: PresetDefinition, durationMs: number, opts?: PresetQuoteOptions): number {
-  const shots = planPresetShots(preset, durationMs).reduce((sum, s) => {
+/** Provider USD for rendering `durationMs` of speech under `preset`: its planned clips (each shot worst case: every model of its chain run) plus their starting frames. */
+export function presetProviderUsd(preset: PresetDefinition, durationMs: number): number {
+  return planPresetShots(preset, durationMs).reduce((sum, s) => {
     const frame = shotFrame(preset, s.kind);
     return sum + shotClipUsd(shotVideo(preset, s.kind), s.seconds) + (frame ? STARTING_FRAME_USD[frame] : 0);
   }, 0);
-  return shots + (takesInUse(preset, opts) ? IN_USE_REFERENCE_USD : 0);
 }

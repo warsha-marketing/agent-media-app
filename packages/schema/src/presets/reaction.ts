@@ -68,15 +68,15 @@ export const REACTION = {
   /** Arms covered by default (sleeved at the least); a woman's hijab on by default for Gulf. */
   modesty: STANDARD_MODESTY,
   budget: {
-    /** The most one render may charge: four 5 s clips (two pairs) for 10–15 s of speech, plus the In-use Reference (35, #31) when made. */
-    maxCredits: 595,
+    /** The most one render may charge: four 5 s clips (two pairs) for 10–15 s of speech. */
+    maxCredits: 560,
     /**
      * The most one render may cost us at the provider (the same four clips),
      * worst case: each of the two person shots fails on ModelArk Mini ($0.60,
      * a placeholder) and on Kling O3 Pro ($0.56) after costing us, and then
-     * renders on Veo 3.1 ($1.60), plus two product clips ($0.60 each), plus
-     * the In-use Reference ($0.25, #31) when made.
+     * renders on Veo 3.1 ($1.60), plus two product clips ($0.60 each). (The
+     * In-use Reference, #31, is the draft's, made free at drafting.)
      */
-    maxProviderUsd: 6.97,
+    maxProviderUsd: 6.72,
   },
 } as const satisfies PresetDefinition<ReactionShotKind>;

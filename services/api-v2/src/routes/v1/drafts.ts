@@ -15,7 +15,9 @@
  *                                           product_image_url? }        → 201 { draft }
  *
  * product_image_url (#30) is the user's own uploaded product photo; Claude
- * (vision) reads it into the draft's Product Profile. An edited
+ * (vision) reads it into the draft's Product Profile, and when the Profile
+ * says the product is used in another state, gpt-image edits it into the
+ * draft's In-use Reference (#31, free, never failing the draft). An edited
  * product_profile on re-voice makes a new draft like a Script edit.
  *
  * voice_id is an Approved Voice of the Dialect (GET /v1/voices, #7); anything
@@ -174,7 +176,7 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
       ),
       '/v1/drafts/product-hero/revoice': post(
         'revoiceProductHeroDraft',
-        `Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief, Product Details, Product Profile and Dialect carry over. An edited product_profile replaces the parent's and, unless product_interaction is also given, the Product Interaction is re-written from it. The Script may carry Delivery Tags: ${tagList}.`,
+        `Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief, Product Details, Product Profile, In-use Reference and Dialect carry over. An edited product_profile replaces the parent's and, unless product_interaction is also given, the Product Interaction is re-written from it; if its used state differs from the photo, a new In-use Reference is made (so is one for another product_image_url). The Script may carry Delivery Tags: ${tagList}.`,
         bodySchema(RevoiceDraftInputSchema, 'revoice_draft_input'),
         `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_STRAY_BRACKETS: a [ or ] outside a Delivery Tag (carries found); SCRIPT_NO_ARABIC: no Arabic text to speak (Latin words such as a brand name are allowed in an edit); DIALECT_MISMATCH (dialect differs from the parent's); ${guardrail}; PRODUCT_PROFILE_BREAKS_GUARDRAIL: the edited Product Profile's words contradict a Guardrail (carries guardrail and matched), or the one read from the photo does (see below); ${usedState}; ${bannedMotion}; ${photo}; ${PRESET_NOT_QUALIFIED}; ${voiceRefused}`,
       ),
@@ -211,6 +213,29 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
                   'Product Profile: what the system understands about the product from its photo and Product Details — category, real size (dimensions, size_class), parts and the state it is in while used (used_state; differs_from_photo when the photo shows another state), how it is used (interaction_verbs, grip), physics_risks for video, and confidence (0–1). Edit it by re-voicing with product_profile (a new draft).',
               },
               { type: 'null', description: 'No Product Profile: the draft was made without a product photo (or before #30).' },
+            ],
+          },
+          in_use_reference: {
+            description:
+              'In-use Reference: the product photo edited into the state it is used in (e.g. a perfume uncapped), product only — made free when drafting, right after the Product Profile, when the Profile says the used state differs from the photo. The hands and person shots of a render use it as their product reference (product shots keep the photo), unless the render sets use_original_product_photo: true ("Use original photo instead"). A re-voice keeps it; an edited Profile that still differs, or another product photo, makes a new one.',
+            anyOf: [
+              {
+                type: 'object',
+                properties: {
+                  status: { type: 'string', enum: ['made'] },
+                  image_url: { type: 'string', format: 'uri' },
+                  used_state: { type: 'string' },
+                  removed_parts: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['status', 'image_url', 'used_state', 'removed_parts'],
+              },
+              {
+                type: 'object',
+                description: 'The edit failed: the draft is fine, and a render uses the original photo. Re-voice to try again.',
+                properties: { status: { type: 'string', enum: ['failed'] }, message: { type: 'string' } },
+                required: ['status', 'message'],
+              },
+              { type: 'null', description: 'None needed: the product is used as the photo shows it, or the draft has no Product Profile.' },
             ],
           },
           script: {

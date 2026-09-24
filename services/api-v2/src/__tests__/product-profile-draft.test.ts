@@ -30,9 +30,11 @@ import { VISION_MAX_INPUT_PIXELS, ownProductPhotoKey, toVisionJpeg } from '../dr
 import { DraftError } from '../drafts/product-hero-draft.js';
 import { interactionStateIssue } from '../drafts/interaction-state.js';
 import type { ProductProfile } from '@agentmedia/schema';
+import { inUseReferencePrompt } from '@agentmedia/shot-prompts';
 import type {
   DraftDeps,
   DraftRow,
+  MakeInUseReferenceInput,
   ProfileProductInput,
   WriteInteractionInput,
   WriteScriptInput,
@@ -100,7 +102,13 @@ function silentMp3(ms: number): Buffer {
 interface Harness {
   baseUrl: string;
   rows: DraftRow[];
-  calls: { profile: ProfileProductInput[]; write: WriteScriptInput[]; interaction: WriteInteractionInput[]; voice: string[] };
+  calls: {
+    profile: ProfileProductInput[];
+    write: WriteScriptInput[];
+    interaction: WriteInteractionInput[];
+    voice: string[];
+    inUse: MakeInUseReferenceInput[];
+  };
   close: () => Promise<void>;
 }
 
@@ -116,9 +124,11 @@ async function start(opts: {
   interactions?: Array<string | null>;
   /** Product Interactions the Profile-only writer returns, in order. */
   rewrites?: Array<string | null>;
+  /** The In-use Reference edit fails (#31). */
+  inUseFails?: boolean;
 }): Promise<Harness> {
   const rows: DraftRow[] = [];
-  const calls: Harness['calls'] = { profile: [], write: [], interaction: [], voice: [] };
+  const calls: Harness['calls'] = { profile: [], write: [], interaction: [], voice: [], inUse: [] };
   const profiles = [...(opts.profiles ?? [])];
   const interactions = [...(opts.interactions ?? [])];
   const rewrites = [...(opts.rewrites ?? [])];
@@ -137,6 +147,12 @@ async function start(opts: {
       return { product_interaction: rewrites.shift() ?? null, model: 'claude-test' };
     },
     productPhotoKey: (url, userId) => ownProductPhotoKey(url, userId, PUBLIC),
+    makeInUseReference: async (input) => {
+      calls.inUse.push(input);
+      if (opts.inUseFails) throw new Error('openai 400: the image was refused');
+      const key = `vnext/in-use/${input.userId}/${input.draftId}.png`;
+      return { key, url: `${PUBLIC}/${key}`, model: 'gpt-image-test' };
+    },
     voiceScript: async ({ script, voice }) => {
       calls.voice.push(script);
       return {
@@ -454,6 +470,135 @@ describe('Product Profile — edited by the user, re-drafted', () => {
     expect(given.status).toBe(201);
     expect(h.calls.profile).toHaveLength(1);
     expect(given.body.draft.product_profile).toEqual(JAR_PROFILE);
+  });
+});
+
+// ── The In-use Reference, at drafting time (#31) ─────────────────────────────
+
+describe('In-use Reference — made at drafting, right after the Product Profile', () => {
+  const PHOTO_KEY = 'vnext/uploads/user-a/6f1c2d3e-0000-4000-8000-000000000001.jpg';
+  const OTHER_PHOTO = '7a2b3c4d-0000-4000-8000-000000000002.png';
+
+  it('perfume (used uncapped, the photo shows the cap): a product-only edit of the photo, stored and returned', async () => {
+    const h = await start({ profiles: [PERFUME_PROFILE], interactions: [PERFUME_ACTION] });
+    const r = await create(h, { product_details: PERFUME_DETAILS, product_image_url: photoOf('user-a') });
+    expect(r.status).toBe(201);
+    const id = r.body.draft.id;
+    // The same edit prompt the render used to make: product only, the used state, the cap removed.
+    expect(h.calls.inUse).toEqual([{ userId: 'user-a', draftId: id, photoKey: PHOTO_KEY, prompt: inUseReferencePrompt(PERFUME_PROFILE) }]);
+    const key = `vnext/in-use/user-a/${id}.png`;
+    expect(r.body.draft.in_use_reference).toEqual({
+      status: 'made',
+      image_url: `${PUBLIC}/${key}`,
+      used_state: PERFUME_PROFILE.used_state,
+      removed_parts: ['cap'],
+    });
+    expect(h.rows[0].in_use_reference).toEqual({
+      status: 'made',
+      key,
+      url: `${PUBLIC}/${key}`,
+      source_photo_key: PHOTO_KEY,
+      used_state: PERFUME_PROFILE.used_state,
+      removed_parts: ['cap'],
+      model: 'gpt-image-test',
+      made_at: expect.any(String),
+    });
+  });
+
+  it('a product used as the photo shows it (coffee), or no photo at all: none, and no edit', async () => {
+    const h = await start({ profiles: [COFFEE_PROFILE], interactions: [COFFEE_ACTION, null] });
+    const coffee = await create(h, { product_image_url: photoOf('user-a') });
+    expect(coffee.status).toBe(201);
+    expect(coffee.body.draft.in_use_reference).toBeNull();
+    const bare = await create(h);
+    expect(bare.status).toBe(201);
+    expect(bare.body.draft.in_use_reference).toBeNull();
+    expect(h.calls.inUse).toHaveLength(0);
+  });
+
+  it('an edit that fails never fails the draft: no In-use Reference, flagged, and the render uses the original photo', async () => {
+    const h = await start({ profiles: [PERFUME_PROFILE], interactions: [PERFUME_ACTION], inUseFails: true });
+    const r = await create(h, { product_details: PERFUME_DETAILS, product_image_url: photoOf('user-a') });
+    expect(r.status).toBe(201);
+    expect(r.body.draft.script).toBe(SCRIPT);
+    expect(r.body.draft.in_use_reference).toEqual({
+      status: 'failed',
+      message: expect.stringMatching(/could not make .*original photo/i),
+    });
+    expect(h.rows[0].in_use_reference).toMatchObject({ status: 'failed', source_photo_key: PHOTO_KEY, reason: expect.stringContaining('refused') });
+    // The provider's words stay on the row, for the operators.
+    expect(JSON.stringify(r.body.draft)).not.toContain('openai');
+  });
+
+  describe('on re-voice', () => {
+    async function parentDraft(opts: Parameters<typeof start>[0] = {}) {
+      const h = await start({ profiles: [PERFUME_PROFILE], interactions: [PERFUME_ACTION], rewrites: [PERFUME_ACTION, PERFUME_ACTION], ...opts });
+      const r = await create(h, { product_details: PERFUME_DETAILS, product_image_url: photoOf('user-a') });
+      expect(r.status).toBe(201);
+      return { h, parent: r.body.draft };
+    }
+    const revoice = (h: Harness, parent: { id: string; script: string }, extra: Record<string, unknown> = {}) =>
+      post(h, '/v1/drafts/product-hero/revoice', { script: parent.script, dialect: 'levantine', parent_draft_id: parent.id, ...extra });
+
+    it('inherits the parent’s (no second edit), also when the same photo is sent back', async () => {
+      const { h, parent } = await parentDraft();
+      const a = await revoice(h, parent);
+      const b = await revoice(h, parent, { product_image_url: photoOf('user-a') });
+      for (const r of [a, b]) {
+        expect(r.status).toBe(201);
+        expect(r.body.draft.in_use_reference).toEqual(parent.in_use_reference);
+      }
+      expect(h.rows[1].in_use_reference).toEqual(h.rows[0].in_use_reference);
+      expect(h.calls.inUse).toHaveLength(1);
+    });
+
+    it('an edited Profile whose used state differs makes a new one, from the parent’s photo', async () => {
+      const { h, parent } = await parentDraft();
+      const edited = { ...PERFUME_PROFILE, used_state: 'uncapped, atomiser raised', parts: [{ name: 'gold cap', removable: true }] };
+      const r = await revoice(h, parent, { product_profile: edited });
+      expect(r.status).toBe(201);
+      expect(h.calls.inUse).toHaveLength(2);
+      expect(h.calls.inUse[1]).toEqual({ userId: 'user-a', draftId: r.body.draft.id, photoKey: PHOTO_KEY, prompt: inUseReferencePrompt(edited) });
+      expect(r.body.draft.in_use_reference).toMatchObject({ status: 'made', used_state: 'uncapped, atomiser raised', removed_parts: ['gold cap'] });
+      expect(r.body.draft.in_use_reference.image_url).not.toBe(parent.in_use_reference.image_url);
+    });
+
+    it('an edited Profile whose used state is the photo’s drops it', async () => {
+      const { h, parent } = await parentDraft();
+      const r = await revoice(h, parent, { product_profile: { ...PERFUME_PROFILE, differs_from_photo: false } });
+      expect(r.status).toBe(201);
+      expect(r.body.draft.in_use_reference).toBeNull();
+      expect(h.calls.inUse).toHaveLength(1);
+    });
+
+    it('a changed product photo makes a new one from that photo (the Profile carries over)', async () => {
+      const { h, parent } = await parentDraft();
+      const r = await revoice(h, parent, { product_image_url: photoOf('user-a', OTHER_PHOTO) });
+      expect(r.status).toBe(201);
+      expect(h.calls.inUse).toHaveLength(2);
+      expect(h.calls.inUse[1].photoKey).toBe(`vnext/uploads/user-a/${OTHER_PHOTO}`);
+      expect(r.body.draft.product_profile).toEqual(PERFUME_PROFILE);
+      expect(h.calls.profile).toHaveLength(1);
+      // Someone else's photo is refused, before anything is paid.
+      const theirs = await revoice(h, parent, { product_image_url: photoOf('user-b') });
+      expect(theirs.status).toBe(422);
+      expect(theirs.body.error.code).toBe('PRODUCT_IMAGE_NOT_HOSTED');
+      expect(h.calls.inUse).toHaveLength(2);
+    });
+
+    it('a parent whose edit failed is tried again', async () => {
+      const { h, parent } = await parentDraft({ inUseFails: true });
+      expect(parent.in_use_reference.status).toBe('failed');
+      const r = await revoice(h, parent);
+      expect(r.status).toBe(201);
+      expect(h.calls.inUse).toHaveLength(2);
+      expect(h.calls.inUse[1].photoKey).toBe(PHOTO_KEY);
+    });
+  });
+
+  it('documents it on the draft', () => {
+    const draft = (draftOpenApi().schemas as Record<string, { properties: Record<string, unknown> }>).Draft;
+    expect(JSON.stringify(draft.properties.in_use_reference)).toMatch(/Use original photo instead|use_original_product_photo/);
   });
 });
 
