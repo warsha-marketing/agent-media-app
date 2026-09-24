@@ -93,3 +93,26 @@ describe('insertDeliveryTag', () => {
     assert.deepEqual(insertDeliveryTag('أ', 'laughs', 1, 1), { script: 'أ [laughs] ', caret: 11 });
   });
 });
+
+// ── Product Profile (#30): the web field lists and limits mirror the schema ──
+
+describe('Product Profile: web field mirror', () => {
+  it('lists the same categories and size classes, in the same order, with the same limits', async () => {
+    const profile = await import('../../packages/schema/src/product-profile.ts');
+    const web = await import('../../apps/web/lib/product-profile-flow.ts');
+    assert.deepEqual(web.PROFILE_CATEGORIES.map((c) => c.id), [...profile.PRODUCT_CATEGORIES]);
+    assert.deepEqual(web.PROFILE_SIZE_CLASSES.map((c) => c.id), [...profile.SIZE_CLASSES]);
+    const shape = profile.ProductProfileSchema.shape;
+    // The web's tidy stays within what the schema accepts.
+    const edited = web.applyProfileFields(
+      {
+        category: 'other', dimensions: { height_cm: null, width_cm: null, volume_ml: null }, size_class: 'palm', parts: [],
+        used_state: 'x', differs_from_photo: false, interaction_verbs: ['use'], grip: 'one hand', physics_risks: [], confidence: 0.5,
+      },
+      { category: 'home', size_class: 'large', used_state: 'u'.repeat(500), how_used: Array.from({ length: 9 }, (_, i) => `${'v'.repeat(40)}${i}`).join(',') },
+    );
+    assert.ok(profile.ProductProfileSchema.safeParse(edited).success, 'an edited Profile passes the schema');
+    assert.ok(shape.used_state.safeParse('u'.repeat(web.USED_STATE_MAX)).success);
+    assert.ok(!shape.used_state.safeParse('u'.repeat(web.USED_STATE_MAX + 1)).success);
+  });
+});
