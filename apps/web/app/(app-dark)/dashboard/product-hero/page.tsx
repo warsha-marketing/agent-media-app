@@ -1004,7 +1004,7 @@ export default function ProductHeroPage() {
               readOnly={renderLocked}
               maxLength={PRODUCT_INTERACTION_MAX}
               rows={2}
-              placeholder="e.g. holds the uncapped bottle, sprays once on the inner wrist, brings the wrist to the nose, smiles"
+              placeholder="e.g. holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles"
               className="w-full resize-y rounded-xl px-4 py-3 text-sm outline-none"
               style={field}
             />

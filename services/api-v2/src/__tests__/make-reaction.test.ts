@@ -251,7 +251,7 @@ describe('make_reaction — the saved character', () => {
   });
 
   it('hands the draft’s Product Interaction to the render (#25), and null for a draft without one', async () => {
-    const interaction = 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles';
+    const interaction = 'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles';
     const r = await call(runSkillRoute, OWNER, body(seedDraft({ product_interaction: interaction })));
     expect(r.status).toBe(202);
     expect(workflowInput().product_interaction).toBe(interaction);

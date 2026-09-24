@@ -497,7 +497,7 @@ describe('makeReactionWorkflow — provider cost counts every attempt (#25)', ()
 
 describe('makeReactionWorkflow — Product Interaction (#25)', () => {
   const EXAMPLES = {
-    perfume: 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles',
+    perfume: 'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles',
     coffee: 'lifts the cup with both hands, takes one slow sip, lowers it and smiles',
     skincare: 'squeezes a small amount onto the back of the hand and gently rubs it in',
   };

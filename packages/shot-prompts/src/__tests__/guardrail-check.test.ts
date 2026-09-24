@@ -11,8 +11,8 @@ import { productInteractionGuardrailIssue } from '../index.js';
 
 describe('productInteractionGuardrailIssue — passes realistic use', () => {
   it.each([
-    'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles',
-    'Removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles.',
+    'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles',
+    'Holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles.',
     'lifts the cup with both hands, takes one slow sip, lowers it and smiles',
     'squeezes a small amount onto the back of the hand and gently rubs it in',
     'applies the skincare cream to the back of the hand',

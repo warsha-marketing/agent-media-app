@@ -184,7 +184,7 @@ export interface DraftRow {
   product_details: string | null;
   /**
    * Product Interaction (#25): how a real person uses the product, in English
-   * ("removes the cap, sprays once on the inner wrist, …"). Written with the
+   * ("holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, …"). Written with the
    * Script, editable (a new draft); the render adds it to every hands and
    * person shot. Null when there is none (every draft before #25).
    */

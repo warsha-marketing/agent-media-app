@@ -51,7 +51,7 @@ const PERFUME_PROFILE: ProductProfile = {
   confidence: 0.86,
 };
 const PERFUME_DETAILS = 'RUMI Royal Rituals — Eau de Parfum, 100 ml. Notes: Bergamot, Leather, Musk.';
-const PERFUME_ACTION = 'holds the uncapped bottle, sprays once on the inner wrist, brings the wrist to the nose, smiles';
+const PERFUME_ACTION = 'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles';
 
 const COFFEE_PROFILE: ProductProfile = {
   category: 'food_cafe',

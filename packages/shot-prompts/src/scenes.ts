@@ -11,7 +11,14 @@
  * them). `{name}` placeholders are filled from the Preset's own inputs
  * (Hands-on's `{hands}` and `{setting}`, promptVars). A hands or person shot's
  * `action` is the draft's Product Interaction (#25); every other field is the
- * Preset's. The defaults say what the #26 scenes said, split into fields.
+ * Preset's. The defaults hold to the video stage's simple_physics Guardrail and
+ * to the owner's rules from test M3 (#32): one main hand-and-product action per
+ * shot, the product already out of its packaging and in its used state (never
+ * unpacked, uncapped or taken apart on camera), never brought to a reacting
+ * face (a smell beat is on the skin, after the product is set down). Shots
+ * that show hands or a person carry no cinematic wording (shallow depth of
+ * field, smooth cinematic motion, golden hour, warm lamps): it makes skin look
+ * waxy on Seedance (ADR 0003), and the realism rules (#29) forbid it.
  *
  * A shot kind that starts from a frame (#18, Hands-on's product-in-hands image)
  * also has a frame scene: what the still shows. Not editable; the image-stage
@@ -117,15 +124,16 @@ export const PRODUCT_HERO_PROMPTS: PresetPrompts<ProductHeroShotKind> = {
 export const REACTION_PROMPTS: PresetPrompts<ReactionShotKind> = {
   shots: {
     reaction: {
-      framing: 'UGC-style reaction shot, medium close-up.',
+      framing: 'UGC-style reaction shot, medium close-up, filmed on a phone.',
       scene: 'The person reacts to the product.',
-      blocking: 'The person holds the product near their face.',
+      blocking:
+        'The product stays at chest height or on the surface in front of them, never near the face and never brought to the face. To smell it, they first set the product down, then smell the skin of the inner wrist.',
       performance:
-        'They react silently with ONE natural reaction: a warm genuine smile, a small approving nod, a moment of pleasant surprise, or eyes closing briefly while enjoying the scent.',
+        'They react silently with ONE natural reaction: a warm genuine smile, a small approving nod or a moment of pleasant surprise.',
       energy: 'natural',
-      camera_move: 'Gentle handheld feel.',
-      lens_feel: 'Shallow depth of field.',
-      lighting: 'Soft natural light.',
+      camera_move: 'Handheld phone camera with a slight natural sway.',
+      lens_feel: 'Everyday phone-camera look, the background in focus.',
+      lighting: 'Flat, even everyday daylight.',
     },
     product: {
       framing: 'Premium product commercial shot of the product.',
@@ -149,15 +157,16 @@ export const HAND_WORDS: Readonly<Record<HandGender, string>> = {
 
 /**
  * Where the hands are, as the prompts say it. The pre-Set wording: once a
- * Short has a Set (#33), shots name the Set by id instead.
+ * Short has a Set (#33), shots name the Set by id instead. Everyday daylight,
+ * the background in view: no golden hour, warm lamplight or blur (ADR 0003).
  */
 export const SETTING_WORDS: Readonly<Record<HandsOnSetting, string>> = {
   dressing_table: 'at an elegant dressing table with a softly lit mirror and a few tasteful accessories',
   car: 'inside a modern car, seen from the driver’s seat, daylight coming through the windscreen',
-  majlis: 'in a traditional Arabian majlis with floor cushions, patterned rugs and warm lamplight',
+  majlis: 'in a traditional Arabian majlis with floor cushions and patterned rugs, in bright daylight from the windows',
   kitchen: 'in a clean, modern home kitchen on a marble counter in soft morning light',
   desk: 'at a tidy modern work desk by a window in soft daylight',
-  outdoors: 'outdoors in soft golden-hour daylight with a softly blurred garden behind',
+  outdoors: 'outdoors in bright, even daylight with a garden behind',
 };
 
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === 'string' && (list as readonly string[]).includes(v);
@@ -165,23 +174,27 @@ const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => type
 /**
  * Each hands shot starts from a product-in-hands frame (a gpt-image edit of the
  * product photo, frameScenes), then animated silently; the product closer
- * animates the product photo itself.
+ * animates the product photo itself. The frame already shows the product out
+ * of its packaging and in its used state, so the clip has one continuous
+ * action: the hands use it once (the Product Interaction says how).
  */
 export const HANDS_ON_PROMPTS: PresetPrompts<HandsOnShotKind> = {
   frameScenes: {
     hands:
-      'Photorealistic first-person (POV) photograph, vertical composition: {hands} have just lifted the product out of its open packaging and hold it toward the camera, {setting}. ' +
-      'The product is sharp and in focus, label facing the camera. Natural, flattering light, realistic skin texture, shallow depth of field.',
+      'Photorealistic first-person (POV) photograph, vertical composition: {hands} hold the product toward the camera, {setting}. ' +
+      'The product is already out of any packaging and in the state it is used in, sharp and in focus, label facing the camera. ' +
+      'Everyday daylight, realistic skin texture, the background in focus.',
   },
   shots: {
     hands: {
       framing: 'First-person POV product video.',
-      scene: '{hands} lift the product clear of its packaging, turn it slowly to show it from a few angles and use it naturally.',
-      blocking: 'The shot ends with the product held up toward the camera, label facing the lens.',
+      scene: '{hands} hold the product, already out of its packaging and in the state it is used in, and use it once.',
+      blocking: 'The label stays toward the camera.',
       environment_interaction: 'The hands use it {setting}.',
       energy: 'natural',
-      camera_move: 'Smooth, gentle handheld motion.',
-      lighting: 'Natural light.',
+      camera_move: 'Handheld phone camera with a slight natural sway.',
+      lens_feel: 'Everyday phone-camera look, the background in focus.',
+      lighting: 'Everyday daylight.',
     },
     product: {
       framing: 'Closing product shot of the product.',

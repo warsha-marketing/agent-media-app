@@ -271,7 +271,7 @@ describe('stepper', () => {
 });
 
 describe('Product Interaction edits (#25)', () => {
-  const PERFUME = 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles';
+  const PERFUME = 'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles';
   const draft = { script: 'س', product_interaction: PERFUME };
 
   it('an unchanged interaction is not an edit and is not sent (the parent’s carries over)', () => {

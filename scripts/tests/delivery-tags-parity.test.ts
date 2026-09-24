@@ -72,7 +72,7 @@ describe('Product Interaction: one limit and one tidy, everywhere', () => {
       undefined,
       '',
       '   ',
-      '  removes the cap,\n sprays once on the inner wrist  ',
+      '  holds the uncapped bottle,\n sprays once on the inner wrist  ',
       'x'.repeat(PRODUCT_INTERACTION_MAX_CHARS + 50),
       `${'a'.repeat(PRODUCT_INTERACTION_MAX_CHARS - 1)} b`,
       'يرش مرة على المعصم\t ثم يشمّه',

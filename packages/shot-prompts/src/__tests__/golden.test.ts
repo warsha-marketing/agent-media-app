@@ -3,9 +3,29 @@
 // GOLDEN (#28): the default composed Shot Prompts of every Preset, exactly as
 // the worker hands them to presetClip / presetStartingFrame (reference tokens
 // still in; each provider adapter swaps them for its syntax). A render without
-// edits renders these words. They say what the #26 prompts said, now composed
-// from each shot's structured fields in the fixed order, with the Guardrails
-// per stage (and #28's simple-physics line on hands and person clips).
+// edits renders these words, composed from each shot's structured fields in
+// the fixed order, with the Guardrails per stage.
+//
+// How they differ from #26's prompts, on purpose (owner feedback from test M3,
+// #29 #32 #34, and ADR 0003):
+//   - shot ids are roles (hero, detail, reaction, product-closer, hands-use),
+//     not #28's kind + ordinal (hero-1, product-1, …);
+//   - Hands-on hands frame and clip: the product is already out of its
+//     packaging and in its used state, and the hands use it once — no lifting
+//     it clear of the packaging, no turning it to a few angles and using it
+//     (one main action per shot; the simple_physics Guardrail);
+//   - Reaction: the product is never near or brought to the face (#26 had
+//     "holds the product near their face"); a smell beat is on the skin of the
+//     wrist after the product is set down; no "enjoying the scent" beat;
+//   - hands and person shots drop the cinematic wording (shallow depth of
+//     field, flattering light) for the realism rules' phone-camera look, sharp
+//     background and flat everyday daylight (#26: "Soft natural light"); the
+//     Hands-on settings lose golden hour, warm lamplight and a blurred garden;
+//   - the perfume Product Interaction starts from the uncapped bottle and sets
+//     it down before the wrist rises ("removes the cap, …, brings the wrist to
+//     the nose" is gone);
+//   - #28's simple-physics line is on every hands and person clip.
+// Product-only shots (Product Hero, the closers) say what #26 said.
 //
 // A change here changes every Short of that Preset: update the snapshot only on
 // purpose (vitest -u), and say why in the commit.
@@ -23,7 +43,7 @@ import {
   type ShotPlanPreset,
 } from '../index.js';
 
-const PERFUME = 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles';
+const PERFUME = 'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles';
 const COVERED: Modesty = { arms: 'covered', hijab: false };
 const GULF: Modesty = { arms: 'covered', hijab: true };
 
@@ -57,7 +77,7 @@ describe('the default Shot Prompts (golden)', () => {
       [
         {
           "shot_id": "reaction",
-          "video": "The person is exactly the person in {{person_image}}: identical face, hair, skin and features. The product is exactly the product in {{start_image}}: it keeps its exact shape, colours, logo and label text. UGC-style reaction shot, medium close-up. The person reacts to the product. The person holds the product near their face. They react silently with ONE natural reaction: a warm genuine smile, a small approving nod, a moment of pleasant surprise, or eyes closing briefly while enjoying the scent. How the product is used, as a real person uses it: removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles. Natural, everyday pace, like a real moment caught on a phone. Gentle handheld feel. Shallow depth of field. Soft natural light. The person never speaks: the mouth stays closed the whole shot, lips gently together, no talking, no mouthing words, no lip movement, no singing, no whispering. They react only with their eyes, eyebrows, a closed-mouth smile and small head movements. The hands and the product stay physically simple: one continuous action, the product already in the state it is used in, no parts appearing, vanishing or coming apart. The camera and the body may move freely. Modest styling: the person wears loose, modest clothing with long sleeves reaching the wrists and a high neckline; no bare arms or shoulders. She wears a neat hijab that fully covers her hair, ears and neck, the same in every frame. No text overlays, no captions. Vertical 9:16.",
+          "video": "The person is exactly the person in {{person_image}}: identical face, hair, skin and features. The product is exactly the product in {{start_image}}: it keeps its exact shape, colours, logo and label text. UGC-style reaction shot, medium close-up, filmed on a phone. The person reacts to the product. The product stays at chest height or on the surface in front of them, never near the face and never brought to the face. To smell it, they first set the product down, then smell the skin of the inner wrist. They react silently with ONE natural reaction: a warm genuine smile, a small approving nod or a moment of pleasant surprise. How the product is used, as a real person uses it: holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles. Natural, everyday pace, like a real moment caught on a phone. Handheld phone camera with a slight natural sway. Everyday phone-camera look, the background in focus. Flat, even everyday daylight. The person never speaks: the mouth stays closed the whole shot, lips gently together, no talking, no mouthing words, no lip movement, no singing, no whispering. They react only with their eyes, eyebrows, a closed-mouth smile and small head movements. The hands and the product stay physically simple: one continuous action, the product already in the state it is used in, no parts appearing, vanishing or coming apart. The camera and the body may move freely. Modest styling: the person wears loose, modest clothing with long sleeves reaching the wrists and a high neckline; no bare arms or shoulders. She wears a neat hijab that fully covers her hair, ears and neck, the same in every frame. No text overlays, no captions. Vertical 9:16.",
         },
         {
           "shot_id": "product-closer",
@@ -78,9 +98,9 @@ describe('the default Shot Prompts (golden)', () => {
     ).toMatchInlineSnapshot(`
       [
         {
-          "image": "The product is exactly the product in the reference image: it keeps its exact shape, colours, logo and label text. Photorealistic first-person (POV) photograph, vertical composition: a woman's hands with neat, natural nails have just lifted the product out of its open packaging and hold it toward the camera, at an elegant dressing table with a softly lit mirror and a few tasteful accessories. The product is sharp and in focus, label facing the camera. Natural, flattering light, realistic skin texture, shallow depth of field. How the product is used, as a real person uses it: removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles. Only the hands and forearms are in frame: no face, no other person. Modest styling: the arms are covered by long sleeves reaching the wrists; no bare forearms. No text overlays, no captions, no watermark.",
+          "image": "The product is exactly the product in the reference image: it keeps its exact shape, colours, logo and label text. Photorealistic first-person (POV) photograph, vertical composition: a woman's hands with neat, natural nails hold the product toward the camera, at an elegant dressing table with a softly lit mirror and a few tasteful accessories. The product is already out of any packaging and in the state it is used in, sharp and in focus, label facing the camera. Everyday daylight, realistic skin texture, the background in focus. How the product is used, as a real person uses it: holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles. Only the hands and forearms are in frame: no face, no other person. Modest styling: the arms are covered by long sleeves reaching the wrists; no bare forearms. No text overlays, no captions, no watermark.",
           "shot_id": "hands-use",
-          "video": "The video starts exactly from the frame in {{start_image}}, and the product keeps its exact shape, colours, logo and label text. First-person POV product video. A woman's hands with neat, natural nails lift the product clear of its packaging, turn it slowly to show it from a few angles and use it naturally. The shot ends with the product held up toward the camera, label facing the lens. The hands use it at an elegant dressing table with a softly lit mirror and a few tasteful accessories. How the product is used, as a real person uses it: removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles. Natural, everyday pace, like a real moment caught on a phone. Smooth, gentle handheld motion. Natural light. Only the hands and forearms are visible: no face, nobody speaks. The hands and the product stay physically simple: one continuous action, the product already in the state it is used in, no parts appearing, vanishing or coming apart. The camera and the body may move freely. Modest styling: the arms are covered by long sleeves reaching the wrists; no bare forearms. No text overlays, no captions. Vertical 9:16.",
+          "video": "The video starts exactly from the frame in {{start_image}}, and the product keeps its exact shape, colours, logo and label text. First-person POV product video. A woman's hands with neat, natural nails hold the product, already out of its packaging and in the state it is used in, and use it once. The label stays toward the camera. The hands use it at an elegant dressing table with a softly lit mirror and a few tasteful accessories. How the product is used, as a real person uses it: holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles. Natural, everyday pace, like a real moment caught on a phone. Handheld phone camera with a slight natural sway. Everyday phone-camera look, the background in focus. Everyday daylight. Only the hands and forearms are visible: no face, nobody speaks. The hands and the product stay physically simple: one continuous action, the product already in the state it is used in, no parts appearing, vanishing or coming apart. The camera and the body may move freely. Modest styling: the arms are covered by long sleeves reaching the wrists; no bare forearms. No text overlays, no captions. Vertical 9:16.",
         },
         {
           "shot_id": "product-closer",

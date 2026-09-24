@@ -41,7 +41,7 @@ function reactionInput(over: Partial<MakeReactionWorkflowInput> = {}): MakeReact
     character_image_url: 'https://r2.example.test/uploads/character.png',
     aspect_ratio: '9:16',
     modesty: { arms: 'covered', hijab: true },
-    product_interaction: 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles',
+    product_interaction: 'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles',
     ...over,
   };
 }

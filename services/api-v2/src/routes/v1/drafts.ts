@@ -199,7 +199,7 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
           product_interaction: {
             type: ['string', 'null'],
             description:
-              'Product Interaction: how a real person uses the product, in English (e.g. perfume: "removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles"). Written with the Script; the render adds it to every hands and person shot. Edit it by re-voicing with product_interaction (a new draft); carried over on re-voice otherwise.',
+              'Product Interaction: how a real person uses the product, in English (e.g. perfume: "holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles"). Written with the Script; the render adds it to every hands and person shot. Edit it by re-voicing with product_interaction (a new draft); carried over on re-voice otherwise.',
           },
           product_profile: {
             anyOf: [

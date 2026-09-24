@@ -284,7 +284,7 @@ describe('makeHandsOnWorkflow — failure refunds every charged child and releas
 
 describe('makeHandsOnWorkflow — Product Interaction (#25)', () => {
   it.each([
-    ['perfume', 'dressing_table', 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose'],
+    ['perfume', 'dressing_table', 'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose'],
     ['coffee', 'kitchen', 'lifts the cup and takes one slow sip'],
     ['skincare', 'dressing_table', 'squeezes a small amount onto the back of the hand and rubs it in'],
   ] as const)('%s: every hands frame and clip carries it as the action, with the Guardrails after; the product shot does not', async (_p, setting, interaction) => {

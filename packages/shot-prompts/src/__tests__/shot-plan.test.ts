@@ -43,6 +43,7 @@ import {
   composeShotPlan,
   displayReferences,
   effectiveEdits,
+  fillPrompt,
   presetPrompts,
   productInteractionAction,
   shotFieldProblem,
@@ -60,7 +61,7 @@ const HANDS: ShotPlanPreset = { ...HANDS_ON, ...HANDS_ON_PROMPTS } as ShotPlanPr
 const EVOLINK: ReferenceWords = { start: '@image1', person: '@image2' };
 const COVERED: Modesty = { arms: 'covered', hijab: false };
 const HIJAB: Modesty = { arms: 'covered', hijab: true };
-const PERFUME = 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles';
+const PERFUME = 'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles';
 /** The shots of a composed plan. */
 const shotsOf = (...args: Parameters<typeof composeShotPlan>) => composeShotPlan(...args).shots;
 const handsVars = HANDS_ON_PROMPTS.promptVars!({ hand_gender: 'female', setting: 'dressing_table' });
@@ -89,6 +90,61 @@ describe('the Preset prompt registry', () => {
         expect(p.shots[kind]?.scene, `${p.id} ${kind}`).toBeTruthy();
         expect(Boolean(p.frameScenes?.[kind]), `${p.id} ${kind} frame`).toBe(Boolean(def.frame));
       }
+    }
+  });
+});
+
+describe('the Preset defaults (the simple_physics Guardrail, one main action, the realism rules)', () => {
+  /** Every default text of the shots that show hands or a person, frame scenes included, filled with every Preset input. */
+  const peopleTexts = (): Array<[string, string]> => {
+    const out: Array<[string, string]> = [];
+    for (const p of [HERO, REACT, HANDS]) {
+      const varsList = p.promptVars
+        ? HAND_GENDERS.flatMap((hand_gender) => HANDS_ON_SETTINGS.map((setting) => p.promptVars!({ hand_gender, setting })))
+        : [{}];
+      for (const [kind, def] of Object.entries(p.shotKinds)) {
+        if (def.shows === 'product') continue;
+        for (const vars of varsList) {
+          for (const [field, text] of Object.entries(p.shots[kind])) {
+            if (typeof text === 'string' && field !== 'energy') out.push([`${p.id} ${kind}.${field}`, fillPrompt(text, vars)]);
+          }
+          const frame = p.frameScenes?.[kind];
+          if (frame) out.push([`${p.id} ${kind} frame`, fillPrompt(frame, vars)]);
+        }
+      }
+    }
+    return out;
+  };
+
+  it('start hands and person shots from the product already out of its packaging and in its used state: nothing unpacked or taken off on camera', () => {
+    const texts = peopleTexts();
+    expect(texts.length).toBeGreaterThan(10);
+    for (const [where, text] of texts) {
+      expect(text, where).not.toMatch(/\b(?:lift\w*|tak\w*|pull\w*)\b[^.]*\b(?:out of|clear of|from)\b[^.]*packag/i);
+      expect(text, where).not.toMatch(/\b(?:unpack\w*|unbox\w*|unwrap\w*|remov\w*|uncap\w*|unscrew\w*|open(?:s|ing)?\b)/i);
+    }
+    expect(HANDS.frameScenes!.hands).toMatch(/already out of (?:its|any) packaging/);
+    expect(HANDS.shots.hands.scene).toMatch(/already out of its packaging and in the state it is used in/);
+  });
+
+  it('give a hands shot one main action: the hands use the product once', () => {
+    const hands = shotsOf(HANDS, { durationMs: 9_000, modesty: COVERED, vars: handsVars })[0];
+    expect(hands.default_fields.scene).toMatch(/use it once/);
+    expect(hands.default_fields.scene).not.toMatch(/turn it|a few angles|lift/);
+  });
+
+  it('never bring the product to a reacting face; a smell beat is on the skin, after the product is set down', () => {
+    const reaction = REACT.shots.reaction;
+    const all = Object.values(reaction).join(' ');
+    expect(all).not.toMatch(/(?<!never )near (?:their|her|his|the) face/i);
+    expect(reaction.blocking).toMatch(/never (?:near|brought to) the face/i);
+    expect(all).toMatch(/sets? the product down[^.]*(?:wrist|skin)/i);
+    expect(all).not.toMatch(/enjoying the scent/i);
+  });
+
+  it('carry no cinematic wording on a hands or person shot (the realism rules, ADR 0003)', () => {
+    for (const [where, text] of peopleTexts()) {
+      expect(text, where).not.toMatch(/shallow depth of field|cinematic|bokeh|golden[\s-]hour|softly blurred|warm lamplight|flattering light/i);
     }
   });
 });
@@ -483,7 +539,7 @@ describe('shot edits', () => {
 
 describe('every default field is one the user could have written', () => {
   it('passes the field check and fits its cap, for every Preset, hands and setting, with the longest Product Interaction', () => {
-    const longest = `removes the cap, ${'sprays once on the wrist, '.repeat(20)}`.slice(0, PRODUCT_INTERACTION_MAX_CHARS);
+    const longest = `holds the uncapped bottle, ${'sprays once on the wrist, '.repeat(20)}`.slice(0, PRODUCT_INTERACTION_MAX_CHARS);
     const modesties: Modesty[] = [COVERED, HIJAB, { arms: 'sleeved', hijab: true }];
     const plans = [
       ...[5_000, 15_000].flatMap((ms) => [
@@ -518,8 +574,8 @@ describe('productInteractionAction (moved from the worker with #28)', () => {
 
   it('words the action for hands and person shots, tidied, as one sentence', () => {
     for (const subject of ['hands', 'person'] as const) {
-      expect(productInteractionAction(subject, '  removes the cap,\n sprays once on the inner wrist.  ')).toBe(
-        'How the product is used, as a real person uses it: removes the cap, sprays once on the inner wrist.',
+      expect(productInteractionAction(subject, '  holds the uncapped bottle,\n sprays once on the inner wrist.  ')).toBe(
+        'How the product is used, as a real person uses it: holds the uncapped bottle, sprays once on the inner wrist.',
       );
     }
   });

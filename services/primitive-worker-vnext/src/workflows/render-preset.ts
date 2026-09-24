@@ -146,7 +146,7 @@ export interface PresetRenderInput {
   setting?: HandsOnSetting;
   /**
    * Product Interaction (#25): how a real person uses the product (e.g. perfume:
-   * "removes the cap, sprays once on the inner wrist, …"), from the draft. Added
+   * "holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, …"), from the draft. Added
    * to every hands and person prompt (clip and starting frame), after — and
    * never overriding — the Modesty Default and the no-speaking wording; never
    * to a product shot. Absent/null on drafts from before it: prompts unchanged.

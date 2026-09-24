@@ -920,7 +920,7 @@ describe('draft vocabulary', () => {
 
 // ── Product Interaction (#25) ────────────────────────────────────────────────
 
-const PERFUME = 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles';
+const PERFUME = 'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles';
 const COFFEE = 'lifts the cup with both hands, takes one slow sip, lowers it and smiles';
 const SKINCARE = 'squeezes a small amount onto the back of the hand and gently rubs it in';
 
@@ -932,6 +932,10 @@ describe('Product Interaction — written with the Script', () => {
     expect(system).toMatch(/English/);
     // Realistic use: nobody sniffs a capped perfume bottle.
     expect(system).toMatch(/cap/);
+    // Nor the bottle at all (#32, test M3): it is set down before the wrist comes up.
+    expect(system).toMatch(/bottle is set down before the wrist is raised/);
+    expect(system).toMatch(/nobody ever brings the bottle itself to the face/);
+    expect(system).not.toMatch(/removes the cap/);
     // It never makes anyone speak on screen.
     expect(system).toMatch(/never speak/i);
   });

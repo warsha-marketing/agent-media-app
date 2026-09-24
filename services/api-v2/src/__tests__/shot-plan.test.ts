@@ -217,7 +217,7 @@ type ShotView = {
   prompt_preview: { image: string | null; video: string };
 };
 const shotsOf = (b: Record<string, unknown>) => b.shots as ShotView[];
-const PERFUME = 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles';
+const PERFUME = 'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles';
 const EDIT = 'The person sniffs the inner wrist, then nods slowly at the bottle.';
 
 describe('POST /v1/skills/{slug}/shot-plan', () => {
