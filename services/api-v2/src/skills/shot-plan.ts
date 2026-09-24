@@ -1,22 +1,26 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * Shot Plan review (#26) — the Preset render's shots, composed at the API so
- * the user can see (and edit the scene text of) each Shot Prompt before the
- * render.
+ * Shot Plan review (#26, reshaped into the Shot List by #28) — the Preset
+ * render's shots, composed at the API so the user can see (and edit the fields
+ * of) each Shot Prompt before the render.
  *
  *   POST /v1/skills/{slug}/shot-plan  — the plan for a draft + Preset + inputs
  *       (the quote's body; owner-only, and operators may preview an unqualified
- *       Preset–Dialect pair, like drafting): every shot with its stable id,
- *       kind, on-screen length, model and fallback, its scene text and its
- *       locked Guardrail lines.
- *   `shot_edits` on the quote and the run — { shot_id: scene text }: checked
- *       here against the same plan (ids, length cap, no bracketed tags or
- *       reference syntax, the guardrail check) → 422 SHOT_EDIT_INVALID /
- *       SHOT_EDIT_BREAKS_GUARDRAIL. Edits never change the shots, so never the
- *       price; they are in the Idempotency-Key fingerprint (the validated body).
- *       The run hands the worker only the edits that change a scene; the worker
- *       re-checks them and always adds its own Guardrails.
+ *       Preset–Dialect pair, like drafting): the Short's Set (null until #33),
+ *       and every shot with its stable id (`reaction-1`: its kind and ordinal
+ *       within the kind, never its position), kind, on-screen length, model and
+ *       fallback, its structured fields (and the Preset's defaults) and its
+ *       locked Guardrail lines per stage (image: the starting frame; video).
+ *   `shot_edits` on the quote and the run — { shot_id: { scene?, framing?,
+ *       blocking?, environment_interaction?, performance?, action?, energy?,
+ *       camera_move?, lens_feel?, lighting? } }: checked here against the same
+ *       plan (ids, fields, length caps, no bracketed tags or reference syntax,
+ *       the guardrail check) → 422 SHOT_EDIT_INVALID / SHOT_EDIT_BREAKS_GUARDRAIL.
+ *       Edits never change the shots, so never the price; they are in the
+ *       Idempotency-Key fingerprint (the validated body). The run hands the
+ *       worker only the fields that change a shot; the worker re-checks them
+ *       and always adds its own Guardrails.
  *
  * The composition is @agentmedia/shot-prompts' (server-only, shared with the
  * worker), from the same draft duration, Modesty Default, Preset inputs and
@@ -24,9 +28,14 @@
  */
 
 import { z } from 'zod';
-import { presetShows, type Modesty, type PresetDefinition } from '@agentmedia/schema';
+import type { Modesty, PresetDefinition } from '@agentmedia/schema';
 import {
-  SCENE_TEXT_MAX_CHARS,
+  PEOPLE_FIELDS,
+  SHOT_ENERGIES,
+  SHOT_FIELDS,
+  SHOT_FIELD_LABELS,
+  SHOT_FIELD_MAX_CHARS,
+  SHOT_TEXT_FIELDS,
   ShotEditError,
   VIDEO_MODEL_LABELS,
   composeShotPlan,
@@ -35,19 +44,39 @@ import {
   presetPrompts,
   shotPrompt,
   withReferences,
+  type Guardrail,
+  type ReferenceWords,
+  type ShotEdit,
+  type ShotPlan,
   type ShotPlanPreset,
   type ShotPlanShot,
 } from '@agentmedia/shot-prompts';
 import { RenderRefusal, type RenderableDraft } from './product-hero-render.js';
 import type { PresetInputs } from './preset-inputs.js';
 
-/** The `shot_edits` skill input field: loose here (a DoS bound only); the real checks answer 422 with a code. */
+/**
+ * One shot's edit: loose here (types and a DoS bound only; an unknown field
+ * passes through), so the real checks answer 422 with a code.
+ */
+const shotEditField = z
+  .object({
+    ...Object.fromEntries(
+      SHOT_TEXT_FIELDS.map((f) => [f, z.string().max(SHOT_FIELD_MAX_CHARS[f] * 4).optional().describe(SHOT_FIELD_LABELS[f])]),
+    ),
+    energy: z.string().max(40).optional().describe(`Energy: ${SHOT_ENERGIES.join(' | ')}`),
+  })
+  .passthrough();
+
+/** The `shot_edits` skill input field. */
 export const shotEditsField = z
-  .record(z.string().max(100), z.string().max(SCENE_TEXT_MAX_CHARS * 4))
+  .record(z.string().max(100), shotEditField)
   .refine((edits) => Object.keys(edits).length <= 16, { message: 'at most 16 shot edits' })
   .optional()
   .describe(
-    `Optional, from Shot Plan review: your own scene text for some shots, by shot_id from POST /v1/skills/{slug}/shot-plan, e.g. { "shot-1-reaction": "The person sniffs the inner wrist and nods." }. Only the scene: the Guardrails (references, nobody speaks, modest styling, no text, audio off) are always added by the server. At most ${SCENE_TEXT_MAX_CHARS} characters each, plain words (say "the product", "the person"; no [tags] or @image references). Never changes the price.`,
+    `Optional, from Shot Plan review: your own fields for some shots, by shot_id from POST /v1/skills/{slug}/shot-plan, e.g. { "reaction-1": { "scene": "The person sniffs the inner wrist and nods.", "energy": "lively" } }. ` +
+      `Fields: ${SHOT_FIELDS.join(', ')} (energy is ${SHOT_ENERGIES.join(' | ')}; performance and action only on shots that show hands or a person; any field but the scene may be cleared with ""). ` +
+      `A shot's length and model never change. The Guardrails (references, nobody speaks, one simple hand action, modest styling, no text, audio off) are always added by the server. ` +
+      `Plain words (say "the product", "the person"; no [tags] or @image references), at most ${SHOT_FIELD_MAX_CHARS.scene} characters for the scene. Never changes the price.`,
   );
 
 /** The Modesty Default the render will apply: the resolver's, else the Preset's default arms (a Preset with no one on screen). */
@@ -59,14 +88,14 @@ function renderModesty(preset: PresetDefinition, own: PresetInputs): Modesty {
 /**
  * The Shot Plan of rendering `draft` as `preset` with the Preset inputs the
  * route resolved (`own`), and `edits` applied. A refused edit is a 422
- * RenderRefusal carrying its shot_id and reason (and the Guardrail it broke).
+ * RenderRefusal carrying its shot_id, field and reason (and the Guardrail it broke).
  */
 export function composeRenderShotPlan(
   preset: PresetDefinition,
   draft: Pick<RenderableDraft, 'duration_ms' | 'product_interaction'>,
   own: PresetInputs,
   edits: unknown,
-): ShotPlanShot[] {
+): ShotPlan {
   const prompts = presetPrompts(preset.id);
   const plannable = { ...preset, ...prompts } as ShotPlanPreset;
   try {
@@ -77,8 +106,6 @@ export function composeRenderShotPlan(
         modesty: renderModesty(preset, own),
         vars: prompts.promptVars ? prompts.promptVars(own.run) : {},
         interaction: draft.product_interaction ?? null,
-        // The person's reference goes with every person shot of a Preset that takes a character (Reaction).
-        personReference: presetShows(preset, 'person') && preset.requiredInputs.includes('character'),
       },
       (edits ?? null) as Record<string, unknown> | null,
     );
@@ -87,6 +114,7 @@ export function composeRenderShotPlan(
       throw new RenderRefusal(422, err.code, err.message, {
         shot_id: err.shotId,
         reason: err.reason,
+        ...(err.field ? { field: err.field } : {}),
         ...(err.guardrail ? { guardrail: err.guardrail, matched: err.matched } : {}),
       });
     }
@@ -94,12 +122,17 @@ export function composeRenderShotPlan(
   }
 }
 
-/** The edits a run stores and hands the worker: only those that change a scene. */
-export const runShotEdits = (plan: readonly ShotPlanShot[]): Record<string, string> => effectiveEdits(plan);
+/** The edits a run stores and hands the worker: only the fields that change a shot. */
+export const runShotEdits = (plan: ShotPlan): Record<string, ShotEdit> => effectiveEdits(plan);
+
+function guardrailView(g: Guardrail, words: ReferenceWords) {
+  return { id: g.id, label: g.label, text: withReferences(g.text, words), enforced_by: g.at === 'request' ? 'request' : 'prompt' };
+}
 
 /** One shot as the API shows it: plain words for the reference images, never a provider's syntax. */
 export function shotView(shot: ShotPlanShot) {
-  const words = displayReferences(shot.starting_frame !== null);
+  const video = displayReferences(shot.starting_frame !== null);
+  const image = displayReferences(false); // a starting frame is an edit of the product photo
   return {
     shot_id: shot.shot_id,
     number: shot.index + 1,
@@ -110,27 +143,40 @@ export function shotView(shot: ShotPlanShot) {
     starting_frame: shot.starting_frame,
     model: { id: shot.video.model, name: VIDEO_MODEL_LABELS[shot.video.model] },
     fallback: shot.video.fallback ? { id: shot.video.fallback, name: VIDEO_MODEL_LABELS[shot.video.fallback] } : null,
-    scene_text: shot.scene,
-    default_scene_text: shot.default_scene,
+    set_id: shot.set_id,
+    fields: shot.fields,
+    default_fields: shot.default_fields,
+    edited_fields: shot.edited_fields,
     edited: shot.edited,
-    guardrails: shot.guardrails.map((g) => ({
-      id: g.id,
-      label: g.label,
-      text: withReferences(g.text, words),
-      enforced_by: g.at === 'request' ? 'request' : 'prompt',
-    })),
-    prompt_preview: shotPrompt(shot, words),
+    guardrails: {
+      image: shot.guardrails.image.map((g) => guardrailView(g, image)),
+      video: shot.guardrails.video.map((g) => guardrailView(g, video)),
+    },
+    prompt_preview: {
+      image: shot.frame_scene !== null ? shotPrompt(shot, 'image', image) : null,
+      video: shotPrompt(shot, 'video', video),
+    },
   };
 }
 
+/** The editable fields, in composition order, as a client lays out a shot's card. */
+export const SHOT_FIELD_CATALOG = SHOT_FIELDS.map((id) => ({
+  id,
+  label: SHOT_FIELD_LABELS[id],
+  ...(id === 'energy' ? { choices: [...SHOT_ENERGIES] } : { max_chars: SHOT_FIELD_MAX_CHARS[id] }),
+  required: id === 'scene',
+  people_only: PEOPLE_FIELDS.includes(id),
+}));
+
 /** The shot-plan response body. */
-export function shotPlanView(slug: string, preset: PresetDefinition, draft: Pick<RenderableDraft, 'id' | 'duration_ms'>, plan: readonly ShotPlanShot[]) {
+export function shotPlanView(slug: string, preset: PresetDefinition, draft: Pick<RenderableDraft, 'id' | 'duration_ms'>, plan: ShotPlan) {
   return {
     skill: slug,
     preset: preset.id,
     draft_id: draft.id,
     duration_ms: Number(draft.duration_ms),
-    scene_text_max_chars: SCENE_TEXT_MAX_CHARS,
-    shots: plan.map(shotView),
+    set: plan.set,
+    fields: SHOT_FIELD_CATALOG,
+    shots: plan.shots.map(shotView),
   };
 }

@@ -18,10 +18,8 @@ import { quotePrimitiveCredits } from '../client/credits.js';
 import { startWorkflowHarness, fakeActivities, type CannedActivities, type WorkflowHarness } from './support/workflow-harness.js';
 import type { MakeReactionWorkflowInput } from '../workflows/make-reaction.js';
 import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
-import { MODESTY_PROMPTS } from '../presets/modesty.js';
-import { REACTION_RENDER, SILENT_REACTION } from '../presets/reaction.js';
-import { NO_PEOPLE, REFERENCE_TOKENS } from '@agentmedia/shot-prompts';
-import { presetRender } from '../presets/index.js';
+import { MODESTY_PROMPTS, NO_PEOPLE, NO_SPEAKING_PERSON as SILENT_REACTION, REFERENCE_TOKENS } from '@agentmedia/shot-prompts';
+import { REACTION_RENDER, presetRender } from '../presets/index.js';
 import * as workflows from '../workflows/index.js';
 
 const SKILL_RUN_ID = '19191919-2222-4333-8444-555555555555';
@@ -109,7 +107,7 @@ describe('makeReactionWorkflow — silent faces intercut with the product', () =
         expect(c.prompt).toContain(MODESTY_PROMPTS.person.covered);
         expect(c.prompt).toContain(MODESTY_PROMPTS.hijab);
       } else {
-        expect(c.prompt).toContain(REACTION_RENDER.scenes.product);
+        expect(c.prompt).toContain(REACTION_RENDER.shots.product.scene);
         expect(c.prompt).toContain(NO_PEOPLE);
         expect(c.prompt).not.toContain(SILENT_REACTION);
         expect(c.prompt).not.toContain('Modest styling');

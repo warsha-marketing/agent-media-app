@@ -29,7 +29,7 @@ The monorepo is a pnpm + turbo workspace.
 | `packages/mcp-server` | TypeScript | Local stdio MCP server (companion to the hosted `/mcp` connector) |
 | `packages/sdk-ts`, `packages/sdk-python` | TS / Python | SDKs against api-v2 |
 | `packages/schema`, `packages/types`, `packages/ui` | TS | Shared schema, types, UI components |
-| `packages/shot-prompts` | TS, private | Server-only Shot Prompt wording (scenes, Guardrails, the guardrail check), shared by api-v2 and primitive-worker-vnext |
+| `packages/shot-prompts` | TS, private | Server-only Shot Prompt wording (shot fields, Guardrails per stage, the guardrail check), shared by api-v2 and primitive-worker-vnext |
 
 Every backend service ships its own `Dockerfile`, so they can be deployed independently, to different hosts, and scaled separately.
 
@@ -285,15 +285,20 @@ failure allows — a Temporal retry, the fallback — is one map,
 resubmitted by a retry (the fallback is its retry), and a missing provider key
 fails fast.
 
-Every clip prompt is a **Shot Prompt** (CONTEXT.md, #26): the shot's scene
-text plus its locked **Guardrails** (references, nobody speaks, the Modesty
-Default, no people on a product shot, no text, audio off). The wording lives
+Every clip and starting-frame prompt is a **Shot Prompt** (CONTEXT.md, #26,
+#28): the shot's structured fields (framing, scene, blocking, environment
+interaction, performance, action, energy, camera move, lens feel, lighting),
+composed in a fixed order, plus its locked **Guardrails** for that stage —
+image (the starting frame) or video (the clip): references, nobody speaks and
+one simple hand action (video), the Modesty Default, no people on a product
+shot, no text, audio off (video). Shots have stable ids (`reaction-1`: kind and
+ordinal within the kind, never the position). The wording lives
 in `packages/shot-prompts` (`@agentmedia/shot-prompts`), a *private* workspace
 package — never published, unlike `@agentmedia/schema`, because the prompt
 craft is server-side — shared by api-v2 (which composes the **Shot Plan** for
 `POST /v1/skills/{slug}/shot-plan` and checks a quote's or run's
 `shot_edits`) and the worker (which re-checks the edits and always adds its
-own Guardrails). Scenes and Guardrails name images with provider-neutral
+own Guardrails). Fields and Guardrails name images with provider-neutral
 tokens; each video model adapter puts in its own reference syntax (EvoLink
 `@image1` / `@image2`, fal "the first / second reference image"). The prompt
 as sent is stored on its clip row and on the Short (`final_output.shots`).

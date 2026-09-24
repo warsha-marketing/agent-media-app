@@ -36,13 +36,15 @@
  *                        fallback renders the shot. Both refusing is the
  *                        non-retryable content-policy failure. Every hands and
  *                        person scene also carries the draft's Product
- *                        Interaction (#25). Every clip prompt is a Shot Prompt
- *                        (#26): the shot's scene — the Preset's, or the user's
- *                        edit (shot_edits, checked again here) — plus the
- *                        Guardrails, which this worker ALWAYS adds from its
- *                        own copy (@agentmedia/shot-prompts), whatever the
- *                        input says. Each shot's prompt as sent is stored on
- *                        its clip row and on the Short (final_output.shots).
+ *                        Interaction (#25). Every frame and clip prompt is a
+ *                        Shot Prompt (#26, #28): the shot's fields — the
+ *                        Preset's, with the user's edits (shot_edits, checked
+ *                        again here) — plus the Guardrails of that stage (image
+ *                        for the frame, video for the clip), which this worker
+ *                        ALWAYS adds from its own copy (@agentmedia/shot-prompts),
+ *                        whatever the input says. Each shot's prompts as sent
+ *                        are stored on its rows and on the Short
+ *                        (final_output.shots).
  *   3. presetMux  — hard-cuts the clips on the 9:16 canvas (shots with a
  *                        planned on-screen share each cut to it), trims (or, if a
  *                        clip ran a few ms short, holds) the visuals to the audio's
@@ -73,12 +75,9 @@ import {
   armsAtLeast,
   modelClipUsd,
   modelRenderSeconds,
-  planPresetShots,
   presetShows,
   shotModelChain,
-  shotVideo,
   type Modesty,
-  type PlannedShot,
   type PresetInput,
   type HandGender,
   type HandsOnSetting,
@@ -87,8 +86,19 @@ import type { PrimitiveActivities } from '../activities/index.js';
 import { makeChildRunId } from './child-run-id.js';
 import { failureInfo } from './failure-info.js';
 import { CONTENT_POLICY_REFUSED, NON_RETRYABLE_TYPES, failurePolicy } from '../failure-policy.js';
-import { presetFramePrompt, type PresetRenderDefinition } from '../presets/index.js';
-import { REFERENCE_TOKENS, ShotEditError, composeShotPlan, shotPrompt, type ShotPlanShot } from '@agentmedia/shot-prompts';
+import type { PresetRenderDefinition } from '../presets/index.js';
+import {
+  IMAGE_REFERENCES,
+  REFERENCE_TOKENS,
+  ShotEditError,
+  composeShotPlan,
+  shotHasPersonReference,
+  shotPrompt,
+  type ShotEdit,
+  type ShotField,
+  type ShotFields,
+  type ShotPlanShot,
+} from '@agentmedia/shot-prompts';
 
 /**
  * What a registered Preset workflow (e.g. makeProductHeroWorkflow) is started
@@ -143,27 +153,34 @@ export interface PresetRenderInput {
    */
   product_interaction?: string | null;
   /**
-   * Shot Plan review (#26): the user's scene text for the shots they edited, by
-   * shot id (`shot-1-reaction`, …), as api-v2 validated it against the same
-   * plan. Only scene text: the Guardrails are never part of the input, and the
-   * render adds its own to every shot. Checked again here (the shot ids, the
-   * length, no brackets or reference syntax, the guardrail check): a bad edit
+   * Shot Plan review (#26, #28): the fields the user changed, by shot id
+   * (`reaction-1`, …: kind and ordinal within the kind), e.g.
+   * { "reaction-1": { "scene": "…", "energy": "lively" } }, as api-v2 validated
+   * them against the same plan. Only shot fields: never a length or model, and
+   * the Guardrails are never part of the input — the render adds its own to
+   * every stage of every shot. Checked again here (the ids, the fields, the
+   * lengths, no brackets or reference syntax, the guardrail check): a bad edit
    * refuses the render before anything is requested. Absent/empty: every shot
-   * renders the Preset's scene, exactly as before.
+   * renders the Preset's fields, exactly as before.
    */
-  shot_edits?: Readonly<Record<string, string>> | null;
+  shot_edits?: Readonly<Record<string, ShotEdit>> | null;
 }
 
-/** One shot of the finished Short as it rendered (final_output.shots, #26). */
+/** One shot of the finished Short as it rendered (final_output.shots, #26, #28). */
 export interface RenderedShot {
   shot_id: string;
   kind: string;
   /** The model that rendered it (its kind's model, or the fallback). */
   model: string;
-  scene: string;
+  /** The fields it rendered, and which of them were the user's. */
+  fields: ShotFields;
+  edited_fields: ShotField[];
   edited: boolean;
-  guardrails: string[];
-  /** The final prompt exactly as sent to that model (scene + Guardrails, its reference syntax). */
+  /** The Guardrails it carried, per stage (image: its starting frame's; empty without one). */
+  guardrails: { image: string[]; video: string[] };
+  /** The starting frame's prompt as sent (image stage), on a shot that has one. */
+  frame_prompt?: string;
+  /** The final clip prompt exactly as sent to that model (fields + Guardrails, its reference syntax). */
   prompt: string;
 }
 
@@ -242,33 +259,24 @@ export async function renderPreset(
     const vars = promptVarsFor(preset, input);
     const interaction = input.product_interaction ?? null;
 
-    // The shots and every prompt of the render (#26: edits checked), before
-    // anything is requested, so a refused edit costs nothing.
-    let shots: PlannedShot[];
-    try {
-      shots = planPresetShots(preset, input.duration_ms);
-    } catch (err) {
-      throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
-    }
-    // Each clip's Shot Prompt is its scene (the user's edit, checked again,
-    // else the Preset's) plus this worker's own Guardrails (#26).
+    // The shots and every prompt of the render, before anything is requested,
+    // so a refused edit costs nothing. The plan is planPresetShots' (the one the
+    // quote priced), planned once, inside composeShotPlan; each shot's fields
+    // are the user's edits (checked again) over the Preset's, and every prompt
+    // gets this worker's own Guardrails for its stage (#26, #28).
+    let shots: ShotPlanShot[];
     let framePrompts: Array<string | null>;
-    let plan: ShotPlanShot[];
+    let clipPrompts: string[];
     try {
-      framePrompts = shots.map((s) =>
-        preset.shotKinds[s.kind].frame ? presetFramePrompt(preset, s.kind, modesty, vars, interaction) : null,
-      );
-      plan = composeShotPlan(
-        preset,
-        { durationMs: input.duration_ms, modesty, vars, interaction, personReference: Boolean(input.character_image_url) },
-        input.shot_edits ?? null,
-      );
+      shots = composeShotPlan(preset, { durationMs: input.duration_ms, modesty, vars, interaction }, input.shot_edits ?? null).shots;
+      // A starting frame is an image edit of the product photo: its one reference image.
+      framePrompts = shots.map((s) => (s.starting_frame ? shotPrompt(s, 'image', IMAGE_REFERENCES) : null));
+      // The provider adapter (presetClip) swaps the reference tokens for its own syntax.
+      clipPrompts = shots.map((s) => shotPrompt(s, 'video', REFERENCE_TOKENS));
     } catch (err) {
       if (err instanceof ShotEditError) throw ApplicationFailure.nonRetryable(err.message.slice(0, 500), err.code);
       throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
     }
-    // The provider adapter (presetClip) swaps the reference tokens for its own syntax.
-    const clipPrompts = plan.map((shot) => shotPrompt(shot, REFERENCE_TOKENS));
     const rendered: RenderedShot[] = [];
 
     // ── 1. The draft's audio, first ─────────────────────────────────────────
@@ -282,11 +290,10 @@ export async function renderPreset(
     });
 
     let totalUsd = 0;
-    const overruns = overrunsFor(preset);
     // ── 1b. Starting frames (#18), every one before any clip ────────────────
     const frameUrls: Array<string | null> = shots.map(() => null);
     for (let i = 0; i < shots.length; i += 1) {
-      const frame = preset.shotKinds[shots[i].kind].frame;
+      const frame = shots[i].starting_frame;
       const framePrompt = framePrompts[i];
       if (!frame || !framePrompt) continue;
       await composedSkillState({ skill_run_id: skillRunId, current_step: `frame_${i + 1}` });
@@ -310,7 +317,7 @@ export async function renderPreset(
       await composedSkillState({ skill_run_id: skillRunId, current_step: `clip_${i + 1}` });
       // The models this shot may render on (#25): its kind's model, then its
       // fallback — as the Preset declares them, never chosen by vendor here.
-      const chain = shotModelChain(shotVideo(preset, shots[i].kind));
+      const chain = shotModelChain(shots[i].video);
       let clip: Awaited<ReturnType<typeof presetClip>> | undefined;
       // A content refusal on an earlier model of the chain: if the fallback
       // then fails for another reason, the refusal is what the run reports.
@@ -325,7 +332,7 @@ export async function renderPreset(
             skill_run_id: skillRunId,
             // The shot's start image: its starting frame if it has one, else the photo.
             start_image_url: frameUrls[i] ?? input.product_image_url,
-            duration: shots[i].seconds,
+            duration: shots[i].clip_seconds,
             shot_index: i,
             shot_count: shots.length,
             preset: preset.id,
@@ -333,8 +340,9 @@ export async function renderPreset(
             model: chain[a],
             prompt: clipPrompts[i],
             generate_audio: false,
-            // The person's reference only where the shot shows that person (#19).
-            ...(preset.shotKinds[shots[i].kind].shows === 'person' && input.character_image_url
+            // The person's reference only where the shot shows that person (#19),
+            // decided as the Guardrails' person_reference line is (one helper).
+            ...(shotHasPersonReference(preset, shots[i].kind) && input.character_image_url
               ? { character_image_url: input.character_image_url }
               : {}),
           });
@@ -358,21 +366,24 @@ export async function renderPreset(
           // try the fallback. The shot is charged the same whichever model runs,
           // but the failed attempt may still have cost us: count it (worst case,
           // as the Preset's maxProviderUsd budgets it).
-          totalUsd += modelClipUsd(chain[a], shots[i].seconds);
+          totalUsd += modelClipUsd(chain[a], shots[i].clip_seconds);
           await refundCredits({ primitive_run_id: childId });
           await markPrimitiveRunFailed({ primitive_run_id: childId, error_code: f.code, error_message: f.message });
         }
       }
       if (!clip) throw ApplicationFailure.nonRetryable(`no model rendered shot ${i + 1}`, 'CLIP_FAILED');
       clipUrls.push(clip.video_url);
+      const framePrompt = framePrompts[i];
       rendered.push({
-        shot_id: plan[i].shot_id,
-        kind: plan[i].kind,
+        shot_id: shots[i].shot_id,
+        kind: shots[i].kind,
         // A clip from before #26 (a replayed history) reports neither; fall back to what was asked.
         model: clip.model ?? ranOn ?? chain[0],
-        scene: plan[i].scene,
-        edited: plan[i].edited,
-        guardrails: plan[i].guardrails.map((g) => g.id),
+        fields: shots[i].fields,
+        edited_fields: shots[i].edited_fields,
+        edited: shots[i].edited,
+        guardrails: { image: shots[i].guardrails.image.map((g) => g.id), video: shots[i].guardrails.video.map((g) => g.id) },
+        ...(framePrompt ? { frame_prompt: framePrompt } : {}),
         prompt: clip.prompt ?? clipPrompts[i],
       });
       totalUsd += clip.credits_actual_usd;
@@ -393,8 +404,8 @@ export async function renderPreset(
       // closing pair like Hands-on ≤10 s) cuts each shot to its planned share;
       // so does one with a shot whose model may render longer than planned
       // (#25: Veo 3.1 renders 8 s for a 5 s shot).
-      ...(shots.every((s) => s.onScreenMs !== undefined) || shots.some(overruns)
-        ? { shot_ms: shots.map((s) => s.onScreenMs ?? s.seconds * 1000) }
+      ...(shots.every((s) => s.planned_on_screen_ms !== null) || shots.some(overruns)
+        ? { shot_ms: shots.map((s) => s.planned_on_screen_ms ?? s.clip_seconds * 1000) }
         : {}),
     });
     // ── 3b. Music Bed (#9): ducked under the voice; never lengthens the Short ─
@@ -478,9 +489,8 @@ export async function renderPreset(
 }
 
 /** Whether a model of this shot's chain may render longer than the planned clip (#25). */
-function overrunsFor(preset: PresetRenderDefinition) {
-  return (s: PlannedShot): boolean =>
-    shotModelChain(shotVideo(preset, s.kind)).some((m) => modelRenderSeconds(m, s.seconds) > s.seconds);
+function overruns(s: ShotPlanShot): boolean {
+  return shotModelChain(s.video).some((m) => modelRenderSeconds(m, s.clip_seconds) > s.clip_seconds);
 }
 
 /**

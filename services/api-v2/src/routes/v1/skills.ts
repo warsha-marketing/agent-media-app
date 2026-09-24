@@ -27,9 +27,9 @@ import { readIdempotencyKey, replayMatches, requestFingerprint, sendIdempotencyK
 import type { PresetDefinition } from '@agentmedia/schema';
 import { PresetError, assertPresetAvailable } from '../../presets/qualification.js';
 import { supabasePresetAccess } from '../../presets/providers.js';
-import type { PresetInputs } from '../../skills/preset-inputs.js'; // #19
+import type { PresetInputStage, PresetInputs } from '../../skills/preset-inputs.js'; // #19
 import { composeRenderShotPlan, runShotEdits, shotPlanView } from '../../skills/shot-plan.js'; // #26
-import type { ShotPlanShot } from '@agentmedia/shot-prompts';
+import type { ShotPlan } from '@agentmedia/shot-prompts';
 
 /**
  * Credits already COMMITTED to the user's in-flight (submitted/running) jobs.
@@ -207,7 +207,7 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     const draft = await resolveDraftOrRespond(res, userId, slug, skill.preset, input);
     if (!draft) return;
     // A Preset's own inputs (Reaction: character, Modesty Default) refuse here as on the run.
-    const own = await presetInputsOrRespond(res, userId, slug, skill.preset, input, draft, 'quote');
+    const own = await presetInputsOrRespond(res, userId, slug, skill.preset, input, draft, 'preview');
     if (!own) return;
     // Shot Plan review (#26): scene edits are refused here as on the run; they never change the price.
     if (!shotPlanOrRespond(res, slug, skill.preset, draft, own, input.shot_edits)) return;
@@ -291,7 +291,7 @@ export async function shotPlanRoute(req: Request, res: Response): Promise<void> 
   const input = parsed.data as Record<string, unknown>;
   const draft = await resolveDraftOrRespond(res, userId, slug, skill.preset, input);
   if (!draft) return;
-  const own = await presetInputsOrRespond(res, userId, slug, skill.preset, input, draft, 'quote');
+  const own = await presetInputsOrRespond(res, userId, slug, skill.preset, input, draft, 'preview');
   if (!own) return;
   const plan = shotPlanOrRespond(res, slug, skill.preset, draft, own, input.shot_edits);
   if (!plan) return;
@@ -800,7 +800,7 @@ function shotPlanOrRespond(
   draft: RenderableDraft,
   own: PresetInputs,
   edits: unknown,
-): ShotPlanShot[] | null {
+): ShotPlan | null {
   try {
     return composeRenderShotPlan(preset, draft, own, edits);
   } catch (err) {
@@ -846,7 +846,7 @@ async function presetInputsOrRespond(
   preset: PresetDefinition,
   body: Record<string, unknown>,
   draft: RenderableDraft,
-  stage: 'quote' | 'run',
+  stage: PresetInputStage,
 ): Promise<PresetInputs | null> {
   const resolve = SKILLS[slug].presetInputs;
   if (!resolve) return { run: {}, workflow: {}, quote: {} };

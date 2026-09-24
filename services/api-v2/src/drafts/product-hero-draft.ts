@@ -78,7 +78,7 @@ import {
   type ScriptDialect,
 } from '@agentmedia/schema';
 import { generatedScriptIssues, scriptTextIssues, type ScriptIssue } from './script-check.js';
-import { productInteractionGuardrailIssue, type InteractionGuardrailIssue } from './interaction-check.js';
+import { productInteractionGuardrailIssue, type InteractionGuardrailIssue } from '@agentmedia/shot-prompts';
 import { interactionStateIssue } from './interaction-state.js';
 import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
 import { PresetError, assertDialectDraftable, type PresetAccess } from '../presets/qualification.js';

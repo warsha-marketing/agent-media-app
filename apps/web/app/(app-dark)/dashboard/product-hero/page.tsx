@@ -561,7 +561,7 @@ export default function ProductHeroPage() {
   // Shot Plan review (#26): the scene text the user changed, by shot id. A new
   // draft, Preset or Preset inputs is a new plan (its shots may differ): the
   // edits start over, and the panel is remounted (its key).
-  const [shotEdits, setShotEdits] = useState<Record<string, string>>({});
+  const [shotEdits, setShotEdits] = useState<Record<string, Record<string, string>>>({});
   const planKey = `${draftId ?? ''}|${skill ?? ''}|${presetInputsKey}`;
   useEffect(() => {
     setShotEdits({});

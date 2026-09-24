@@ -12,7 +12,7 @@ import * as workflows from '../workflows/index.js';
 import type { MakeProductHeroWorkflowInput } from '../workflows/make-product-hero.js';
 import type { MakeHandsOnWorkflowInput } from '../workflows/make-hands-on.js';
 import { PRESET_RENDERS, PRODUCT_HERO_RENDER, presetRender } from '../presets/index.js';
-import { HANDS_ON_RENDER } from '../presets/hands-on.js';
+import { HANDS_ON_RENDER } from '../presets/index.js';
 
 describe('registered workflow types', () => {
   it('do not include the shared Preset render pipeline', () => {

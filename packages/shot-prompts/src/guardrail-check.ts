@@ -10,9 +10,9 @@
  *   - the Product Interaction (#25), when it is SAVED: the writer's own output
  *     (one rewrite told why, then an error, like the Script check) and the
  *     user's edit on re-voice (422 PRODUCT_INTERACTION_BREAKS_GUARDRAIL);
- *   - an edited Shot Prompt scene (#26): refused by api-v2 on the quote and the
- *     run (422 SHOT_EDIT_BREAKS_GUARDRAIL), and again by the worker before it
- *     renders.
+ *   - an edited Shot Prompt field (#26, #28: the scene, the performance, the
+ *     action, …): refused by api-v2 on the quote and the run (422
+ *     SHOT_EDIT_BREAKS_GUARDRAIL), and again by the worker before it renders.
  * The render still appends its own Guardrail lines after the text, but a video
  * model given "takes off her hijab" or "talks to the camera" may follow it, so
  * such text is refused rather than trusted to be outvoted.
@@ -144,13 +144,22 @@ const WHY: Record<InteractionGuardrail, string> = {
   undress: 'nobody undresses on screen',
 };
 
+/** The Guardrails in the order a text is checked against them (the first one broken is reported). */
+const GUARDRAIL_ORDER: readonly InteractionGuardrail[] = ['speech', 'hijab', 'exposed', 'undress'];
+
+/** Every pattern, English then Arabic, keyed by the Guardrail it guards. */
+const PATTERNS: Readonly<Record<InteractionGuardrail, readonly RegExp[]>> = (() => {
+  const by: Record<InteractionGuardrail, RegExp[]> = { speech: [], hijab: [], exposed: [], undress: [] };
+  for (const [g, re] of [...EN, ...AR]) by[g].push(re);
+  return by;
+})();
+
 /** The first Guardrail `text` contradicts, with the words that matched and why; null when it keeps them all. */
 export function guardrailIssue(text: string | null | undefined): { guardrail: InteractionGuardrail; matched: string; why: string } | null {
   const folded = foldForGuardrails(text ?? '');
   if (!folded) return null;
-  for (const guardrail of ['speech', 'hijab', 'exposed', 'undress'] as const) {
-    for (const [g, re] of [...EN, ...AR]) {
-      if (g !== guardrail) continue;
+  for (const guardrail of GUARDRAIL_ORDER) {
+    for (const re of PATTERNS[guardrail]) {
       const m = re.exec(folded);
       if (m) return { guardrail, matched: m[0].trim(), why: WHY[guardrail] };
     }

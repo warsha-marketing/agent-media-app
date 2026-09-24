@@ -48,6 +48,9 @@ import { shotEditsField } from './shot-plan.js';
 
 // ── The resolver ─────────────────────────────────────────────────────────────
 
+/** What the Preset inputs are resolved for: a preview (the quote, the Shot Plan) or the run. */
+export type PresetInputStage = 'preview' | 'run';
+
 export interface PresetInputContext {
   userId: string;
   /** The validated skill input (defaults applied). */
@@ -55,8 +58,11 @@ export interface PresetInputContext {
   /** The draft being rendered, already resolved and gated (owner, band, Voice, Qualified Preset). */
   draft: RenderableDraft;
   preset: PresetDefinition;
-  /** 'quote' reads only; 'run' may re-host references for the worker. */
-  stage: 'quote' | 'run';
+  /**
+   * 'preview' (the quote and the Shot Plan: nothing runs yet) reads only;
+   * 'run' may also re-host references for the worker.
+   */
+  stage: PresetInputStage;
   /** Service-role client: ownership is enforced by the resolver's own filters. */
   db: SupabaseClient;
   /** Re-host (and moderate) an image onto our storage, for the worker's SSRF guard. */

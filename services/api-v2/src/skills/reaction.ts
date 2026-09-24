@@ -99,7 +99,7 @@ export const resolveReactionInputs: PresetInputResolver = async ({ userId, body,
     modesty,
   };
   const quote = { preset_inputs: run };
-  if (stage === 'quote') return { run, workflow: {}, quote };
+  if (stage === 'preview') return { run, workflow: {}, quote };
   const hosted = await rehostImage(userId, source);
   return { run, workflow: { character_image_url: hosted.url, modesty }, quote };
 };

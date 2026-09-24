@@ -9,8 +9,9 @@ import { VIDEO_MODEL_IDS } from '@agentmedia/schema';
 import { VIDEO_MODELS, falPrompt, videoModel, type VideoShotRequest } from '../video-models/index.js';
 import { REFERENCE_TOKENS, hasReferenceTokens } from '@agentmedia/shot-prompts';
 
+/** A shot as generate()/buildRequest get it: the prompt already in fal's words (presetClip ran promptFor). */
 const SHOT: VideoShotRequest = {
-  prompt: 'The person in @image2 holds the exact product in @image1 and smiles.',
+  prompt: 'The person in the second reference image holds the exact product in the first reference image and smiles.',
   startImageUrl: 'https://r2.example.test/product.png',
   characterImageUrl: 'https://r2.example.test/person.png',
   seconds: 5,
@@ -80,7 +81,7 @@ describe('fal request builders', () => {
 });
 
 describe('falPrompt', () => {
-  it('names the references in words (no @image syntax on fal)', () => {
+  it('names the references in words (no @image syntax on fal), even an EvoLink prompt from before #26 (a retried clip of an old render)', () => {
     expect(falPrompt('exact product in @image1; the person in @image2; @image1 again')).toBe(
       'exact product in the first reference image; the person in the second reference image; the first reference image again',
     );
@@ -100,7 +101,8 @@ describe('each adapter puts in its own reference syntax (#26)', () => {
     for (const id of ['kling-o3-pro', 'veo-3.1'] as const) {
       const words = 'The person is exactly the person in the second reference image. The product is exactly the product in the first reference image.';
       expect(VIDEO_MODELS[id].promptFor(TOKENS)).toBe(words);
-      expect(VIDEO_MODELS[id].buildRequest({ ...SHOT, prompt: TOKENS }).input.prompt).toBe(words);
+      // The request sends the prompt as presetClip gave it, converted once (no second withReferences).
+      expect(VIDEO_MODELS[id].buildRequest({ ...SHOT, prompt: VIDEO_MODELS[id].promptFor(TOKENS) }).input.prompt).toBe(words);
     }
   });
 
