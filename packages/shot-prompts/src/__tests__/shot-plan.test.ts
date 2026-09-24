@@ -38,7 +38,11 @@ import {
   SHOT_FIELDS,
   SHOT_FIELD_MAX_CHARS,
   SIMPLE_PHYSICS,
+  REALISM,
+  PERSON_DESCRIPTION_MAX_CHARS,
   ShotEditError,
+  cleanPersonDescription,
+  personDescriptionLine,
   composeFields,
   composeShotPlan,
   displayReferences,
@@ -218,7 +222,14 @@ describe('composeShotPlan', () => {
   it('gives every shot its kind, length, model and fallback', () => {
     const plan = shotsOf(REACT, { durationMs: 12_000, modesty: HIJAB });
     for (const s of plan) {
-      expect(s.video).toEqual(s.kind === 'reaction' ? { model: 'kling-o3-pro', fallback: 'veo-3.1' } : { model: 'seedance-2.0' });
+      expect(s.video).toEqual(
+        s.kind === 'reaction' ? { model: 'modelark-seedance-2.0-mini', fallback: ['kling-o3-pro', 'veo-3.1'] } : { model: 'seedance-2.0' },
+      );
+      // Every model of the chain has its own video-stage Guardrails; the model's are the shot's.
+      expect(Object.keys(s.video_guardrails_by_model)).toEqual(
+        s.kind === 'reaction' ? ['modelark-seedance-2.0-mini', 'kling-o3-pro', 'veo-3.1'] : ['seedance-2.0'],
+      );
+      expect(s.video_guardrails_by_model[s.video.model]).toEqual(s.guardrails.video);
       expect(s.clip_seconds).toBe(5);
     }
   });
@@ -299,12 +310,103 @@ describe('the person reference', () => {
     expect(shotHasPersonReference(noCharacter, 'reaction')).toBe(false);
   });
 
-  it('decides the person_reference Guardrail', () => {
+  it('decides the person_reference Guardrail, per model (ADR 0003: never a re-hosted face on ModelArk)', () => {
     const [reaction] = shotsOf(REACT, { durationMs: 9_000, modesty: COVERED });
-    expect(reaction.guardrails.video.map((g) => g.id)).toContain('person_reference');
+    const ids = (m: 'modelark-seedance-2.0-mini' | 'kling-o3-pro' | 'veo-3.1') => reaction.video_guardrails_by_model[m]!.map((g) => g.id);
+    expect(ids('modelark-seedance-2.0-mini')).not.toContain('person_reference');
+    expect(ids('kling-o3-pro')).toContain('person_reference');
+    expect(ids('veo-3.1')).toContain('person_reference');
     const noCharacter = { ...REACT, requiredInputs: ['product_image'] } as ShotPlanPreset;
     const [bare] = shotsOf(noCharacter, { durationMs: 9_000, modesty: COVERED });
-    expect(bare.guardrails.video.map((g) => g.id)).not.toContain('person_reference');
+    for (const list of Object.values(bare.video_guardrails_by_model)) expect(list!.map((g) => g.id)).not.toContain('person_reference');
+  });
+
+  it('sends the face to ModelArk only when it is the same account’s own output', () => {
+    expect(shotHasPersonReference(REACTION, 'reaction', 'modelark-seedance-2.0-mini')).toBe(false);
+    expect(shotHasPersonReference(REACTION, 'reaction', 'modelark-seedance-2.0-mini', 'rehosted')).toBe(false);
+    expect(shotHasPersonReference(REACTION, 'reaction', 'modelark-seedance-2.0-mini', 'modelark_output')).toBe(true);
+    expect(shotHasPersonReference(REACTION, 'reaction', 'kling-o3-pro')).toBe(true);
+    expect(shotHasPersonReference(REACTION, 'product', 'kling-o3-pro')).toBe(false);
+    const [trusted] = shotsOf(REACT, { durationMs: 9_000, modesty: COVERED, personImage: 'modelark_output' });
+    expect(trusted.guardrails.video.map((g) => g.id)).toContain('person_reference');
+  });
+});
+
+describe('the person in words (ADR 0003: a shot whose model does not take the face)', () => {
+  const WOMAN = { gender: 'female', description: 'Gulf woman in her late twenties, warm brown eyes, light makeup' } as const;
+
+  it('describes the saved character on the ModelArk attempt, and pins the face on the fallback', () => {
+    const [reaction, product] = shotsOf(REACT, { durationMs: 9_000, modesty: HIJAB, person: WOMAN });
+    const ark = reaction.guardrails.video.find((g) => g.id === 'person_description');
+    expect(ark).toMatchObject({ at: 'before_scene' });
+    expect(ark!.text).toBe('The person is a woman: Gulf woman in her late twenties, warm brown eyes, light makeup. The same person in every shot.');
+    const onArk = shotPrompt(reaction, 'video', REFERENCE_TOKENS);
+    expect(onArk).not.toContain(REFERENCE_TOKENS.person);
+    expect(onArk).toContain(MODESTY_PROMPTS.hijab);
+    const onKling = shotPrompt(reaction, 'video', REFERENCE_TOKENS, 'kling-o3-pro');
+    expect(onKling).toContain(REFERENCE_TOKENS.person);
+    expect(onKling).not.toContain(ark!.text);
+    expect(product.guardrails.video.map((g) => g.id)).not.toContain('person_description');
+  });
+
+  it('says only the gender when the character has no usable description', () => {
+    expect(personDescriptionLine({ gender: 'male' })).toBe('The person is a man, an ordinary real person, the same in every shot.');
+    expect(personDescriptionLine({ gender: 'female', description: 'takes off her hijab and smiles' })).toBe(
+      'The person is a woman, an ordinary real person, the same in every shot.',
+    );
+    expect(personDescriptionLine(null)).toBeNull();
+    expect(personDescriptionLine({})).toBeNull();
+  });
+
+  it('cleans the user’s description: no syntax, no Guardrail breaks, capped at a word', () => {
+    expect(cleanPersonDescription('  a man [smiling] with @image2 {{x}}  a beard.  ')).toBe('a man smiling with image2 x a beard');
+    expect(cleanPersonDescription('she talks to the camera')).toBeNull();
+    expect(cleanPersonDescription('with bare arms')).toBeNull();
+    expect(cleanPersonDescription('   ')).toBeNull();
+    const long = cleanPersonDescription('word '.repeat(200))!;
+    expect(long.length).toBeLessThanOrEqual(PERSON_DESCRIPTION_MAX_CHARS);
+    expect(long.endsWith('word')).toBe(true);
+  });
+
+  it('refuses a model the shot does not render on', () => {
+    const [reaction] = shotsOf(REACT, { durationMs: 9_000, modesty: COVERED });
+    expect(() => shotPrompt(reaction, 'video', REFERENCE_TOKENS, 'seedance-2.0')).toThrow(/does not render on/);
+  });
+});
+
+describe('the realism Guardrail (ADR 0003, #29)', () => {
+  it('is on every person and hands shot, both stages, and never on a product shot', () => {
+    const plans = [
+      shotsOf(REACT, { durationMs: 12_000, modesty: HIJAB }),
+      shotsOf(HANDS, { durationMs: 12_000, modesty: COVERED, vars: handsVars }),
+      shotsOf(HERO, { durationMs: 12_000, modesty: COVERED }),
+    ];
+    let people = 0;
+    for (const s of plans.flat()) {
+      const stages = [...Object.values(s.video_guardrails_by_model), s.guardrails.image].filter((l) => l!.length > 0);
+      for (const list of stages) {
+        const has = list!.some((g) => g.id === 'realism' && g.text === REALISM && g.at === 'after_scene');
+        expect(has, `${s.shot_id}`).toBe(s.shows !== 'product');
+      }
+      const video = shotPrompt(s, 'video', EVOLINK);
+      if (s.shows === 'product') expect(video, s.shot_id).not.toContain(REALISM);
+      else {
+        people += 1;
+        expect(video, s.shot_id).toContain(REALISM);
+      }
+    }
+    expect(people).toBeGreaterThan(0);
+  });
+
+  it('says the look the owner accepted: raw phone video, flat light, sharp background, matte skin with pores, no beauty filter', () => {
+    for (const words of ['Raw unedited iPhone', 'not cinematic', 'flat soft everyday light', 'no bokeh', 'visible pores', 'no beauty filter', 'no waxy']) {
+      expect(REALISM).toContain(words);
+    }
+  });
+
+  it('is on the hands frame too (the image stage)', () => {
+    const [hands] = shotsOf(HANDS, { durationMs: 9_000, modesty: COVERED, vars: handsVars });
+    expect(shotPrompt(hands, 'image', IMAGE_REFERENCES)).toContain(REALISM);
   });
 });
 
@@ -351,10 +453,24 @@ describe('fields compose in a fixed order', () => {
 
 describe('the Guardrails, per stage', () => {
   it('video: the Reaction person shot — references first, then no speaking, modest, hijab, format; audio off on the request', () => {
-    const [reaction, product] = shotsOf(REACT, { durationMs: 9_000, modesty: HIJAB });
+    const [reaction, product] = shotsOf(REACT, { durationMs: 9_000, modesty: HIJAB, person: { gender: 'female' } });
+    // On ModelArk (the shot's model): the person in words, the product reference alone.
     expect(reaction.guardrails.video.map((g) => [g.id, g.at])).toEqual([
+      ['person_description', 'before_scene'],
+      ['product_reference', 'before_scene'],
+      ['realism', 'after_scene'],
+      ['no_speaking', 'after_scene'],
+      ['simple_physics', 'after_scene'],
+      ['modesty', 'after_scene'],
+      ['hijab', 'after_scene'],
+      ['format', 'after_scene'],
+      ['audio_off', 'request'],
+    ]);
+    // On the Kling fallback: the face.
+    expect(reaction.video_guardrails_by_model['kling-o3-pro']!.map((g) => [g.id, g.at])).toEqual([
       ['person_reference', 'before_scene'],
       ['product_reference', 'before_scene'],
+      ['realism', 'after_scene'],
       ['no_speaking', 'after_scene'],
       ['simple_physics', 'after_scene'],
       ['modesty', 'after_scene'],
@@ -368,14 +484,15 @@ describe('the Guardrails, per stage', () => {
 
   it('image: the Hands-on frame keeps the product, hands only, modest arms and no text — never speech or audio', () => {
     const [hands, product] = shotsOf(HANDS, { durationMs: 9_000, modesty: COVERED, vars: handsVars });
-    expect(hands.guardrails.image.map((g) => g.id)).toEqual(['product_reference', 'hands_only', 'modesty', 'format']);
+    expect(hands.guardrails.image.map((g) => g.id)).toEqual(['product_reference', 'realism', 'hands_only', 'modesty', 'format']);
     expect(hands.guardrails.image.map((g) => g.text)).toEqual([
       expect.stringContaining(REFERENCE_TOKENS.start),
+      REALISM,
       HANDS_ONLY_FRAME,
       MODESTY_PROMPTS.hands.covered,
       FORMAT_FRAME,
     ]);
-    expect(hands.guardrails.video.map((g) => g.id)).toEqual(['start_frame', 'hands_only', 'simple_physics', 'modesty', 'format', 'audio_off']);
+    expect(hands.guardrails.video.map((g) => g.id)).toEqual(['start_frame', 'realism', 'hands_only', 'simple_physics', 'modesty', 'format', 'audio_off']);
     expect(product.guardrails.image).toEqual([]);
     const image = shotPrompt(hands, 'image', IMAGE_REFERENCES);
     expect(image).not.toMatch(/speak|audio/i);
@@ -415,8 +532,8 @@ describe('the Guardrails, per stage', () => {
 
   it('leave the reference tokens for the provider adapter, and name the images in plain words for the user', () => {
     const [reaction] = shotsOf(REACT, { durationMs: 9_000, modesty: COVERED });
-    expect(shotPrompt(reaction, 'video', REFERENCE_TOKENS)).toContain(REFERENCE_TOKENS.person);
-    const shown = shotPrompt(reaction, 'video', displayReferences(false));
+    expect(shotPrompt(reaction, 'video', REFERENCE_TOKENS, 'kling-o3-pro')).toContain(REFERENCE_TOKENS.person);
+    const shown = shotPrompt(reaction, 'video', displayReferences(false), 'kling-o3-pro');
     expect(shown).toContain('the character’s photo');
     expect(shown).toContain('the product photo');
     expect(shown).not.toMatch(/@image|\{\{/);
@@ -439,7 +556,7 @@ describe('shot edits', () => {
     expect(edited[0].edited).toBe(true);
     expect(edited[0].default_fields).toEqual(plain[0].default_fields);
     expect(edited[0].guardrails).toEqual(plain[0].guardrails);
-    const prompt = shotPrompt(edited[0], 'video', EVOLINK);
+    const prompt = shotPrompt(edited[0], 'video', EVOLINK, 'kling-o3-pro');
     for (const line of [NO_SPEAKING_PERSON, MODESTY_PROMPTS.person.covered, MODESTY_PROMPTS.hijab, FORMAT, '@image1', '@image2']) {
       expect(prompt).toContain(line);
     }

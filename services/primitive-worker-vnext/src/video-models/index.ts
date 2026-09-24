@@ -14,8 +14,14 @@
  * the person's reference on a shot that shows one. A Shot Prompt names those
  * images with provider-neutral tokens (#26, @agentmedia/shot-prompts
  * REFERENCE_TOKENS); each model's adapter puts in its own syntax (promptFor):
- * EvoLink's `@image1` / `@image2`, and on fal "the first / second reference
- * image", the wording the 2026-09-24 bake-off rendered with.
+ * EvoLink's `@image1` / `@image2`, on fal "the first / second reference
+ * image", the wording the 2026-09-24 bake-off rendered with, and on ModelArk
+ * "image 1" / "image 2" (its documented wording, in content order).
+ *
+ * ModelArk Seedance 2.0 Mini (#29, ADR 0003) is sent the person's image only
+ * when it is the same account's own output (@agentmedia/schema
+ * modelTakesPersonImage): the Preset render never hands it a re-hosted face,
+ * and its prompt then describes the person in words.
  *
  * Content refusals map to the one content-policy refusal
  * (CONTENT_POLICY_REFUSED, ../failure-policy.ts) whichever provider refused.
@@ -29,6 +35,7 @@ import type { VideoModelId } from '@agentmedia/schema';
 import { withReferences, type ReferenceWords } from '@agentmedia/shot-prompts';
 import { generateSimpleSelfieEvolink } from '../client/evolink.js';
 import { runFalQueue } from '../client/fal.js';
+import { modelArkVideoBody, runModelArkVideo, type ModelArkVideoParams } from '../client/byteplus.js';
 import { providerFailure } from '../client/provider-failure.js';
 
 /** One shot, as every model is asked for it. */
@@ -39,6 +46,12 @@ export interface VideoShotRequest {
   startImageUrl: string;
   /** The person's reference (`@image2`), on a shot that shows one. */
   characterImageUrl?: string;
+  /**
+   * The start image is the shot's generated starting frame (#18), not the
+   * product photo. ModelArk then animates it as the clip's first frame
+   * (image-to-video, role first_frame) when no person image goes with it.
+   */
+  startImageIsFrame?: boolean;
   /** The planned clip length. */
   seconds: 5 | 10;
   /** Always false: the video model never speaks (ADR 0001). */
@@ -82,6 +95,12 @@ export const EVOLINK_REFERENCES: ReferenceWords = { start: '@image1', person: '@
 
 /** fal has no reference syntax: the images are named by their order in image_urls. */
 export const FAL_REFERENCES: ReferenceWords = { start: 'the first reference image', person: 'the second reference image' };
+
+/**
+ * ModelArk's reference wording: "image 1" is the start image, "image 2" the
+ * person (when their image is sent), the order of the content's images.
+ */
+export const MODELARK_REFERENCES: ReferenceWords = { start: 'image 1', person: 'image 2' };
 
 /** A video model on fal's queue: its endpoint, and the request it sends for a shot (pure, tested). */
 export interface FalVideoModel extends VideoModelClient {
@@ -172,6 +191,51 @@ const seedance: VideoModelClient = {
   },
 };
 
+/** A video model on BytePlus ModelArk: the task body it sends for a shot (pure, tested). */
+export interface ModelArkVideoModel extends VideoModelClient {
+  provider: 'byteplus-modelark';
+  buildRequest(shot: VideoShotRequest): ReturnType<typeof modelArkVideoBody>;
+}
+
+function arkKey(): string {
+  const key = process.env.ARK_API_KEY?.trim();
+  if (!key) throw providerFailure('ARK_API_KEY not configured on primitive-worker-vnext', 'PROVIDER_UNCONFIGURED');
+  return key;
+}
+
+/**
+ * The ModelArk request for a shot. Reference-to-video by default: the start
+ * image as image 1 (the product photo, or the In-use Reference), and the
+ * person as image 2 only when presetClip passes their image (a trusted
+ * ModelArk output). A shot animated from its own starting frame, with no
+ * person image, is image-to-video from that first frame (ModelArk's
+ * documented role; the two modes never mix in one request).
+ */
+export function modelArkParams(model: string, shot: VideoShotRequest): ModelArkVideoParams {
+  const base = { model, prompt: shot.prompt, duration: shot.seconds, ratio: '9:16' as const };
+  if (shot.startImageIsFrame && !shot.characterImageUrl) return { ...base, firstFrame: shot.startImageUrl };
+  return { ...base, referenceImages: references(shot) };
+}
+
+/** The ModelArk model id (activated on the account 2026-09-24); MODELARK_SEEDANCE_MINI_MODEL pins another. */
+const modelArkModelName = () => process.env.MODELARK_SEEDANCE_MINI_MODEL?.trim() || 'dreamina-seedance-2-0-mini-260615';
+
+/** Seedance 2.0 Mini on ModelArk (ADR 0003): 720×1280, 24 fps, ~5.04 s for a 5 s shot; audio off. */
+const modelArkSeedanceMini: ModelArkVideoModel = {
+  id: 'modelark-seedance-2.0-mini',
+  provider: 'byteplus-modelark',
+  modelName: () => modelArkModelName(),
+  // Like fal: a submitted task is never resubmitted; the shot's fallback is its retry.
+  resubmitOnRetry: false,
+  promptFor: (prompt) => withReferences(prompt, MODELARK_REFERENCES),
+  buildRequest: (shot) => modelArkVideoBody(modelArkParams(modelArkModelName(), shot)),
+  async generate(shot) {
+    const body = modelArkVideoBody(modelArkParams(modelArkModelName(), shot));
+    const out = await runModelArkVideo({ apiKey: arkKey(), body, onPoll: (s) => shot.onProgress?.(s) });
+    return { videoUrl: out.videoUrl, taskId: out.taskId };
+  },
+};
+
 /** Kling O3 Pro on fal: 1080×1920, 24 fps, the planned length (it renders 3–15 s). */
 const klingO3Pro = falModel('kling-o3-pro', 'fal-ai/kling-video/o3/pro/reference-to-video', (shot) => ({
   prompt: shot.prompt,
@@ -198,6 +262,7 @@ export const VIDEO_MODELS = {
   'seedance-2.0': seedance,
   'kling-o3-pro': klingO3Pro,
   'veo-3.1': veo31,
+  'modelark-seedance-2.0-mini': modelArkSeedanceMini,
 } as const satisfies Readonly<Record<VideoModelId, VideoModelClient>>;
 
 /** The client for `id`; throws on a model the worker does not know. */

@@ -29,7 +29,11 @@
  *                        come from the SAME plan the quote priced (planPresetShots
  *                        over the draft's duration), so the charge is the quote.
  *                        A shot showing a person also gets the person's reference
- *                        (character_image_url, Reaction #19). Each shot renders
+ *                        (character_image_url, Reaction #19) — only on a model
+ *                        that takes a re-hosted face: on ModelArk (ADR 0003,
+ *                        #29) the person is described in words and the face
+ *                        goes only to a fallback that takes it (Kling, Veo);
+ *                        each attempt gets its own model's prompt. Each shot renders
  *                        on its kind's video model (#25, data on the Preset);
  *                        if that model refuses or fails and the kind names a
  *                        fallback, the failed attempt is refunded and the
@@ -78,9 +82,11 @@ import {
   presetShows,
   shotModelChain,
   type Modesty,
+  type PersonGender,
   type PresetInput,
   type HandGender,
   type HandsOnSetting,
+  type VideoModelId,
 } from '@agentmedia/schema';
 import type { PrimitiveActivities } from '../activities/index.js';
 import { makeChildRunId } from './child-run-id.js';
@@ -124,6 +130,16 @@ export interface PresetRenderInput {
    * shots whose kind shows a person, and to no other shot.
    */
   character_image_url?: string;
+  /**
+   * The saved character in words (ADR 0003, #29): its gender (the caller's
+   * character_gender) and description (user_characters.description), from
+   * api-v2. Said on a person shot whose model does not take the face
+   * (ModelArk), cleaned and dropped if it breaks a Guardrail. Absent on runs
+   * from before #29: the person is then described by nothing but the Modesty
+   * Default on ModelArk.
+   */
+  character_gender?: PersonGender | null;
+  character_description?: string | null;
   aspect_ratio: '9:16';
   /**
    * Music Bed (#9): the track api-v2 chose from the Preset's set
@@ -269,13 +285,18 @@ export async function renderPreset(
     // gets this worker's own Guardrails for its stage (#26, #28).
     let shots: ShotPlanShot[];
     let framePrompts: Array<string | null>;
-    let clipPrompts: string[];
+    let clipPrompts: Array<Partial<Record<VideoModelId, string>>>;
     try {
-      shots = composeShotPlan(preset, { durationMs: input.duration_ms, modesty, vars, interaction }, input.shot_edits ?? null).shots;
+      const person = { gender: input.character_gender ?? null, description: input.character_description ?? null };
+      shots = composeShotPlan(preset, { durationMs: input.duration_ms, modesty, vars, interaction, person }, input.shot_edits ?? null).shots;
       // A starting frame is an image edit of the product photo: its one reference image.
       framePrompts = shots.map((s) => (s.starting_frame ? shotPrompt(s, 'image', IMAGE_REFERENCES) : null));
-      // The provider adapter (presetClip) swaps the reference tokens for its own syntax.
-      clipPrompts = shots.map((s) => shotPrompt(s, 'video', REFERENCE_TOKENS));
+      // Each model of the shot's chain gets its own prompt (the face, or the
+      // person in words); the provider adapter (presetClip) swaps the
+      // reference tokens for its own syntax.
+      clipPrompts = shots.map((s) =>
+        Object.fromEntries(shotModelChain(s.video).map((m) => [m, shotPrompt(s, 'video', REFERENCE_TOKENS, m)])),
+      );
     } catch (err) {
       if (err instanceof ShotEditError) throw ApplicationFailure.nonRetryable(err.message.slice(0, 500), err.code);
       throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
@@ -341,11 +362,12 @@ export async function renderPreset(
             preset: preset.id,
             shot_kind: shots[i].kind,
             model: chain[a],
-            prompt: clipPrompts[i],
+            prompt: clipPrompts[i][chain[a]]!,
             generate_audio: false,
-            // The person's reference only where the shot shows that person (#19),
+            // The person's reference only where the shot shows that person (#19)
+            // and this model takes a re-hosted face (ADR 0003: never ModelArk),
             // decided as the Guardrails' person_reference line is (one helper).
-            ...(shotHasPersonReference(preset, shots[i].kind) && input.character_image_url
+            ...(shotHasPersonReference(preset, shots[i].kind, chain[a], 'rehosted') && input.character_image_url
               ? { character_image_url: input.character_image_url }
               : {}),
           });
@@ -387,9 +409,13 @@ export async function renderPreset(
         fields: shots[i].fields,
         edited_fields: shots[i].edited_fields,
         edited: shots[i].edited,
-        guardrails: { image: shots[i].guardrails.image.map((g) => g.id), video: shots[i].guardrails.video.map((g) => g.id) },
+        guardrails: {
+          image: shots[i].guardrails.image.map((g) => g.id),
+          // The lines of the model that rendered it (the face, or the person in words).
+          video: (shots[i].video_guardrails_by_model?.[model as VideoModelId] ?? shots[i].guardrails.video).map((g) => g.id),
+        },
         ...(framePrompt ? { frame_prompt: framePrompt } : {}),
-        prompt: clip.prompt ?? clipPrompts[i],
+        prompt: clip.prompt ?? clipPrompts[i][model as VideoModelId] ?? clipPrompts[i][chain[0]]!,
       });
       totalUsd += clip.credits_actual_usd;
     }

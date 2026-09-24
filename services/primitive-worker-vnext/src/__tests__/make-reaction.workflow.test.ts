@@ -18,7 +18,7 @@ import { quotePrimitiveCredits } from '../client/credits.js';
 import { startWorkflowHarness, fakeActivities, type CannedActivities, type WorkflowHarness } from './support/workflow-harness.js';
 import type { MakeReactionWorkflowInput } from '../workflows/make-reaction.js';
 import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
-import { MODESTY_PROMPTS, NO_PEOPLE, NO_SPEAKING_PERSON as SILENT_REACTION, REFERENCE_TOKENS } from '@agentmedia/shot-prompts';
+import { MODESTY_PROMPTS, NO_PEOPLE, NO_SPEAKING_PERSON as SILENT_REACTION, REALISM, REFERENCE_TOKENS } from '@agentmedia/shot-prompts';
 import { REACTION_RENDER, presetRender } from '../presets/index.js';
 import * as workflows from '../workflows/index.js';
 
@@ -39,6 +39,8 @@ function renderInput(durationMs: number, over: Partial<MakeReactionWorkflowInput
     character_image_url: CHARACTER,
     aspect_ratio: '9:16',
     modesty: { arms: 'covered', hijab: true },
+    character_gender: 'female',
+    character_description: 'a Gulf woman in her late twenties with warm brown eyes',
     ...over,
   };
 }
@@ -134,12 +136,12 @@ describe('makeReactionWorkflow — silent faces intercut with the product', () =
     for (const c of clipsOf(fakes)) expect(c.generate_audio).toBe(false);
   });
 
-  it('uses the character reference on reaction shots only; every shot has the product photo', async () => {
-    const fakes = happyFakes();
+  it('uses the character reference on a reaction shot only, and only on a model that takes the face; every shot has the product photo', async () => {
+    const fakes = refusing(ARK);
     await harness.execute('makeReactionWorkflow', [renderInput(13_000)], fakes);
     for (const c of clipsOf(fakes)) {
       expect(c.start_image_url).toBe(PRODUCT);
-      if (c.shot_kind === 'reaction') expect(c.character_image_url).toBe(CHARACTER);
+      if (c.shot_kind === 'reaction' && c.model === 'kling-o3-pro') expect(c.character_image_url).toBe(CHARACTER);
       else expect(c.character_image_url).toBeUndefined();
     }
   });
@@ -247,65 +249,90 @@ describe('make_reaction registration', () => {
     await harness.execute('makeReactionWorkflow', [renderInput(9_000)], fakes);
     const [reaction, product] = clipsOf(fakes);
     expect(reaction.prompt).toContain(SILENT_REACTION);
-    expect(reaction.prompt).toContain(REFERENCE_TOKENS.person);
+    // On ModelArk: no face reference, the person in words (ADR 0003).
+    expect(reaction.prompt).not.toContain(REFERENCE_TOKENS.person);
+    expect(reaction.prompt).toContain('The person is a woman');
     expect(product.prompt).not.toContain(REFERENCE_TOKENS.person);
     expect(product.prompt).toMatch(/No people/);
   });
 });
 
-// ── #25: person shots on Kling O3 Pro (Veo 3.1 fallback), product shots on Seedance ──
+// ── #29 (ADR 0003): person shots on ModelArk Seedance 2.0 Mini, falling back
+// to Kling O3 Pro and then Veo 3.1; product shots on Seedance via EvoLink ─────
 
+const ARK = 'modelark-seedance-2.0-mini';
 const refusedBy = (model: string) =>
-  ApplicationFailure.nonRetryable(`fal ${model} refused: likenesses of real people`, CONTENT_POLICY_REFUSED);
+  ApplicationFailure.nonRetryable(`${model} refused: likenesses of real people`, CONTENT_POLICY_REFUSED);
+/** ModelArk's refusal of a photoreal face, as its client maps it. */
+const arkPrivacyRefusal = () =>
+  ApplicationFailure.nonRetryable(
+    'modelark refused: InputImageSensitiveContentDetected.PrivacyInformation: The request failed because the input image may contain real person.',
+    CONTENT_POLICY_REFUSED,
+  );
+const madeClip = (i: PresetClipInput, usd = 0.6) => ({
+  primitive_run_id: i.primitive_run_id,
+  video_url: `https://r2.example.test/clips/${i.shot_index}-${i.model}.mp4`,
+  duration_seconds: i.duration,
+  credits_actual_usd: usd,
+});
+/** presetClip where the models in `refuse` refuse every person shot. */
+const refusing = (...refuse: string[]) =>
+  happyFakes({
+    presetClip: (i: PresetClipInput) => {
+      if (refuse.includes(i.model!)) throw i.model === ARK ? arkPrivacyRefusal() : refusedBy(i.model!);
+      return madeClip(i);
+    },
+  });
 
-describe('makeReactionWorkflow — the video model per shot kind (#25)', () => {
-  it('renders person shots on Kling O3 Pro and product shots on Seedance', async () => {
+describe('makeReactionWorkflow — the video model per shot kind (#29, ADR 0003)', () => {
+  it('renders person shots on ModelArk Seedance 2.0 Mini and product shots on Seedance (EvoLink)', async () => {
     const fakes = happyFakes();
     await harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes);
     const clips = clipsOf(fakes);
     expect(clips).toHaveLength(4);
-    for (const c of clips) expect(c.model).toBe(c.shot_kind === 'reaction' ? 'kling-o3-pro' : 'seedance-2.0');
+    for (const c of clips) expect(c.model).toBe(c.shot_kind === 'reaction' ? ARK : 'seedance-2.0');
   });
 
-  it('falls back to Veo 3.1 when Kling refuses: the refused attempt is refunded and recorded, the Short still renders', async () => {
-    const fakes = happyFakes({
-      presetClip: (i: PresetClipInput) => {
-        if (i.model === 'kling-o3-pro') throw refusedBy('kling');
-        return { primitive_run_id: i.primitive_run_id, video_url: `https://r2.example.test/clips/${i.shot_index}-${i.model}.mp4`, duration_seconds: i.duration, credits_actual_usd: 0.6 };
-      },
-    });
+  it('falls back to Kling O3 Pro when ModelArk refuses: the refused attempt is refunded and recorded, the Short still renders', async () => {
+    const fakes = refusing(ARK);
     const result = await harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes);
     expect(result.video_url).toBe('https://r2.example.test/shorts/reaction.mp4');
 
     const clips = clipsOf(fakes);
-    const tried = clips.map((c) => `${c.shot_index}:${c.model}`);
-    expect(tried).toEqual(['0:kling-o3-pro', '0:veo-3.1', '1:seedance-2.0', '2:kling-o3-pro', '2:veo-3.1', '3:seedance-2.0']);
+    expect(clips.map((c) => `${c.shot_index}:${c.model}`)).toEqual([`0:${ARK}`, '0:kling-o3-pro', '1:seedance-2.0', `2:${ARK}`, '2:kling-o3-pro', '3:seedance-2.0']);
     // Each attempt is its own charged child: the fallback never reuses the refused one's id.
     expect(new Set(clips.map((c) => c.primitive_run_id)).size).toBe(clips.length);
 
-    const refused = clips.filter((c) => c.model === 'kling-o3-pro').map((c) => c.primitive_run_id);
+    const refused = clips.filter((c) => c.model === ARK).map((c) => c.primitive_run_id);
     const refunded = (fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id);
     expect(refunded.sort()).toEqual([...refused].sort());
     const marked = fakes.callsTo('markPrimitiveRunFailed') as Array<{ primitive_run_id: string; error_code: string }>;
     expect(marked.map((m) => m.primitive_run_id).sort()).toEqual([...refused].sort());
     for (const m of marked) expect(m.error_code).toBe(CONTENT_POLICY_REFUSED);
 
-    // The cut uses the fallback's clip, trimmed to the planned share (Veo renders 8 s).
+    const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
+    expect(mux.clip_urls[0]).toContain('0-kling-o3-pro');
+    expect(fakes.names()).not.toContain('releaseDraftRender');
+  });
+
+  it('falls back through the whole chain: ModelArk, then Kling, then Veo 3.1 (trimmed to the planned share)', async () => {
+    const fakes = refusing(ARK, 'kling-o3-pro');
+    await harness.execute('makeReactionWorkflow', [renderInput(9_000)], fakes);
+    expect(clipsOf(fakes).map((c) => `${c.shot_index}:${c.model}`)).toEqual([`0:${ARK}`, '0:kling-o3-pro', '0:veo-3.1', '1:seedance-2.0']);
     const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
     expect(mux.clip_urls[0]).toContain('0-veo-3.1');
     expect(mux.shot_ms!.every((ms) => ms <= REACTION_MAX_SHOT_MS)).toBe(true);
-    expect(fakes.names()).not.toContain('releaseDraftRender');
   });
 
   it('falls back on an ordinary provider failure too, not only a refusal', async () => {
     const fakes = happyFakes({
       presetClip: (i: PresetClipInput) => {
-        if (i.model === 'kling-o3-pro') throw ApplicationFailure.nonRetryable('fal timed out', 'FAL_TIMEOUT');
-        return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 0.6 };
+        if (i.model === ARK) throw ApplicationFailure.nonRetryable('modelark timed out', 'MODELARK_TIMEOUT');
+        return madeClip(i);
       },
     });
     await harness.execute('makeReactionWorkflow', [renderInput(8_000)], fakes);
-    expect(clipsOf(fakes).map((c) => c.model)).toEqual(['kling-o3-pro', 'veo-3.1', 'seedance-2.0']);
+    expect(clipsOf(fakes).map((c) => c.model)).toEqual([ARK, 'kling-o3-pro', 'seedance-2.0']);
   });
 
   it('never falls back on a failure the fallback cannot fix (no credits)', async () => {
@@ -315,21 +342,16 @@ describe('makeReactionWorkflow — the video model per shot kind (#25)', () => {
       },
     });
     await expect(harness.execute('makeReactionWorkflow', [renderInput(8_000)], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
-    expect(clipsOf(fakes).map((c) => c.model)).toEqual(['kling-o3-pro']);
+    expect(clipsOf(fakes).map((c) => c.model)).toEqual([ARK]);
   });
 
-  it('both refusing is the non-retryable content-policy failure: every attempt refunded, the draft released', async () => {
-    const fakes = happyFakes({
-      presetClip: (i: PresetClipInput) => {
-        if (i.shot_kind === 'reaction') throw refusedBy(i.model!);
-        return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 0.6 };
-      },
-    });
+  it('every model refusing is the non-retryable content-policy failure: every attempt refunded, the draft released', async () => {
+    const fakes = refusing(ARK, 'kling-o3-pro', 'veo-3.1');
     const err = await harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes).catch((e) => e);
     expect(err).toBeInstanceOf(WorkflowFailedError);
 
     const clips = clipsOf(fakes);
-    expect(clips.map((c) => c.model)).toEqual(['kling-o3-pro', 'veo-3.1']);
+    expect(clips.map((c) => c.model)).toEqual([ARK, 'kling-o3-pro', 'veo-3.1']);
     const refunded = new Set((fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id));
     for (const c of clips) expect(refunded.has(c.primitive_run_id)).toBe(true);
 
@@ -341,29 +363,24 @@ describe('makeReactionWorkflow — the video model per shot kind (#25)', () => {
     expect(names.indexOf('releaseDraftRender')).toBeGreaterThan(names.lastIndexOf('refundCredits'));
   });
 
-  it('asks every model — Kling, Veo and Seedance — for a clip with its own audio disabled', async () => {
+  it('asks every model — ModelArk, Kling, Veo and Seedance — for a clip with its own audio disabled', async () => {
     const fakes = happyFakes({
       presetClip: (i: PresetClipInput) => {
-        if (i.model === 'kling-o3-pro' && i.shot_index === 0) throw refusedBy('kling');
-        return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 0.6 };
+        if (i.shot_index === 0 && i.model !== 'veo-3.1') throw refusedBy(i.model!);
+        return madeClip(i);
       },
     });
     await harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes);
     const clips = clipsOf(fakes);
-    expect(new Set(clips.map((c) => c.model))).toEqual(new Set(['kling-o3-pro', 'veo-3.1', 'seedance-2.0']));
+    expect(new Set(clips.map((c) => c.model))).toEqual(new Set([ARK, 'kling-o3-pro', 'veo-3.1', 'seedance-2.0']));
     for (const c of clips) expect(c.generate_audio).toBe(false);
   });
 
   it.each([5_000, 7_400, 10_000, 10_001, 12_345, 15_000])(
-    'charges exactly the quote at %i ms, whether or not the fallback ran',
+    'charges exactly the quote at %i ms, whether or not a fallback ran',
     async (ms) => {
-      for (const refuse of [false, true]) {
-        const fakes = happyFakes({
-          presetClip: (i: PresetClipInput) => {
-            if (refuse && i.model === 'kling-o3-pro') throw refusedBy('kling');
-            return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 0.6 };
-          },
-        });
+      for (const refuse of [[], [ARK], [ARK, 'kling-o3-pro']]) {
+        const fakes = refusing(...refuse);
         await harness.execute('makeReactionWorkflow', [renderInput(ms)], fakes);
         const refunded = new Set((fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id));
         // What stays charged: every attempt that was not refunded, at its shot's price.
@@ -376,18 +393,78 @@ describe('makeReactionWorkflow — the video model per shot kind (#25)', () => {
   );
 });
 
+// ── #29 (ADR 0003): the face never goes to ModelArk; the person in words ──
+
+describe('makeReactionWorkflow — the person on ModelArk is described in words, the face goes only to the fallback', () => {
+  it('sends ModelArk the product alone and a prompt with no person reference, but the saved character’s words', async () => {
+    const fakes = happyFakes();
+    await harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes);
+    for (const c of clipsOf(fakes)) {
+      expect(c.start_image_url).toBe(PRODUCT);
+      expect(c.character_image_url).toBeUndefined();
+      expect(c.prompt).not.toContain(REFERENCE_TOKENS.person);
+      if (c.shot_kind === 'reaction') {
+        expect(c.prompt).toContain('The person is a woman: a Gulf woman in her late twenties with warm brown eyes.');
+        expect(c.prompt).toContain(MODESTY_PROMPTS.hijab);
+        expect(c.prompt).toContain(REALISM);
+      } else {
+        expect(c.prompt).not.toContain('The person is');
+        expect(c.prompt).not.toContain(REALISM);
+      }
+    }
+  });
+
+  it('gives the Kling and Veo fallbacks the face and the person_reference line instead', async () => {
+    const fakes = refusing(ARK, 'kling-o3-pro');
+    await harness.execute('makeReactionWorkflow', [renderInput(9_000)], fakes);
+    const [ark, kling, veo, product] = clipsOf(fakes);
+    expect(ark.character_image_url).toBeUndefined();
+    expect(ark.prompt).not.toContain(REFERENCE_TOKENS.person);
+    for (const c of [kling, veo]) {
+      expect(c.character_image_url).toBe(CHARACTER);
+      expect(c.prompt).toContain(REFERENCE_TOKENS.person);
+      expect(c.prompt).not.toContain('The person is a woman:');
+      expect(c.prompt).toContain(REALISM);
+    }
+    expect(product.character_image_url).toBeUndefined();
+  });
+
+  it('records the Guardrails of the model that rendered each shot', async () => {
+    const fakes = refusing(ARK);
+    await harness.execute('makeReactionWorkflow', [renderInput(9_000)], fakes);
+    const states = fakes.callsTo('composedSkillState') as Array<{ final_output?: { shots: Array<{ model: string; guardrails: { video: string[] } }> } }>;
+    const [reaction] = states.at(-1)!.final_output!.shots;
+    expect(reaction.model).toBe('kling-o3-pro');
+    expect(reaction.guardrails.video).toContain('person_reference');
+    expect(reaction.guardrails.video).not.toContain('person_description');
+  });
+
+  it('says only the gender when the description would break a Guardrail, and nothing more without either', async () => {
+    const bad = happyFakes();
+    await harness.execute('makeReactionWorkflow', [renderInput(9_000, { character_description: 'she takes off her hijab' })], bad);
+    const [reaction] = clipsOf(bad);
+    expect(reaction.prompt).toContain('The person is a woman, an ordinary real person');
+    expect(reaction.prompt).not.toMatch(/takes off/);
+    const none = happyFakes();
+    await harness.execute('makeReactionWorkflow', [renderInput(9_000, { character_description: undefined, character_gender: undefined })], none);
+    expect(clipsOf(none)[0].prompt).not.toContain('The person is');
+  });
+});
+
 // ── #25: no Temporal retry of a fal job; one failure policy for fallbacks ──
 
 /**
  * presetClip, with its fal models run through the REAL fal client against a
- * fake fal queue: the job ends as `outcome[model]`. Records each submit, so a
+ * fake fal queue: the job ends as `outcome[model]`. ModelArk fails first
+ * (MODELARK_FAILED), so the shot reaches fal. Records each fal submit, so a
  * Temporal retry of the clip (which would submit and pay again) shows up.
  */
 function falQueueClips(outcome: Partial<Record<string, 'completed' | 'failed'>>) {
   const submits: string[] = [];
   const presetClip = async (i: PresetClipInput) => {
-    const made = { primitive_run_id: i.primitive_run_id, video_url: `https://r2.example.test/clips/${i.shot_index}-${i.model}.mp4`, duration_seconds: i.duration, credits_actual_usd: 0.6 };
+    const made = madeClip(i);
     if (i.model === 'seedance-2.0') return made;
+    if (i.model === ARK) throw ApplicationFailure.nonRetryable('modelark task failed', 'MODELARK_FAILED');
     const model = VIDEO_MODELS[i.model as 'kling-o3-pro' | 'veo-3.1'] as FalVideoModel;
     const { endpoint, input } = model.buildRequest({ prompt: i.prompt, startImageUrl: i.start_image_url, seconds: i.duration, generateAudio: false });
     const base = `https://queue.fal.run/${endpoint}/requests/${i.primitive_run_id}`;
@@ -414,10 +491,10 @@ describe('makeReactionWorkflow — a failed fal job is never resubmitted (#25)',
     await harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes);
     expect(fal.submits).toEqual(['0:kling-o3-pro', '0:veo-3.1', '2:kling-o3-pro', '2:veo-3.1']);
     const marked = fakes.callsTo('markPrimitiveRunFailed') as Array<{ error_code: string }>;
-    expect(marked.map((m) => m.error_code)).toEqual(['FAL_FAILED', 'FAL_FAILED']);
+    expect(marked.map((m) => m.error_code)).toEqual(['MODELARK_FAILED', 'FAL_FAILED', 'MODELARK_FAILED', 'FAL_FAILED']);
   });
 
-  it('both failing: one submit per model, then the render fails, refunded and released', async () => {
+  it('all failing: one submit per model, then the render fails, refunded and released', async () => {
     const fal = falQueueClips({ 'kling-o3-pro': 'failed', 'veo-3.1': 'failed' });
     const fakes = happyFakes({ presetClip: fal.presetClip });
     await expect(harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
@@ -428,59 +505,60 @@ describe('makeReactionWorkflow — a failed fal job is never resubmitted (#25)',
   });
 });
 
-describe('makeReactionWorkflow — the failure policy decides the fallback (#25)', () => {
-  it('a missing FAL_KEY fails fast with PROVIDER_UNCONFIGURED: no fallback that would fail the same way', async () => {
+describe('makeReactionWorkflow — the failure policy decides the fallback (#25, #29)', () => {
+  it('a missing ARK_API_KEY fails fast with PROVIDER_UNCONFIGURED: a misconfigured deployment is loud, not silently on Kling', async () => {
     const fakes = happyFakes({
       presetClip: () => {
-        throw ApplicationFailure.nonRetryable('FAL_KEY not configured on primitive-worker-vnext', 'PROVIDER_UNCONFIGURED');
+        throw ApplicationFailure.nonRetryable('ARK_API_KEY not configured on primitive-worker-vnext', 'PROVIDER_UNCONFIGURED');
       },
     });
     await expect(harness.execute('makeReactionWorkflow', [renderInput(8_000)], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
-    expect(clipsOf(fakes).map((c) => c.model)).toEqual(['kling-o3-pro']);
+    expect(clipsOf(fakes).map((c) => c.model)).toEqual([ARK]);
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
-    expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'PROVIDER_UNCONFIGURED', error_message: expect.stringContaining('FAL_KEY') });
+    expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'PROVIDER_UNCONFIGURED', error_message: expect.stringContaining('ARK_API_KEY') });
   });
 
   it.each<[string, () => never]>([
     ['a timeout', () => { throw ApplicationFailure.nonRetryable('fal timed out', 'FAL_TIMEOUT'); }],
     ['a failed job', () => { throw ApplicationFailure.nonRetryable('worker crashed', 'FAL_FAILED'); }],
     ['no credits left', () => { throw ApplicationFailure.nonRetryable('insufficient credits', 'INSUFFICIENT_CREDITS'); }],
-  ])('Kling refused and Veo then failed with %s: the run fails as the content-policy refusal', async (_label, veoFails) => {
+  ])('ModelArk and Kling refused and Veo then failed with %s: the run fails as the content-policy refusal', async (_label, veoFails) => {
     const fakes = happyFakes({
       presetClip: (i: PresetClipInput) => {
+        if (i.model === ARK) throw arkPrivacyRefusal();
         if (i.model === 'kling-o3-pro') throw refusedBy('kling');
         if (i.model === 'veo-3.1') veoFails();
-        return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 0.6 };
+        return madeClip(i);
       },
     });
     await expect(harness.execute('makeReactionWorkflow', [renderInput(8_000)], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
     const clips = clipsOf(fakes);
-    expect(clips.map((c) => c.model)).toEqual(['kling-o3-pro', 'veo-3.1']);
+    expect(clips.map((c) => c.model)).toEqual([ARK, 'kling-o3-pro', 'veo-3.1']);
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
     expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: CONTENT_POLICY_REFUSED });
-    // Each attempt keeps its own failure on its row, and both are refunded.
+    // Each attempt keeps its own failure on its row, and all are refunded.
     const marked = fakes.callsTo('markPrimitiveRunFailed') as Array<{ primitive_run_id: string; error_code: string }>;
     expect(marked.find((m) => m.primitive_run_id === clips[0].primitive_run_id)?.error_code).toBe(CONTENT_POLICY_REFUSED);
-    expect(marked.find((m) => m.primitive_run_id === clips[1].primitive_run_id)?.error_code).not.toBe(CONTENT_POLICY_REFUSED);
+    expect(marked.find((m) => m.primitive_run_id === clips[2].primitive_run_id)?.error_code).not.toBe(CONTENT_POLICY_REFUSED);
     const refunded = new Set((fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id));
     for (const c of clips) expect(refunded.has(c.primitive_run_id)).toBe(true);
     expect(fakes.callsTo('releaseDraftRender')).toHaveLength(1);
   });
 });
 
-describe('makeReactionWorkflow — provider cost counts every attempt (#25)', () => {
-  const costed = (refuseKling: boolean) =>
+describe('makeReactionWorkflow — provider cost counts every attempt (#25, #29)', () => {
+  const costed = (...refuse: string[]) =>
     happyFakes({
       presetClip: (i: PresetClipInput) => {
-        if (refuseKling && i.model === 'kling-o3-pro') throw refusedBy('kling');
-        return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: modelClipUsd(i.model as VideoModelId, i.duration) };
+        if (refuse.includes(i.model!)) throw refusedBy(i.model!);
+        return madeClip(i, modelClipUsd(i.model as VideoModelId, i.duration));
       },
     });
 
-  it('a shot that fell back costs the failed Kling attempt plus the Veo clip, within the Preset’s budget', async () => {
-    const fakes = costed(true);
+  it('a shot that fell back to Veo costs the failed ModelArk and Kling attempts plus the Veo clip, within the Preset’s budget', async () => {
+    const fakes = costed(ARK, 'kling-o3-pro');
     const result = await harness.execute('makeReactionWorkflow', [renderInput(15_000)], fakes);
-    const worst = 2 * (modelClipUsd('kling-o3-pro', 5) + modelClipUsd('veo-3.1', 5)) + 2 * modelClipUsd('seedance-2.0', 5);
+    const worst = 2 * (modelClipUsd(ARK, 5) + modelClipUsd('kling-o3-pro', 5) + modelClipUsd('veo-3.1', 5)) + 2 * modelClipUsd('seedance-2.0', 5);
     expect(result.credits_actual_usd).toBeCloseTo(worst, 9);
     expect(result.credits_actual_usd).toBeLessThanOrEqual(REACTION.budget.maxProviderUsd + 1e-9);
     const states = fakes.callsTo('composedSkillState') as Array<{ final_output?: { credits_actual_usd: number } }>;
@@ -488,8 +566,8 @@ describe('makeReactionWorkflow — provider cost counts every attempt (#25)', ()
   });
 
   it('without a fallback, each shot costs its own model', async () => {
-    const result = await harness.execute('makeReactionWorkflow', [renderInput(15_000)], costed(false));
-    expect(result.credits_actual_usd).toBeCloseTo(2 * modelClipUsd('kling-o3-pro', 5) + 2 * modelClipUsd('seedance-2.0', 5), 9);
+    const result = await harness.execute('makeReactionWorkflow', [renderInput(15_000)], costed());
+    expect(result.credits_actual_usd).toBeCloseTo(2 * modelClipUsd(ARK, 5) + 2 * modelClipUsd('seedance-2.0', 5), 9);
   });
 });
 

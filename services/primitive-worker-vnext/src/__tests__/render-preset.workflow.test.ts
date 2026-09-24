@@ -23,6 +23,7 @@ import {
   NO_SPEAKING_PERSON,
   PRODUCT_REFERENCE,
   SIMPLE_PHYSICS,
+  REALISM,
   composeFields,
   composeShotPlan,
 } from '@agentmedia/shot-prompts';
@@ -116,7 +117,7 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
     // Each is its scene plus its Guardrails (#26): the person shot's no-speaking
     // and Modesty Default (#17; see modesty.workflow.test.ts), the product shot's nobody.
     expect(clips.map((c) => c.prompt)).toEqual([
-      `${PRODUCT_REFERENCE} ${INTERCUT.shots.person.scene} ${ENERGY_WORDS.calm} ${NO_SPEAKING_PERSON} ${SIMPLE_PHYSICS} ${MODESTY_PROMPTS.person.covered} ${FORMAT}`,
+      `${PRODUCT_REFERENCE} ${INTERCUT.shots.person.scene} ${ENERGY_WORDS.calm} ${REALISM} ${NO_SPEAKING_PERSON} ${SIMPLE_PHYSICS} ${MODESTY_PROMPTS.person.covered} ${FORMAT}`,
       `${PRODUCT_REFERENCE} ${INTERCUT.shots.product.scene} ${ENERGY_WORDS.calm} ${NO_PEOPLE} ${FORMAT}`,
     ]);
     for (const c of clips) expect(c.preset).toBe('test_intercut');

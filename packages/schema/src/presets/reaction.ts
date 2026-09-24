@@ -39,12 +39,13 @@ export const REACTION = {
   minSpeechMs: 5_000,
   maxSpeechMs: 15_000,
   /**
-   * Person shots render on Kling O3 Pro, falling back to Veo 3.1 when Kling
-   * refuses or fails (#25: Seedance on EvoLink blocks hijab-wearing women);
-   * product shots stay on Seedance. Priced per ../video-models.ts.
+   * Person shots render on Seedance 2.0 Mini on BytePlus ModelArk (ADR 0003,
+   * #29), falling back to Kling O3 Pro and then Veo 3.1 when it refuses or
+   * fails (#25: Seedance on EvoLink blocks hijab-wearing women); product shots
+   * stay on Seedance via EvoLink. Priced per ../video-models.ts.
    */
   shotKinds: {
-    reaction: { shows: 'person', video: { model: 'kling-o3-pro', fallback: 'veo-3.1' } },
+    reaction: { shows: 'person', video: { model: 'modelark-seedance-2.0-mini', fallback: ['kling-o3-pro', 'veo-3.1'] } },
     product: { shows: 'product' },
   },
   /**
@@ -71,10 +72,10 @@ export const REACTION = {
     maxCredits: 560,
     /**
      * The most one render may cost us at the provider (the same four clips),
-     * worst case: each of the two person shots fails on Kling O3 Pro after
-     * costing us ($0.56) and then renders on the Veo 3.1 fallback ($1.60), plus
-     * two product clips ($0.60).
+     * worst case: each of the two person shots fails on ModelArk Mini ($0.60,
+     * a placeholder) and on Kling O3 Pro ($0.56) after costing us, and then
+     * renders on Veo 3.1 ($1.60), plus two product clips ($0.60 each).
      */
-    maxProviderUsd: 5.52,
+    maxProviderUsd: 6.72,
   },
 } as const satisfies PresetDefinition<ReactionShotKind>;

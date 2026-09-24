@@ -39,7 +39,7 @@ What one stage of a shot is asked for — the image stage (its starting frame, w
 _Avoid_: prompt (alone), shot description, template
 
 **Guardrail**:
-A locked line of a Shot Prompt that the user sees but can never edit or remove, listed per stage: the fixed product and character references, the Modesty Default, nobody on a product shot and no text or captions (both stages); the no-speaking instruction on person and hands shots (ADR 0001), one simple hand action with the product already in its used state, and the video model's own audio off (video only). The server adds them to every stage of every shot whatever the client sends, and refuses a shot field (or a Product Interaction) that contradicts one: speech, a hijab removed, bare arms or skin, undressing, in English or Arabic.
+A locked line of a Shot Prompt that the user sees but can never edit or remove, listed per stage: the fixed product and character references, the Modesty Default, nobody on a product shot and no text or captions (both stages); the realism rules on person and hands shots (both stages: a raw phone look, flat everyday light, a sharp background, matte skin with pores, no beauty filter; ADR 0003), the no-speaking instruction on person and hands shots (ADR 0001), one simple hand action with the product already in its used state, and the video model's own audio off (video only). The server adds them to every stage of every shot whatever the client sends, and refuses a shot field (or a Product Interaction) that contradicts one: speech, a hijab removed, bare arms or skin, undressing, in English or Arabic.
 _Avoid_: safety filter, rule, constraint, negative prompt
 
 ### Product intelligence

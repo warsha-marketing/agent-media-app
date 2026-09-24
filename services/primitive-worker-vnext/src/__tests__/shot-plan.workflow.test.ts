@@ -41,6 +41,8 @@ function reactionInput(over: Partial<MakeReactionWorkflowInput> = {}): MakeReact
     character_image_url: 'https://r2.example.test/uploads/character.png',
     aspect_ratio: '9:16',
     modesty: { arms: 'covered', hijab: true },
+    character_gender: 'female',
+    character_description: 'Gulf woman in her late twenties, warm brown eyes',
     product_interaction: 'holds the uncapped bottle, sprays once on the inner wrist, sets the bottle down, then raises the wrist to the nose and smiles',
     ...over,
   };
@@ -103,14 +105,15 @@ describe('a render without scene edits', () => {
     expect(clips[1].prompt).toContain(REACTION_RENDER.shots.product.scene);
     const shots = shotsOf(fakes);
     expect(shots.map((s) => [s.shot_id, s.kind, s.model, s.model_name, s.edited])).toEqual([
-      ['reaction', 'reaction', 'kling-o3-pro', 'Kling O3 Pro', false],
+      ['reaction', 'reaction', 'modelark-seedance-2.0-mini', 'Seedance 2.0 Mini (ModelArk)', false],
       ['product-closer', 'product', 'seedance-2.0', 'Seedance 2.0', false],
     ]);
     // The prompt as the model got it: fields + Guardrails, in its reference syntax.
     expect(shots.map((s) => s.prompt)).toEqual(clips.map((c) => sent(c.prompt)));
     expect(shots[0].guardrails).toEqual({
       image: [],
-      video: ['person_reference', 'product_reference', 'no_speaking', 'simple_physics', 'modesty', 'hijab', 'format', 'audio_off'],
+      // On ModelArk: the person in words, never the re-hosted face (ADR 0003).
+      video: ['person_description', 'product_reference', 'realism', 'no_speaking', 'simple_physics', 'modesty', 'hijab', 'format', 'audio_off'],
     });
     expect(shots[0].fields.scene).toBe(REACTION_RENDER.shots.reaction.scene);
     expect(shots[0]).not.toHaveProperty('frame_prompt');
@@ -150,7 +153,9 @@ describe('a render with field edits', () => {
     for (const line of [NO_SPEAKING_PERSON, SIMPLE_PHYSICS, MODESTY_PROMPTS.person.covered, MODESTY_PROMPTS.hijab, FORMAT]) {
       expect(reaction.prompt.indexOf(line), line).toBeGreaterThan(reaction.prompt.indexOf(EDIT));
     }
-    expect(reaction.prompt).toContain(REFERENCE_TOKENS.person);
+    // ModelArk gets the person in words and the product alone (ADR 0003).
+    expect(reaction.prompt).not.toContain(REFERENCE_TOKENS.person);
+    expect(reaction.prompt).toContain('The person is a woman: Gulf woman in her late twenties, warm brown eyes.');
     expect(reaction.prompt).toContain(REFERENCE_TOKENS.start);
     expect(reaction.generate_audio).toBe(false);
     expect(product.prompt).toBe(clipsOf(plain)[1].prompt);
@@ -266,6 +271,6 @@ describe('a render with field edits', () => {
     expect(hands.prompt).toContain('She pours the coffee into a small cup.');
     const [shot] = shotsOf(fakes);
     expect(shot.frame_prompt).toBe(frame.prompt);
-    expect(shot.guardrails.image).toEqual(['product_reference', 'hands_only', 'modesty', 'format']);
+    expect(shot.guardrails.image).toEqual(['product_reference', 'realism', 'hands_only', 'modesty', 'format']);
   });
 });

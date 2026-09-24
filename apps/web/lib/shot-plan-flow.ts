@@ -59,6 +59,8 @@ export interface PlannedShot {
   startingFrame: string | null;
   model: { id: string; name: string };
   fallback: { id: string; name: string } | null;
+  /** Every fallback, in the order tried (ADR 0003: ModelArk → Kling → Veo); [fallback] from an older server. */
+  fallbacks: Array<{ id: string; name: string }>;
   fields: ShotFieldValues;
   defaultFields: ShotFieldValues;
   /** The locked lines per stage: image (the starting frame's; empty without one) and video. */
@@ -125,6 +127,9 @@ export function parseShotPlan(body: unknown): ShotPlan | null {
       startingFrame: str(s.starting_frame),
       model: m,
       fallback: model(s.fallback),
+      fallbacks: Array.isArray(s.fallbacks)
+        ? s.fallbacks.flatMap((f) => { const m = model(f); return m ? [m] : []; })
+        : [model(s.fallback)].flatMap((m) => (m ? [m] : [])),
       fields,
       defaultFields: fieldValues(s.default_fields) ?? fields,
       guardrails: { image: guardrails(g?.image), video: guardrails(g?.video) },
@@ -206,9 +211,10 @@ export function fieldRows(plan: Pick<ShotPlan, 'fieldSpecs'>, shot: Pick<Planned
   });
 }
 
-/** "Kling O3 Pro → Veo 3.1", or just the model. */
-export function modelLine(shot: Pick<PlannedShot, 'model' | 'fallback'>): string {
-  return shot.fallback ? `${shot.model.name} → ${shot.fallback.name}` : shot.model.name;
+/** "Seedance 2.0 Mini (ModelArk) → Kling O3 Pro → Veo 3.1", or just the model. */
+export function modelLine(shot: Pick<PlannedShot, 'model' | 'fallback'> & Partial<Pick<PlannedShot, 'fallbacks'>>): string {
+  const chain = shot.fallbacks?.length ? shot.fallbacks : shot.fallback ? [shot.fallback] : [];
+  return [shot.model, ...chain].map((m) => m.name).join(' → ');
 }
 
 /** What a shot shows, as the card header says it. */

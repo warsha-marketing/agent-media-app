@@ -24,7 +24,9 @@ export interface FailurePolicy {
 
 /**
  * The code every provider's content refusal maps to (EvoLink's moderation
- * verdict, fal's "likenesses of real people", ...). Final — resubmitting pays
+ * verdict, fal's "likenesses of real people", ModelArk's
+ * InputImageSensitiveContentDetected.PrivacyInformation and its failed-task
+ * moderation verdicts, ...). Final — resubmitting pays
  * for the same refusal — but another model may accept the shot. The stored
  * value dates from EvoLink, the first provider, and stays: persisted runs carry
  * it as their error_code and the web reads it.
@@ -69,13 +71,20 @@ export const FAILURE_POLICY: Readonly<Record<string, FailurePolicy>> = {
   FAL_TIMEOUT: TRY_FALLBACK,
   FAL_UNAVAILABLE: TRY_FALLBACK,
   FAL_BAD_RESPONSE: TRY_FALLBACK,
+  // BytePlus ModelArk (#29, client/byteplus.ts runModelArkVideo): like fal, a
+  // submitted task is never resubmitted; the shot's fallback is its retry.
+  ...byStatus('MODELARK'),
+  MODELARK_FAILED: TRY_FALLBACK,
+  MODELARK_TIMEOUT: TRY_FALLBACK,
+  MODELARK_UNAVAILABLE: TRY_FALLBACK,
+  MODELARK_BAD_RESPONSE: TRY_FALLBACK,
 };
 
 /**
  * A provider code not listed above (another 4xx) is still final for its model:
- * a fal job is never resubmitted, and an EvoLink 4xx is a refused request.
+ * a fal or ModelArk job is never resubmitted, and an EvoLink 4xx is a refused request.
  */
-const PROVIDER_PREFIXES = ['FAL_', 'EVOLINK_'] as const;
+const PROVIDER_PREFIXES = ['FAL_', 'EVOLINK_', 'MODELARK_'] as const;
 
 /** The policy for a failure code; an unknown code is transient. */
 export function failurePolicy(code: string | null | undefined): FailurePolicy {

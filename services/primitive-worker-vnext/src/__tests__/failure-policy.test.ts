@@ -29,6 +29,14 @@ describe('the failure policy', () => {
     }
   });
 
+  it('every ModelArk failure is final for its model and tries the fallback, listed or not (#29)', () => {
+    for (const code of ['MODELARK_FAILED', 'MODELARK_TIMEOUT', 'MODELARK_UNAVAILABLE', 'MODELARK_BAD_RESPONSE', 'MODELARK_400', 'MODELARK_401', 'MODELARK_418']) {
+      expect(failurePolicy(code), code).toEqual({ retryable: false, fallbackable: true });
+    }
+    expect(NON_RETRYABLE_TYPES).toContain('MODELARK_FAILED');
+    expect(providerFailure('x', 'MODELARK_418')).toMatchObject({ nonRetryable: true });
+  });
+
   it('an unknown code (a network blip) is transient', () => {
     expect(failurePolicy('FAILED')).toEqual({ retryable: true, fallbackable: true });
     expect(failurePolicy(undefined)).toEqual({ retryable: true, fallbackable: true });
