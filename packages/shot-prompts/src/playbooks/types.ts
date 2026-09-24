@@ -62,12 +62,21 @@ export interface PlaybookPresetPattern {
   roles?: Readonly<Record<string, PlaybookRoleFields>>;
 }
 
-/** When a pattern applies, from the Product Profile. Absent: always. Every given list must hit. */
-export interface PlaybookPatternWhen {
-  /** Any of these interaction verbs (lower case). */
+/** Some of the Profile's interaction verbs or physics risks. */
+export interface PlaybookProfileMatch {
+  /** Any of these words in the interaction verbs (lower case; "apply oil" has the words apply and oil). */
   verbs_any?: readonly string[];
   /** Any of these physics risks. */
   risks_any?: readonly PhysicsRisk[];
+}
+
+/**
+ * When a pattern applies, from the Product Profile: any listed verb or risk
+ * hits, and nothing in `unless` does. Absent: always — then it must be the
+ * last pattern (one after it could never be picked).
+ */
+export interface PlaybookPatternWhen extends PlaybookProfileMatch {
+  unless?: PlaybookProfileMatch;
 }
 
 export interface PlaybookPattern {
@@ -92,7 +101,11 @@ export interface Playbook {
   negatives: { people: readonly string[]; product?: readonly string[] };
   /** The defaults of its hands and person shots, over the Preset's. */
   defaults: { energy: ShotEnergy; performance?: string };
-  /** The first whose `when` matches the Profile applies; none matching = the Preset's shots. */
+  /**
+   * The first whose `when` matches the Profile applies; none matching = the
+   * Preset's shots. A last pattern with no `when` makes the Playbook always
+   * apply one (fragrance: the spray and the smell are always two shots).
+   */
   patterns: readonly PlaybookPattern[];
 }
 

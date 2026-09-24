@@ -195,12 +195,40 @@ describe('choosing a Playbook by the Product Profile category', () => {
     expect(choosePlaybook(undefined)).toBeNull();
   });
 
-  it('picks the pattern from the Profile: a spray perfume, an oud oil, a bakhoor (none)', () => {
-    expect(playbookChoice(choosePlaybook(PERFUME_PROFILE))).toEqual({ id: 'fragrance_oud', version: 1, pattern: 'spray-then-smell' });
-    expect(playbookChoice(choosePlaybook(OUD_OIL_PROFILE))).toEqual({ id: 'fragrance_oud', version: 1, pattern: 'dab-then-smell' });
-    expect(playbookChoice(choosePlaybook(BAKHOOR_PROFILE))).toEqual({ id: 'fragrance_oud', version: 1, pattern: null });
+  it('picks the pattern from the Profile: a spray perfume, an oud oil; fragrance always splits (spray by default)', () => {
+    const v = FRAGRANCE_OUD.version;
+    expect(playbookChoice(choosePlaybook(PERFUME_PROFILE))).toEqual({ id: 'fragrance_oud', version: v, pattern: 'spray-then-smell' });
+    expect(playbookChoice(choosePlaybook(OUD_OIL_PROFILE))).toEqual({ id: 'fragrance_oud', version: v, pattern: 'dab-then-smell' });
+    expect(playbookChoice(choosePlaybook(BAKHOOR_PROFILE))).toEqual({ id: 'fragrance_oud', version: v, pattern: 'spray-then-smell' });
     expect(playbookChoice(choosePlaybook(PHONE_PROFILE))).toEqual({ id: 'electronics', version: 1, pattern: 'one-tap' });
     expect(playbookChoice(choosePlaybook(COFFEE_PROFILE))).toEqual({ id: 'food_cafe', version: 1, pattern: null });
+  });
+
+  it('fragrance ALWAYS applies a pattern: dab-then-smell when the Profile says oil, attar or dab (verbs), else spray-then-smell', () => {
+    const pattern = (p: Partial<ProductProfile>) => choosePlaybook(profile({ category: 'fragrance_oud', ...p }))?.pattern?.id;
+    // Oil, attar, a dab: by the verbs.
+    for (const verbs of [['dab'], ['apply', 'smell'], ['anoint'], ['rub'], ['apply oil'], ['dab attar'], ['roll on']]) {
+      expect(pattern({ interaction_verbs: verbs }), verbs.join()).toBe('dab-then-smell');
+    }
+    // A spray wins over an "apply" (verbs or the liquid_spray risk).
+    expect(pattern({ interaction_verbs: ['spray', 'apply'] })).toBe('spray-then-smell');
+    expect(pattern({ interaction_verbs: ['apply'], physics_risks: ['liquid_spray'] })).toBe('spray-then-smell');
+    // Anything else: spray-then-smell by default — never the single shot.
+    for (const verbs of [['hold'], ['smell'], ['wear'], ['burn', 'waft']]) {
+      expect(pattern({ interaction_verbs: verbs }), verbs.join()).toBe('spray-then-smell');
+    }
+    // And it splits the spray (or dab) and the smell into two person shots wherever the Preset can host it.
+    for (const p of [PERFUME_PROFILE, OUD_OIL_PROFILE, BAKHOOR_PROFILE]) {
+      const plan = composeShotPlan(REACT, { durationMs: 8_000, modesty: GULF, playbook: choosePlaybook(p) });
+      const people = plan.shots.filter((s) => s.shows === 'person').map((s) => s.shot_id);
+      expect(people).toEqual([plan.playbook?.pattern === 'dab-then-smell' ? 'reaction-apply' : 'reaction-spray', 'reaction-smell']);
+    }
+  });
+
+  it('refuses a pattern listed after one that always applies (it could never be picked)', () => {
+    const always = FRAGRANCE_OUD.patterns.find((p) => !p.when)!;
+    const bad: Playbook = { ...FRAGRANCE_OUD, patterns: [always, ...FRAGRANCE_OUD.patterns.filter((p) => p !== always)] };
+    expect(playbookProblems(bad).join('\n')).toMatch(/never picked/);
   });
 
   it('resolves a recorded choice again (the quote, the worker), refusing a stale or unknown one', () => {
@@ -355,7 +383,7 @@ describe('the Shot Plan under a Playbook', () => {
     for (const ms of [5_000, 8_000, 15_000]) {
       const plan = composeShotPlan(REACT, { durationMs: ms, modesty: GULF, interaction: PERFUME, playbook: fragrance });
       expect(plan.shots.map((s) => s.shot_id)).toEqual(['reaction-spray', 'reaction-smell', 'product-closer']);
-      expect(plan.playbook).toEqual({ id: 'fragrance_oud', version: 1, pattern: 'spray-then-smell' });
+      expect(plan.playbook).toEqual({ id: 'fragrance_oud', version: FRAGRANCE_OUD.version, pattern: 'spray-then-smell' });
       const [spray, smell] = plan.shots;
       expect(spray.fields.action).toContain('sprays once onto the inner wrist, then sets the bottle down');
       expect(spray.fields.action).not.toMatch(/nose/);
@@ -405,11 +433,10 @@ describe('the Shot Plan under a Playbook', () => {
     expect(playbookPreset(PRODUCT_HERO, fragrance)).toBe(PRODUCT_HERO);
   });
 
-  it('fragrance without a matching pattern (bakhoor): the Preset’s shots with the Product Interaction, and the negatives', () => {
-    const plan = composeShotPlan(REACT, { durationMs: 8_000, modesty: GULF, interaction: 'wafts the smoke gently with one hand', playbook: choosePlaybook(BAKHOOR_PROFILE) });
-    expect(plan.shots.map((s) => s.shot_id)).toEqual(['reaction', 'product-closer']);
-    expect(plan.shots[0].fields.action).toContain('wafts the smoke');
-    expect(plan.shots[0].guardrails.video.some((g) => g.id === 'playbook')).toBe(true);
+  it('fragrance on a Preset that cannot host the split (Product Hero: no person): its own shots', () => {
+    const plan = composeShotPlan(HERO, { durationMs: 8_000, modesty: GULF, playbook: choosePlaybook(BAKHOOR_PROFILE) });
+    expect(plan.playbook?.pattern).toBe('spray-then-smell');
+    expect(plan.shots.every((s) => s.shows === 'product')).toBe(true);
   });
 
   it('skincare: calm, a pleased smile, one small amount', () => {

@@ -43,7 +43,7 @@ import { FRAGRANCE_OUD } from './data/fragrance-oud.js';
 import { GENERAL } from './data/general.js';
 import { SKINCARE_BEAUTY } from './data/skincare-beauty.js';
 import { playbookPreset } from './apply.js';
-import type { Playbook, PlaybookChoice, PlaybookPattern, ResolvedPlaybook } from './types.js';
+import type { Playbook, PlaybookChoice, PlaybookPattern, PlaybookProfileMatch, ResolvedPlaybook } from './types.js';
 
 export interface PlaybookRegistry {
   /** Every Playbook, by id. */
@@ -139,9 +139,12 @@ export function playbookProblems(
   if (!isShotEnergy(playbook.defaults.energy)) at('defaults.energy', 'is not an energy');
   if (playbook.defaults.performance !== undefined) text('defaults.performance', playbook.defaults.performance, 'performance');
   const patternIds = new Set<string>();
+  let alwaysAt: string | null = null;
   for (const pattern of playbook.patterns) {
     const where = `patterns.${pattern.id}`;
     if (patternIds.has(pattern.id)) at(where, 'is listed twice');
+    if (alwaysAt) at(where, `comes after ${alwaysAt}, which always applies: it is never picked`);
+    else if (always(pattern.when) && !pattern.when?.unless) alwaysAt = pattern.id;
     patternIds.add(pattern.id);
     if (!SHOT_ROLE_PATTERN.test(pattern.id)) at(where, 'id must be lower-case words joined by hyphens');
     for (const [presetId, p] of Object.entries(pattern.presets)) {
@@ -234,14 +237,33 @@ export function playbookForCategory(category: string | null | undefined, registr
 /** The Profile fields a Playbook choice reads. */
 export type PlaybookProfile = Pick<ProductProfile, 'category'> & Partial<Pick<ProductProfile, 'interaction_verbs' | 'physics_risks'>>;
 
-/** The first of `playbook`'s patterns whose `when` matches `profile` (any listed verb or risk; no `when` = always), or null. */
+/** The words of the Profile's interaction verbs ("apply oil" → apply, oil), lower case. */
+function verbWords(profile: PlaybookProfile | null | undefined): Set<string> {
+  return new Set((profile?.interaction_verbs ?? []).flatMap((v) => v.toLowerCase().split(/[^\p{L}]+/u)).filter(Boolean));
+}
+
+/** Whether `m` hits the Profile: any listed verb word or risk. */
+function profileHits(m: PlaybookProfileMatch | undefined, verbs: Set<string>, risks: Set<string>): boolean {
+  if (!m) return false;
+  return (m.verbs_any ?? []).some((v) => verbs.has(v)) || (m.risks_any ?? []).some((r) => risks.has(r));
+}
+
+/** Whether `when` has nothing to match on: the pattern always applies. */
+function always(w: PlaybookPattern['when']): boolean {
+  return !w || (!w.verbs_any?.length && !w.risks_any?.length);
+}
+
+/**
+ * The first of `playbook`'s patterns whose `when` matches `profile` (any
+ * listed verb word or risk, and none of its `unless`; no `when` = always), or null.
+ */
 export function playbookPattern(playbook: Playbook, profile: PlaybookProfile | null | undefined): PlaybookPattern | null {
-  const verbs = new Set((profile?.interaction_verbs ?? []).map((v) => v.toLowerCase()));
+  const verbs = verbWords(profile);
   const risks = new Set<string>(profile?.physics_risks ?? []);
   for (const pattern of playbook.patterns) {
     const w = pattern.when;
-    if (!w || (!w.verbs_any && !w.risks_any)) return pattern;
-    if ((w.verbs_any ?? []).some((v) => verbs.has(v)) || (w.risks_any ?? []).some((r) => risks.has(r))) return pattern;
+    if (profileHits(w?.unless, verbs, risks)) continue;
+    if (always(w) || profileHits(w, verbs, risks)) return pattern;
   }
   return null;
 }

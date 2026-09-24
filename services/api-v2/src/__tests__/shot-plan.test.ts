@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Request, Response } from 'express';
 import { planPresetShots, REACTION } from '@agentmedia/schema';
-import { NO_SPEAKING_PERSON, REACTION_PROMPTS, SHOT_FIELDS, SHOT_FIELD_MAX_CHARS, SETTING_WORDS, shotIds } from '@agentmedia/shot-prompts';
+import { FRAGRANCE_OUD, NO_SPEAKING_PERSON, REACTION_PROMPTS, SHOT_FIELDS, SHOT_FIELD_MAX_CHARS, SETTING_WORDS, shotIds } from '@agentmedia/shot-prompts';
 
 type Row = Record<string, unknown>;
 const TABLES: Record<string, Row[]> = {};
@@ -471,7 +471,7 @@ describe('the draft’s Playbook (#32)', () => {
     confidence: 0.9,
     ...over,
   });
-  const FRAGRANCE = { id: 'fragrance_oud', version: 1, pattern: 'spray-then-smell' };
+  const FRAGRANCE = { id: 'fragrance_oud', version: FRAGRANCE_OUD.version, pattern: 'spray-then-smell' };
 
   it('the Shot Plan follows the Profile category’s Playbook and says which', async () => {
     const id = seedDraft({ dialect: 'gulf', product_interaction: PERFUME, product_profile: profile({}) });

@@ -8,7 +8,10 @@
  *   - the bottle is never smelled and never brought to the face: it leaves the
  *     hand (set down) before the wrist comes up;
  *   - spray (or dab) and smell are TWO shots, cut on action: the spray on the
- *     wrist, then a close-up of the wrist rising to the nose;
+ *     wrist, then a close-up of the wrist rising to the nose — ALWAYS (owner,
+ *     #32): dab-then-smell when the Profile says oil, attar or a dab (its
+ *     interaction verbs, and nothing sprayed), else spray-then-smell; a Preset
+ *     that cannot host the split (no person or hands shot) keeps its own shots;
  *   - one main hand-and-product action per shot.
  */
 
@@ -25,7 +28,7 @@ const AR_FACE = String.raw`(?:ال)?(?:انف|وجه|فم|شفا|خد)\S*`;
 
 export const FRAGRANCE_OUD: Playbook = {
   id: 'fragrance_oud',
-  version: 1,
+  version: 2,
   name: 'Fragrance & oud',
   allowed_interactions: [
     'Perfume: the bottle is already uncapped; hold it at chest height, spray once onto the inner wrist and set the bottle down. Smelling is a separate shot: with empty hands, the wrist rises to the nose.',
@@ -87,8 +90,49 @@ export const FRAGRANCE_OUD: Playbook = {
   },
   patterns: [
     {
+      id: 'dab-then-smell',
+      // Oil or attar, dabbed — unless the Profile says it is sprayed.
+      when: {
+        verbs_any: ['dab', 'dabs', 'apply', 'rub', 'anoint', 'dot', 'roll', 'oil', 'attar'],
+        unless: { verbs_any: ['spray', 'spritz', 'mist'], risks_any: ['liquid_spray'] },
+      },
+      presets: {
+        reaction: {
+          order: [
+            { role: 'reaction-apply', kind: 'reaction' },
+            { role: 'reaction-smell', kind: 'reaction' },
+            { role: 'product-cutaway', kind: 'product' },
+          ],
+          last: { role: 'product-closer', kind: 'product' },
+          roles: {
+            'reaction-apply': {
+              framing: 'UGC-style medium shot, filmed on a phone.',
+              scene: 'The person dabs one drop of the oil onto the inner wrist.',
+              blocking: 'The open bottle stays at chest height, well away from the face; then it is set down on the surface in front of them and let go.',
+              action: 'The person dabs one drop from the already open bottle onto the inner wrist, then sets the bottle down and lets go of it.',
+            },
+            'reaction-smell': {
+              framing: 'UGC-style close-up on the wrist and the face, filmed on a phone.',
+              scene: 'The person smells the oil on the inner wrist.',
+              blocking:
+                'The bottle is already set down, out of the hands and out of frame. The shot starts with the wrist already rising toward the nose, cut on the action.',
+              action: 'With empty hands, the person raises the inner wrist to the nose, smells the skin there and smiles.',
+            },
+          },
+        },
+        hands_on: {
+          roles: {
+            'hands-use': {
+              scene: '{hands} hold the open bottle and dab one drop onto the inner wrist.',
+              action: 'One drop dabbed onto the inner wrist, then the bottle is set down on the surface.',
+            },
+          },
+        },
+      },
+    },
+    {
       id: 'spray-then-smell',
-      when: { verbs_any: ['spray', 'spritz', 'mist'], risks_any: ['liquid_spray'] },
+      // Always, when the Profile says no oil, attar or dab: the default split.
       presets: {
         reaction: {
           order: [
@@ -119,43 +163,6 @@ export const FRAGRANCE_OUD: Playbook = {
             'hands-use': {
               scene: '{hands} hold the uncapped bottle and spray it once onto the inner wrist.',
               action: 'One spray onto the inner wrist, then the bottle is set down on the surface.',
-            },
-          },
-        },
-      },
-    },
-    {
-      id: 'dab-then-smell',
-      when: { verbs_any: ['dab', 'apply', 'rub', 'anoint'] },
-      presets: {
-        reaction: {
-          order: [
-            { role: 'reaction-apply', kind: 'reaction' },
-            { role: 'reaction-smell', kind: 'reaction' },
-            { role: 'product-cutaway', kind: 'product' },
-          ],
-          last: { role: 'product-closer', kind: 'product' },
-          roles: {
-            'reaction-apply': {
-              framing: 'UGC-style medium shot, filmed on a phone.',
-              scene: 'The person dabs one drop of the oil onto the inner wrist.',
-              blocking: 'The open bottle stays at chest height, well away from the face; then it is set down on the surface in front of them and let go.',
-              action: 'The person dabs one drop from the already open bottle onto the inner wrist, then sets the bottle down and lets go of it.',
-            },
-            'reaction-smell': {
-              framing: 'UGC-style close-up on the wrist and the face, filmed on a phone.',
-              scene: 'The person smells the oil on the inner wrist.',
-              blocking:
-                'The bottle is already set down, out of the hands and out of frame. The shot starts with the wrist already rising toward the nose, cut on the action.',
-              action: 'With empty hands, the person raises the inner wrist to the nose, smells the skin there and smiles.',
-            },
-          },
-        },
-        hands_on: {
-          roles: {
-            'hands-use': {
-              scene: '{hands} hold the open bottle and dab one drop onto the inner wrist.',
-              action: 'One drop dabbed onto the inner wrist, then the bottle is set down on the surface.',
             },
           },
         },
