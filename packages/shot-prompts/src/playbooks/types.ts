@@ -31,9 +31,10 @@ import type { ShotEnergy, ShotTextField } from '../shot-fields.js';
 /**
  * One banned motion: patterns (RegExp sources, no flags; matched on text
  * folded like the guardrail check: lower case, no diacritics, Arabic letter
- * variants unified) in English and Arabic, and why it is banned. A match right
- * after a negation ("never brings the bottle to her face", "لا تقرب الزجاجة")
- * is a rule being stated, not broken, and does not count.
+ * variants unified) in English and Arabic, and why it is banned. A match a
+ * negation governs ("never brings the bottle to her face", "لا تقرب الزجاجة":
+ * the negation right before the verb, or one auxiliary or pronoun between) is
+ * the motion ruled out, not asked for, and does not count.
  */
 export interface BannedMotion {
   /** Stable id, reported as `rule` (e.g. 'bottle_to_face'). */

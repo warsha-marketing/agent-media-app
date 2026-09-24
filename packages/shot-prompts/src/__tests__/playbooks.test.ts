@@ -270,6 +270,37 @@ describe('banned motions, per Playbook, English and Arabic', () => {
     expect(banned(FRAGRANCE_OUD, 'never rushes, brings the bottle to her nose')).toBe('bottle_to_face');
   });
 
+  it('a negation excuses a match only when it governs the verb: right before it, or with one auxiliary or pronoun between', () => {
+    for (const t of [
+      'she never brings the bottle to her face',
+      'she does not bring the bottle to her face',
+      'she doesn’t bring the bottle to her nose',
+      "she doesn't ever bring the bottle to her nose",
+      'without bringing the bottle to her face',
+      'never smells the bottle',
+      'لا تقرب الزجاجة من وجهها',
+      'ولا تقرّب الزجاجة من أنفها',
+      'ما تقرّب الزجاجة من وجهها',
+      'لن تقرب الزجاجة من وجهها',
+    ]) {
+      expect(banned(FRAGRANCE_OUD, t), t).toBeNull();
+    }
+    for (const t of [
+      'without hesitation she brings the bottle to her face',
+      'without a pause brings the bottle to her nose',
+      'not in a hurry she brings the bottle to her face',
+      'never hesitating she lifts the bottle to her nose',
+      'no doubt she smells the bottle',
+      'بدون تردد تقرب الزجاجة من وجهها',
+      'بلا تردد تقرّب الزجاجة من أنفها',
+      'لا تتردد وتقرب الزجاجة من وجهها',
+      'ما هي تقرب الزجاجة من وجهها',
+      'ما بسرعة تقرب الزجاجة من وجهها',
+    ]) {
+      expect(banned(FRAGRANCE_OUD, t), t).toBe('bottle_to_face');
+    }
+  });
+
   it('skincare & beauty: one pump, one fingertip', () => {
     expect(banned(SKINCARE_BEAUTY, 'pumps the serum three times into her palm')).toBe('repeated_pumping');
     expect(banned(SKINCARE_BEAUTY, 'several pumps of lotion')).toBe('repeated_pumping');
