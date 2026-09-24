@@ -11,9 +11,10 @@ import { describe, it, expect, expectTypeOf, beforeAll, afterAll } from 'vitest'
 import { ApplicationFailure } from '@temporalio/activity';
 import { WorkflowFailedError } from '@temporalio/client';
 import { REACTION, REACTION_MAX_SHOT_MS, quotePresetCredits, shotVideo, type Modesty } from '@agentmedia/schema';
-import { CONTENT_POLICY_FAILURE } from '../client/fal.js';
+import { runFalQueue } from '../client/fal.js';
+import { CONTENT_POLICY_REFUSED, NON_RETRYABLE_TYPES } from '../failure-policy.js';
+import { VIDEO_MODELS, type FalVideoModel } from '../video-models/index.js';
 import { quotePrimitiveCredits } from '../client/credits.js';
-import { NON_RETRYABLE_TYPES } from '../workflows/render-preset.js';
 import { startWorkflowHarness, fakeActivities, type CannedActivities, type WorkflowHarness } from './support/workflow-harness.js';
 import type { MakeReactionWorkflowInput } from '../workflows/make-reaction.js';
 import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
@@ -252,7 +253,7 @@ describe('make_reaction registration', () => {
 // ── #25: person shots on Kling O3 Pro (Veo 3.1 fallback), product shots on Seedance ──
 
 const refusedBy = (model: string) =>
-  ApplicationFailure.nonRetryable(`fal ${model} refused: likenesses of real people`, CONTENT_POLICY_FAILURE);
+  ApplicationFailure.nonRetryable(`fal ${model} refused: likenesses of real people`, CONTENT_POLICY_REFUSED);
 
 describe('makeReactionWorkflow — the video model per shot kind (#25)', () => {
   it('renders person shots on Kling O3 Pro and product shots on Seedance', async () => {
@@ -284,7 +285,7 @@ describe('makeReactionWorkflow — the video model per shot kind (#25)', () => {
     expect(refunded.sort()).toEqual([...refused].sort());
     const marked = fakes.callsTo('markPrimitiveRunFailed') as Array<{ primitive_run_id: string; error_code: string }>;
     expect(marked.map((m) => m.primitive_run_id).sort()).toEqual([...refused].sort());
-    for (const m of marked) expect(m.error_code).toBe(CONTENT_POLICY_FAILURE);
+    for (const m of marked) expect(m.error_code).toBe(CONTENT_POLICY_REFUSED);
 
     // The cut uses the fallback's clip, trimmed to the planned share (Veo renders 8 s).
     const [mux] = fakes.callsTo('presetMux') as PresetMuxInput[];
@@ -330,8 +331,8 @@ describe('makeReactionWorkflow — the video model per shot kind (#25)', () => {
     for (const c of clips) expect(refunded.has(c.primitive_run_id)).toBe(true);
 
     const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
-    expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: CONTENT_POLICY_FAILURE });
-    expect(NON_RETRYABLE_TYPES).toContain(CONTENT_POLICY_FAILURE);
+    expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: CONTENT_POLICY_REFUSED });
+    expect(NON_RETRYABLE_TYPES).toContain(CONTENT_POLICY_REFUSED);
     expect(fakes.callsTo('releaseDraftRender')).toEqual([{ skill_run_id: SKILL_RUN_ID, draft_id: 'draft-19' }]);
     const names = fakes.names();
     expect(names.indexOf('releaseDraftRender')).toBeGreaterThan(names.lastIndexOf('refundCredits'));
@@ -370,6 +371,98 @@ describe('makeReactionWorkflow — the video model per shot kind (#25)', () => {
       }
     },
   );
+});
+
+// ── #25: no Temporal retry of a fal job; one failure policy for fallbacks ──
+
+/**
+ * presetClip, with its fal models run through the REAL fal client against a
+ * fake fal queue: the job ends as `outcome[model]`. Records each submit, so a
+ * Temporal retry of the clip (which would submit and pay again) shows up.
+ */
+function falQueueClips(outcome: Partial<Record<string, 'completed' | 'failed'>>) {
+  const submits: string[] = [];
+  const presetClip = async (i: PresetClipInput) => {
+    const made = { primitive_run_id: i.primitive_run_id, video_url: `https://r2.example.test/clips/${i.shot_index}-${i.model}.mp4`, duration_seconds: i.duration, credits_actual_usd: 0.6 };
+    if (i.model === 'seedance-2.0') return made;
+    const model = VIDEO_MODELS[i.model as 'kling-o3-pro' | 'veo-3.1'] as FalVideoModel;
+    const { endpoint, input } = model.buildRequest({ prompt: i.prompt, startImageUrl: i.start_image_url, seconds: i.duration, generateAudio: false });
+    const base = `https://queue.fal.run/${endpoint}/requests/${i.primitive_run_id}`;
+    const fetch = (async (url: string, init: RequestInit = {}) => {
+      if (init.method === 'POST') {
+        submits.push(`${i.shot_index}:${i.model}`);
+        return new Response(JSON.stringify({ request_id: i.primitive_run_id, status_url: `${base}/status`, response_url: base }));
+      }
+      if (url.endsWith('/status')) {
+        return new Response(JSON.stringify(outcome[i.model!] === 'completed' ? { status: 'COMPLETED' } : { status: 'FAILED', error: 'worker crashed' }));
+      }
+      return new Response(JSON.stringify({ video: { url: 'https://v3.fal.media/files/out.mp4' } }));
+    }) as unknown as typeof globalThis.fetch;
+    await runFalQueue({ apiKey: 'k', endpoint, input, deps: { fetch, sleep: async () => {}, now: () => 0 } });
+    return made;
+  };
+  return { submits, presetClip };
+}
+
+describe('makeReactionWorkflow — a failed fal job is never resubmitted (#25)', () => {
+  it('a failed Kling job is submitted exactly once, then the shot falls back to Veo (submitted once)', async () => {
+    const fal = falQueueClips({ 'kling-o3-pro': 'failed', 'veo-3.1': 'completed' });
+    const fakes = happyFakes({ presetClip: fal.presetClip });
+    await harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes);
+    expect(fal.submits).toEqual(['0:kling-o3-pro', '0:veo-3.1', '2:kling-o3-pro', '2:veo-3.1']);
+    const marked = fakes.callsTo('markPrimitiveRunFailed') as Array<{ error_code: string }>;
+    expect(marked.map((m) => m.error_code)).toEqual(['FAL_FAILED', 'FAL_FAILED']);
+  });
+
+  it('both failing: one submit per model, then the render fails, refunded and released', async () => {
+    const fal = falQueueClips({ 'kling-o3-pro': 'failed', 'veo-3.1': 'failed' });
+    const fakes = happyFakes({ presetClip: fal.presetClip });
+    await expect(harness.execute('makeReactionWorkflow', [renderInput(12_000)], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
+    expect(fal.submits).toEqual(['0:kling-o3-pro', '0:veo-3.1']);
+    const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
+    expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'FAL_FAILED' });
+    expect(fakes.callsTo('releaseDraftRender')).toHaveLength(1);
+  });
+});
+
+describe('makeReactionWorkflow — the failure policy decides the fallback (#25)', () => {
+  it('a missing FAL_KEY fails fast with PROVIDER_UNCONFIGURED: no fallback that would fail the same way', async () => {
+    const fakes = happyFakes({
+      presetClip: () => {
+        throw ApplicationFailure.nonRetryable('FAL_KEY not configured on primitive-worker-vnext', 'PROVIDER_UNCONFIGURED');
+      },
+    });
+    await expect(harness.execute('makeReactionWorkflow', [renderInput(8_000)], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
+    expect(clipsOf(fakes).map((c) => c.model)).toEqual(['kling-o3-pro']);
+    const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
+    expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: 'PROVIDER_UNCONFIGURED', error_message: expect.stringContaining('FAL_KEY') });
+  });
+
+  it.each<[string, () => never]>([
+    ['a timeout', () => { throw ApplicationFailure.nonRetryable('fal timed out', 'FAL_TIMEOUT'); }],
+    ['a failed job', () => { throw ApplicationFailure.nonRetryable('worker crashed', 'FAL_FAILED'); }],
+    ['no credits left', () => { throw ApplicationFailure.nonRetryable('insufficient credits', 'INSUFFICIENT_CREDITS'); }],
+  ])('Kling refused and Veo then failed with %s: the run fails as the content-policy refusal', async (_label, veoFails) => {
+    const fakes = happyFakes({
+      presetClip: (i: PresetClipInput) => {
+        if (i.model === 'kling-o3-pro') throw refusedBy('kling');
+        if (i.model === 'veo-3.1') veoFails();
+        return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: 0.6 };
+      },
+    });
+    await expect(harness.execute('makeReactionWorkflow', [renderInput(8_000)], fakes)).rejects.toBeInstanceOf(WorkflowFailedError);
+    const clips = clipsOf(fakes);
+    expect(clips.map((c) => c.model)).toEqual(['kling-o3-pro', 'veo-3.1']);
+    const states = fakes.callsTo('composedSkillState') as Array<Record<string, unknown>>;
+    expect(states.at(-1)).toMatchObject({ status: 'failed', error_code: CONTENT_POLICY_REFUSED });
+    // Each attempt keeps its own failure on its row, and both are refunded.
+    const marked = fakes.callsTo('markPrimitiveRunFailed') as Array<{ primitive_run_id: string; error_code: string }>;
+    expect(marked.find((m) => m.primitive_run_id === clips[0].primitive_run_id)?.error_code).toBe(CONTENT_POLICY_REFUSED);
+    expect(marked.find((m) => m.primitive_run_id === clips[1].primitive_run_id)?.error_code).not.toBe(CONTENT_POLICY_REFUSED);
+    const refunded = new Set((fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id));
+    for (const c of clips) expect(refunded.has(c.primitive_run_id)).toBe(true);
+    expect(fakes.callsTo('releaseDraftRender')).toHaveLength(1);
+  });
 });
 
 // ── #25: Product Interaction in every person prompt, never a product prompt ──

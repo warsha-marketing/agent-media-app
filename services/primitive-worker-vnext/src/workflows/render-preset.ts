@@ -79,6 +79,7 @@ import {
 import type { PrimitiveActivities } from '../activities/index.js';
 import { makeChildRunId } from './child-run-id.js';
 import { failureInfo } from './failure-info.js';
+import { CONTENT_POLICY_REFUSED, NON_RETRYABLE_TYPES, failurePolicy } from '../failure-policy.js';
 import { presetFramePrompt, presetShotPrompt, type PresetRenderDefinition } from '../presets/index.js';
 
 /**
@@ -154,27 +155,6 @@ const PRESET_INPUT_FIELDS: Record<PresetInput, keyof PresetRenderInput> = {
 
 /** A finished cut may differ from the audio by at most about one frame. */
 const MAX_CUT_DRIFT_MS = 50;
-
-/** Failure types the render never retries (exported for tests). */
-export const NON_RETRYABLE_TYPES: readonly string[] = [
-  'INVALID_INPUT', 'BUDGET_CAP_DAY',
-  'REFERENCE_URL_NOT_ALLOWED', 'PROVIDER_UNCONFIGURED', 'INSUFFICIENT_CREDITS',
-  'DRAFT_AUDIO_MISSING', 'DRAFT_STORAGE_UNCONFIGURED', 'MUSIC_BED_TRACK_MISSING', 'MUSIC_BED_STORAGE_UNCONFIGURED',
-  // A moderation verdict is final; resubmitting is another paid render of a
-  // photo that will be refused again.
-  'EVOLINK_CONTENT_POLICY_VIOLATION',
-  'EVOLINK_400', 'EVOLINK_401', 'EVOLINK_403', 'EVOLINK_404', 'EVOLINK_413', 'EVOLINK_415', 'EVOLINK_422', 'EVOLINK_451',
-  // fal (#25): a bad request is final; a job that timed out is not resubmitted
-  // (that pays again) — the shot's fallback model is its retry.
-  'FAL_400', 'FAL_401', 'FAL_403', 'FAL_404', 'FAL_413', 'FAL_415', 'FAL_422', 'FAL_TIMEOUT',
-];
-
-/**
- * Failures a shot's fallback model cannot fix: the account, the day cap, the
- * input. Anything else (a refusal, a provider failure, a timeout) on a model
- * with a fallback tries the fallback (#25).
- */
-const NO_FALLBACK = new Set(['INSUFFICIENT_CREDITS', 'BUDGET_CAP_DAY', 'REFERENCE_URL_NOT_ALLOWED', 'INVALID_INPUT']);
 
 const { presetClip, presetStartingFrame } = proxyActivities<PrimitiveActivities>({
   startToCloseTimeout: '20 minutes',
@@ -289,6 +269,9 @@ export async function renderPreset(
       // fallback — as the Preset declares them, never chosen by vendor here.
       const chain = shotModelChain(shotVideo(preset, shots[i].kind));
       let clip: Awaited<ReturnType<typeof presetClip>> | undefined;
+      // A content refusal on an earlier model of the chain: if the fallback
+      // then fails for another reason, the refusal is what the run reports.
+      let refused: string | undefined;
       for (let a = 0; a < chain.length && !clip; a += 1) {
         const childId = mint(a === 0 ? `clip_${i}` : `clip_${i}_${chain[a]}`);
         try {
@@ -313,7 +296,19 @@ export async function renderPreset(
           });
         } catch (err) {
           const f = failureInfo(err);
-          if (a === chain.length - 1 || NO_FALLBACK.has(f.code)) throw err;
+          const last = a === chain.length - 1;
+          if (last || !failurePolicy(f.code).fallbackable) {
+            if (refused === undefined || f.code === CONTENT_POLICY_REFUSED) throw err;
+            // The fallback failed too, for another reason: record its own
+            // failure, and fail the run as the refusal that sent it here.
+            await markPrimitiveRunFailed({ primitive_run_id: childId, error_code: f.code, error_message: f.message });
+            currentChild = undefined;
+            throw ApplicationFailure.nonRetryable(
+              `shot ${i + 1}: ${refused}; the fallback ${chain[a]} then failed (${f.code})`.slice(0, 500),
+              CONTENT_POLICY_REFUSED,
+            );
+          }
+          if (f.code === CONTENT_POLICY_REFUSED) refused ??= f.message;
           // This model refused or failed: give its charge back, record it, and
           // try the fallback. The shot is charged the same whichever model runs.
           await refundCredits({ primitive_run_id: childId });

@@ -16,14 +16,18 @@
  * them "the first / second reference image" (falPrompt), the wording the
  * 2026-09-24 bake-off rendered with.
  *
- * Content refusals map to the one non-retryable content-policy failure
- * (CONTENT_POLICY_FAILURE) whichever provider refused.
+ * Content refusals map to the one content-policy refusal
+ * (CONTENT_POLICY_REFUSED, ../failure-policy.ts) whichever provider refused.
+ * A model whose job a rerun would submit and pay for again
+ * (`resubmitOnRetry: false`, every fal model) fails finally: its shot's
+ * fallback model is the retry.
  */
 
 import { ApplicationFailure } from '@temporalio/activity';
 import type { VideoModelId } from '@agentmedia/schema';
 import { generateSimpleSelfieEvolink } from '../client/evolink.js';
 import { runFalQueue } from '../client/fal.js';
+import { providerFailure } from '../client/provider-failure.js';
 
 /** One shot, as every model is asked for it. */
 export interface VideoShotRequest {
@@ -59,6 +63,12 @@ export interface VideoModelClient {
   provider: string;
   /** The provider's model name, recorded on the clip's artifact. */
   modelName(): string;
+  /**
+   * Whether Temporal may rerun a failed clip on this model, submitting its job
+   * again. False on fal: every failure there is final and the shot's fallback
+   * model is its only retry (#25).
+   */
+  resubmitOnRetry: boolean;
   generate(shot: VideoShotRequest): Promise<GeneratedVideo>;
 }
 
@@ -80,7 +90,8 @@ function references(shot: VideoShotRequest): string[] {
 
 function falKey(): string {
   const key = process.env.FAL_KEY?.trim();
-  if (!key) throw ApplicationFailure.nonRetryable('FAL_KEY not configured on primitive-worker-vnext', 'PROVIDER_UNCONFIGURED');
+  // Fail fast: every fal model (and so a fal fallback) would fail the same way.
+  if (!key) throw providerFailure('FAL_KEY not configured on primitive-worker-vnext', 'PROVIDER_UNCONFIGURED');
   return key;
 }
 
@@ -91,6 +102,7 @@ function falModel(id: VideoModelId, endpoint: string, buildInput: (shot: VideoSh
     provider: 'fal',
     endpoint,
     modelName: () => endpoint,
+    resubmitOnRetry: false,
     buildRequest,
     async generate(shot) {
       const { input } = buildRequest(shot);
@@ -104,10 +116,12 @@ const seedance: VideoModelClient = {
   id: 'seedance-2.0',
   provider: 'seedance-2-0',
   modelName: () => process.env.EVOLINK_SEEDANCE_MODEL || 'seedance-2.0-mini-reference-to-video',
+  // EvoLink's transient failures (a 5xx, a timeout) have always been retried.
+  resubmitOnRetry: true,
   async generate(shot) {
     const evolinkKey = process.env.EVOLINK_API_KEY?.trim() || process.env.EVOLINK_API_KEYS?.trim();
     if (!evolinkKey) {
-      throw ApplicationFailure.nonRetryable('EVOLINK_API_KEY not configured on primitive-worker-vnext', 'PROVIDER_UNCONFIGURED');
+      throw providerFailure('EVOLINK_API_KEY not configured on primitive-worker-vnext', 'PROVIDER_UNCONFIGURED');
     }
     try {
       const result = await generateSimpleSelfieEvolink({
@@ -129,7 +143,7 @@ const seedance: VideoModelClient = {
       // 429 / 402 are transient; other 4xx are caller faults (incl. a photo
       // refused at submit) and must not be resubmitted.
       if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429 && status !== 402) {
-        throw ApplicationFailure.nonRetryable(`evolink ${status}: ${msg}`, `EVOLINK_${status}`);
+        throw providerFailure(`evolink ${status}: ${msg}`, `EVOLINK_${status}`);
       }
       throw err instanceof Error ? err : new Error(msg);
     }

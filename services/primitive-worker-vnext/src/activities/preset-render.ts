@@ -44,7 +44,9 @@ import { DRAFT_AUDIO, probeSeconds, readPrivateObject } from '../lib/media-io.js
 import { runChargedStep } from './charged-step.js';
 import { shotClipUsd, shotModelChain, shotVideo, type ShotVideo, type VideoModelId } from '@agentmedia/schema';
 import { presetRender } from '../presets/index.js';
-import { videoModel } from '../video-models/index.js';
+import { videoModel, type VideoModelClient } from '../video-models/index.js';
+import { PROVIDER_FAILED } from '../failure-policy.js';
+import { providerFailure } from '../client/provider-failure.js';
 
 const execFileP = promisify(execFile);
 
@@ -154,6 +156,21 @@ export interface PresetClipResult {
   credits_actual_usd: number;
 }
 
+/**
+ * Run a provider step of a clip. On a model whose job a rerun would submit and
+ * pay for again (fal, `resubmitOnRetry: false`), any failure is final
+ * (PROVIDER_FAILED unless the client already classified it): Temporal never
+ * reruns the clip, and the shot's fallback model is its only retry (#25).
+ */
+async function finalUnlessResubmittable<T>(client: VideoModelClient, step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch (err) {
+    if (client.resubmitOnRetry || err instanceof ApplicationFailure) throw err;
+    throw providerFailure(`${client.id}: ${(err as Error)?.message ?? String(err)}`.slice(0, 500), PROVIDER_FAILED);
+  }
+}
+
 export function makePresetClipActivity(cfg: WorkerConfig) {
   return async function presetClip(input: PresetClipInput): Promise<PresetClipResult> {
     const db = getDb(cfg.supabase.url, cfg.supabase.serviceRoleKey);
@@ -230,21 +247,26 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
         if (cfg.openai.simulate) {
           videoBytes = Buffer.from('SIMULATED', 'utf8');
         } else {
-          const made = await client.generate({
-            prompt,
-            startImageUrl: input.start_image_url,
-            ...(characterImageUrl ? { characterImageUrl } : {}),
-            seconds: input.duration,
-            // ADR 0001: the video model never speaks.
-            generateAudio: false,
-            onProgress: (stage) => Context.current().heartbeat({ stage: 'provider_poll', provider_status: stage }),
-          });
+          const made = await finalUnlessResubmittable(client, () =>
+            client.generate({
+              prompt,
+              startImageUrl: input.start_image_url,
+              ...(characterImageUrl ? { characterImageUrl } : {}),
+              seconds: input.duration,
+              // ADR 0001: the video model never speaks.
+              generateAudio: false,
+              onProgress: (stage) => Context.current().heartbeat({ stage: 'provider_poll', provider_status: stage }),
+            }),
+          );
           providerTaskId = made.taskId;
           providerVideoUrl = made.videoUrl;
           Context.current().heartbeat({ stage: 'provider_done', taskId: providerTaskId });
-          const dl = await fetch(providerVideoUrl, { redirect: 'follow', signal: AbortSignal.timeout(120_000) });
-          if (!dl.ok) throw new Error(`clip download ${dl.status}`);
-          videoBytes = Buffer.from(await dl.arrayBuffer());
+          const videoUrl = providerVideoUrl;
+          videoBytes = await finalUnlessResubmittable(client, async () => {
+            const dl = await fetch(videoUrl, { redirect: 'follow', signal: AbortSignal.timeout(120_000) });
+            if (!dl.ok) throw new Error(`clip download ${dl.status}`);
+            return Buffer.from(await dl.arrayBuffer());
+          });
         }
         Context.current().heartbeat({ stage: 'video_downloaded', bytes: videoBytes.byteLength });
 
