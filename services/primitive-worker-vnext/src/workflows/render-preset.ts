@@ -91,6 +91,7 @@ import {
   IMAGE_REFERENCES,
   REFERENCE_TOKENS,
   ShotEditError,
+  VIDEO_MODEL_LABELS,
   composeShotPlan,
   shotHasPersonReference,
   shotPrompt,
@@ -172,6 +173,8 @@ export interface RenderedShot {
   kind: string;
   /** The model that rendered it (its kind's model, or the fallback). */
   model: string;
+  /** That model by name, as the Shot Plan showed it (VIDEO_MODEL_LABELS); the id for a model it does not name. */
+  model_name: string;
   /** The fields it rendered, and which of them were the user's. */
   fields: ShotFields;
   edited_fields: ShotField[];
@@ -374,11 +377,13 @@ export async function renderPreset(
       if (!clip) throw ApplicationFailure.nonRetryable(`no model rendered shot ${i + 1}`, 'CLIP_FAILED');
       clipUrls.push(clip.video_url);
       const framePrompt = framePrompts[i];
+      // A clip from before #26 (a replayed history) reports neither; fall back to what was asked.
+      const model = clip.model ?? ranOn ?? chain[0];
       rendered.push({
         shot_id: shots[i].shot_id,
         kind: shots[i].kind,
-        // A clip from before #26 (a replayed history) reports neither; fall back to what was asked.
-        model: clip.model ?? ranOn ?? chain[0],
+        model,
+        model_name: (VIDEO_MODEL_LABELS as Readonly<Record<string, string>>)[model] ?? model,
         fields: shots[i].fields,
         edited_fields: shots[i].edited_fields,
         edited: shots[i].edited,

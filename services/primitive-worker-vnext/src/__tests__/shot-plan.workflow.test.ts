@@ -102,9 +102,9 @@ describe('a render without scene edits', () => {
     expect(clips[0].prompt).toContain(REACTION_RENDER.shots.reaction.performance);
     expect(clips[1].prompt).toContain(REACTION_RENDER.shots.product.scene);
     const shots = shotsOf(fakes);
-    expect(shots.map((s) => [s.shot_id, s.kind, s.model, s.edited])).toEqual([
-      ['reaction', 'reaction', 'kling-o3-pro', false],
-      ['product-closer', 'product', 'seedance-2.0', false],
+    expect(shots.map((s) => [s.shot_id, s.kind, s.model, s.model_name, s.edited])).toEqual([
+      ['reaction', 'reaction', 'kling-o3-pro', 'Kling O3 Pro', false],
+      ['product-closer', 'product', 'seedance-2.0', 'Seedance 2.0', false],
     ]);
     // The prompt as the model got it: fields + Guardrails, in its reference syntax.
     expect(shots.map((s) => s.prompt)).toEqual(clips.map((c) => sent(c.prompt)));

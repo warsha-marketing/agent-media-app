@@ -13,25 +13,22 @@
  * ever sends fields, `{ shot_id: { field: value } }`, and only the ones the
  * user changed.
  *
- * No imports: scripts/tests loads this file directly. The limits, energies and
- * model names mirror @agentmedia/shot-prompts (held equal by the parity test).
+ * No imports: scripts/tests loads this file directly. The scene's length cap,
+ * the energies and the model names come from the server (the shot-plan
+ * response's field catalog and each shot's model; the result's model_name),
+ * never from a copy here: the only copies are the fallbacks below, for a
+ * response without a catalog (held equal to @agentmedia/shot-prompts by
+ * scripts/tests/shot-plan-flow.test.ts).
  */
 
-/** The scene's length cap: SHOT_FIELD_MAX_CHARS.scene in @agentmedia/shot-prompts. */
-export const SCENE_TEXT_MAX = 1000;
+/** The scene's length cap when the response has no field catalog (SHOT_FIELD_MAX_CHARS.scene). */
+export const FALLBACK_SCENE_TEXT_MAX = 1000;
 
-/** How alive a shot feels: SHOT_ENERGIES in @agentmedia/shot-prompts. */
-export const ENERGIES = ['calm', 'natural', 'lively'] as const;
+/** The energies when the response has no field catalog (SHOT_ENERGIES). */
+export const FALLBACK_ENERGIES = ['calm', 'natural', 'lively'] as const;
 
 /** The fields the panel lets the user change (the server takes every field; the panel edits these). */
 export const EDITABLE_FIELDS = ['scene', 'energy'] as const;
-
-/** The video models by name: VIDEO_MODEL_LABELS in @agentmedia/shot-prompts. */
-export const MODEL_NAMES: Readonly<Record<string, string>> = {
-  'seedance-2.0': 'Seedance 2.0',
-  'kling-o3-pro': 'Kling O3 Pro',
-  'veo-3.1': 'Veo 3.1',
-};
 
 export interface ShotGuardrail {
   id: string;
@@ -72,7 +69,9 @@ export interface ShotPlan {
   shots: PlannedShot[];
   /** The fields in composition order, as the server lists them. */
   fieldSpecs: ShotFieldSpec[];
+  /** The scene's length cap and the energies to choose from, as the server's catalog gives them. */
   sceneTextMax: number;
+  energies: string[];
 }
 
 /** The user's changes to one shot, by field id; and to the plan, by shot id (the `shot_edits` body). */
@@ -86,7 +85,7 @@ function model(v: unknown): { id: string; name: string } | null {
   const m = obj(v);
   const id = str(m?.id);
   if (!id) return null;
-  return { id, name: str(m?.name) ?? MODEL_NAMES[id] ?? id };
+  return { id, name: str(m?.name) ?? id };
 }
 
 function fieldValues(v: unknown): Record<string, string> | null {
@@ -146,7 +145,13 @@ export function parseShotPlan(body: unknown): ShotPlan | null {
     ];
   });
   const scene = fieldSpecs.find((f) => f.id === 'scene');
-  return { shots, fieldSpecs, sceneTextMax: scene?.maxChars ?? SCENE_TEXT_MAX };
+  const energy = fieldSpecs.find((f) => f.id === 'energy');
+  return {
+    shots,
+    fieldSpecs,
+    sceneTextMax: scene?.maxChars ?? FALLBACK_SCENE_TEXT_MAX,
+    energies: energy?.choices?.length ? energy.choices : [...FALLBACK_ENERGIES],
+  };
 }
 
 /** Field text as the server checks and stores it: whitespace collapsed, trimmed (tidyFieldText). */
@@ -178,7 +183,7 @@ export function shotEditsOf(plan: ShotPlan, values: Readonly<Record<string, Shot
 }
 
 /** Why the server would refuse this scene text before its guardrail check, in its words; null if it would not. */
-export function sceneTextHint(text: string, max = SCENE_TEXT_MAX): string | null {
+export function sceneTextHint(text: string, max = FALLBACK_SCENE_TEXT_MAX): string | null {
   const t = tidyScene(text);
   if (!t) return 'Empty: reset it to the Preset’s scene, or describe the shot.';
   if (t.length > max) return `${t.length} characters; the most is ${max}.`;
@@ -237,11 +242,12 @@ export function renderedShotsOf(shots: unknown): RenderedShot[] {
     const prompt = str(s?.prompt);
     if (!s || !prompt) return [];
     const id = str(s.model) ?? '';
+    // The worker names the model it rendered on (model_name); a Short from before that shows the id.
     return [
       {
         shotId: str(s.shot_id) ?? '',
         kind: str(s.kind) ?? '',
-        modelName: MODEL_NAMES[id] ?? id,
+        modelName: str(s.model_name) ?? id,
         edited: s.edited === true,
         prompt,
         framePrompt: str(s.frame_prompt),

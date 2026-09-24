@@ -40,13 +40,11 @@ import {
   VIDEO_MODEL_LABELS,
   composeShotPlan,
   displayReferences,
-  effectiveEdits,
   presetPrompts,
   shotPrompt,
   withReferences,
   type Guardrail,
   type ReferenceWords,
-  type ShotEdit,
   type ShotPlan,
   type ShotPlanPreset,
   type ShotPlanShot,
@@ -80,20 +78,20 @@ export const shotEditsField = z
   );
 
 /** The Modesty Default the render will apply: the resolver's, else the Preset's default arms (a Preset with no one on screen). */
-function renderModesty(preset: PresetDefinition, own: PresetInputs): Modesty {
-  const m = own.run.modesty as Modesty | undefined;
+function renderModesty(preset: PresetDefinition, presetInputs: PresetInputs): Modesty {
+  const m = presetInputs.run.modesty as Modesty | undefined;
   return m ?? { arms: preset.modesty.arms.default, hijab: false };
 }
 
 /**
  * The Shot Plan of rendering `draft` as `preset` with the Preset inputs the
- * route resolved (`own`), and `edits` applied. A refused edit is a 422
+ * route resolved, and `edits` applied. A refused edit is a 422
  * RenderRefusal carrying its shot_id, field and reason (and the Guardrail it broke).
  */
 export function composeRenderShotPlan(
   preset: PresetDefinition,
   draft: Pick<RenderableDraft, 'duration_ms' | 'product_interaction'>,
-  own: PresetInputs,
+  presetInputs: PresetInputs,
   edits: unknown,
 ): ShotPlan {
   const prompts = presetPrompts(preset.id);
@@ -103,8 +101,8 @@ export function composeRenderShotPlan(
       plannable,
       {
         durationMs: Number(draft.duration_ms),
-        modesty: renderModesty(preset, own),
-        vars: prompts.promptVars ? prompts.promptVars(own.run) : {},
+        modesty: renderModesty(preset, presetInputs),
+        vars: prompts.promptVars ? prompts.promptVars(presetInputs.run) : {},
         interaction: draft.product_interaction ?? null,
       },
       (edits ?? null) as Record<string, unknown> | null,
@@ -121,9 +119,6 @@ export function composeRenderShotPlan(
     throw err;
   }
 }
-
-/** The edits a run stores and hands the worker: only the fields that change a shot. */
-export const runShotEdits = (plan: ShotPlan): Record<string, ShotEdit> => effectiveEdits(plan);
 
 function guardrailView(g: Guardrail, words: ReferenceWords) {
   return { id: g.id, label: g.label, text: withReferences(g.text, words), enforced_by: g.at === 'request' ? 'request' : 'prompt' };

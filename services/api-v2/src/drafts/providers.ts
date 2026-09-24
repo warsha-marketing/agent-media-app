@@ -175,15 +175,18 @@ export function userPrompt(input: WriteScriptInput): string {
   return prompt;
 }
 
+/** A Claude reply's JSON; a reply that is not JSON is an upstream failure (`what` names the reply in the error). */
+function parseJsonReply(text: string, what: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`anthropic: ${what} reply is not JSON`);
+  }
+}
+
 /** Read the writer's JSON reply; a reply that is not the expected shape is an upstream failure. */
 export function parseWriterReply(text: string): { script: string; product_terms: string[]; product_interaction: string | null } {
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error('anthropic: Script reply is not JSON');
-  }
-  const d = data as { script?: unknown; product_terms?: unknown; product_interaction?: unknown };
+  const d = parseJsonReply(text, 'Script') as { script?: unknown; product_terms?: unknown; product_interaction?: unknown };
   if (typeof d.script !== 'string') throw new Error('anthropic: Script reply has no script');
   const terms = Array.isArray(d.product_terms) ? d.product_terms.filter((t): t is string => typeof t === 'string') : [];
   return {
@@ -291,11 +294,7 @@ export function profileUserContent(input: ProfileProductInput, photo: { media_ty
 
 /** The vision reply as JSON; the draft validates it (ProductProfileSchema) and asks for one rewrite. */
 export function parseProfileReply(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error('anthropic: Product Profile reply is not JSON');
-  }
+  return parseJsonReply(text, 'Product Profile');
 }
 
 export function anthropicProductProfiler(opts: {
@@ -356,13 +355,7 @@ export function anthropicInteractionWriter(opts: { apiKey: string; model: string
       refused: () =>
         new DraftError(422, 'PRODUCT_PROFILE_REFUSED', 'A Product Interaction cannot be written from this Product Profile. Edit it and re-voice.'),
     });
-    let data: unknown;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      throw new Error('anthropic: Product Interaction reply is not JSON');
-    }
-    const pi = (data as { product_interaction?: unknown }).product_interaction;
+    const pi = (parseJsonReply(text, 'Product Interaction') as { product_interaction?: unknown } | null)?.product_interaction;
     return { product_interaction: tidyProductInteraction(typeof pi === 'string' ? pi : null), model: opts.model };
   };
 }

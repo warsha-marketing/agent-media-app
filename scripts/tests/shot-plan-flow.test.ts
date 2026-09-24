@@ -2,16 +2,16 @@
 // plan (structured fields, Guardrails per stage), turning the cards' fields
 // into `shot_edits` ({ shot_id: { field: value } }, only what changed), the
 // request and its Idempotency-Key lifecycle with edits, what ran on the
-// finished Short, and the mirrors of @agentmedia/shot-prompts (the length cap,
-// the energies, the tidy, the local hints, the model names) held equal to the
-// originals.
+// finished Short, and what the page reads from the server instead of
+// hard-coding (the length cap, the energies, the model names), with the tiny
+// fallbacks for before the response arrives and the tidy and local hints held
+// equal to @agentmedia/shot-prompts.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ENERGIES,
-  MODEL_NAMES,
-  SCENE_TEXT_MAX,
+  FALLBACK_ENERGIES,
+  FALLBACK_SCENE_TEXT_MAX,
   fieldRows,
   kindLabel,
   lengthLabel,
@@ -33,7 +33,6 @@ import {
   type RenderEvent,
   type RenderState,
 } from '../../apps/web/lib/product-hero-flow.ts';
-import { VIDEO_MODEL_LABELS } from '../../packages/shot-prompts/src/shot-plan.ts';
 import { SHOT_ENERGIES, SHOT_FIELD_MAX_CHARS, shotFieldProblem, tidyFieldText } from '../../packages/shot-prompts/src/shot-fields.ts';
 
 const DRAFT = '11111111-1111-4111-8111-111111111111';
@@ -137,6 +136,25 @@ describe('parseShotPlan', () => {
     assert.deepEqual(fieldRows(plan, plan.shots[1]), []);
   });
 
+  it('takes the scene cap, the energies and the model names from the response, not from a copy', () => {
+    const plan = parseShotPlan(PLAN_BODY)!;
+    assert.deepEqual(plan.energies, ['calm', 'natural', 'lively']);
+    const custom = parseShotPlan({
+      ...PLAN_BODY,
+      fields: PLAN_BODY.fields.map((f) =>
+        f.id === 'scene' ? { ...f, max_chars: 640 } : f.id === 'energy' ? { ...f, choices: ['calm', 'lively', 'frantic'] } : f,
+      ),
+      shots: [{ ...PLAN_BODY.shots[0], model: { id: 'seedance-2.0-mini', name: 'Seedance 2.0 Mini' }, fallback: { id: 'new-model' } }],
+    })!;
+    assert.equal(custom.sceneTextMax, 640);
+    assert.deepEqual(custom.energies, ['calm', 'lively', 'frantic']);
+    assert.equal(modelLine(custom.shots[0]), 'Seedance 2.0 Mini → new-model');
+    // A response without a field catalog (an older server) falls back to the tiny defaults.
+    const bare = parseShotPlan({ ...PLAN_BODY, fields: undefined })!;
+    assert.equal(bare.sceneTextMax, FALLBACK_SCENE_TEXT_MAX);
+    assert.deepEqual(bare.energies, [...FALLBACK_ENERGIES]);
+  });
+
   it('is null for anything that is not a plan (#26’s scene_text shape too)', () => {
     const old = { shots: [{ shot_id: 'shot-1-reaction', scene_text: 'x', model: { id: 'veo-3.1' } }] };
     for (const b of [null, {}, { shots: 'x' }, { shots: [{ shot_id: 'a' }] }, old]) assert.equal(parseShotPlan(b), null);
@@ -201,8 +219,10 @@ describe('what ran, on the finished Short', () => {
     video_url: 'https://m/s.mp4',
     duration_ms: 9000,
     shots: [
-      { shot_id: 'reaction', kind: 'reaction', model: 'veo-3.1', edited: true, fields: {}, guardrails: { image: [], video: [] }, prompt: 'P1' },
-      { shot_id: 'hands-use', kind: 'hands', model: 'seedance-2.0', edited: false, fields: {}, guardrails: { image: [], video: [] }, frame_prompt: 'F2', prompt: 'P2' },
+      { shot_id: 'reaction', kind: 'reaction', model: 'veo-3.1', model_name: 'Veo 3.1', edited: true, fields: {}, guardrails: { image: [], video: [] }, prompt: 'P1' },
+      { shot_id: 'hands-use', kind: 'hands', model: 'seedance-2.0', model_name: 'Seedance 2.0', edited: false, fields: {}, guardrails: { image: [], video: [] }, frame_prompt: 'F2', prompt: 'P2' },
+      // A Short rendered before the result named its models: the id.
+      { shot_id: 'product-closer', kind: 'product', model: 'seedance-2.0', edited: false, fields: {}, guardrails: { image: [], video: [] }, prompt: 'P3' },
     ],
   };
 
@@ -216,6 +236,7 @@ describe('what ran, on the finished Short', () => {
     assert.deepEqual(shots.map((s) => [s.shotId, s.modelName, s.edited, s.framePrompt, s.prompt]), [
       ['reaction', 'Veo 3.1', true, null, 'P1'],
       ['hands-use', 'Seedance 2.0', false, 'F2', 'P2'],
+      ['product-closer', 'seedance-2.0', false, null, 'P3'],
     ]);
   });
 
@@ -230,10 +251,9 @@ describe('what ran, on the finished Short', () => {
 });
 
 describe('mirrors of @agentmedia/shot-prompts', () => {
-  it('the same scene cap, energies and model names', () => {
-    assert.equal(SCENE_TEXT_MAX, SHOT_FIELD_MAX_CHARS.scene);
-    assert.deepEqual([...ENERGIES], [...SHOT_ENERGIES]);
-    assert.deepEqual({ ...MODEL_NAMES }, { ...VIDEO_MODEL_LABELS });
+  it('the fallbacks for before the response arrives are the server’s own values', () => {
+    assert.equal(FALLBACK_SCENE_TEXT_MAX, SHOT_FIELD_MAX_CHARS.scene);
+    assert.deepEqual([...FALLBACK_ENERGIES], [...SHOT_ENERGIES]);
   });
 
   it('the same tidy, and a local hint wherever the server refuses for form (not the guardrail check)', () => {

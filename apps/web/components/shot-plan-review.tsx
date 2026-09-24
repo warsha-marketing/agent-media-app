@@ -20,7 +20,6 @@ import { ChevronDown, Clapperboard, Loader2, Lock, RotateCcw } from 'lucide-reac
 import { postJson } from '@/lib/post-json';
 import { apiErrorMessage, shotPlanBody, skillOf, type RenderChoice } from '@/lib/product-hero-flow';
 import {
-  ENERGIES,
   fieldRows,
   kindLabel,
   lengthLabel,
@@ -176,7 +175,7 @@ export function ShotPlanReview({
                           className="h-8 rounded-lg px-2 text-xs outline-none"
                           style={field}
                         >
-                          {ENERGIES.map((e) => (
+                          {plan.energies.map((e) => (
                             <option key={e} value={e}>
                               {e}
                             </option>
@@ -259,7 +258,7 @@ export function RenderedShots({ shots }: { shots: unknown }) {
           <li key={s.shotId || i} className="flex flex-col gap-1">
             <span className="text-xs" style={muted}>
               Shot {i + 1} · {s.kind} · {s.modelName}
-              {s.edited ? ' · your scene' : ''}
+              {s.edited ? ' · your edits' : ''}
             </span>
             {s.framePrompt ? (
               <p className="whitespace-pre-wrap text-xs" style={muted}>Starting frame: {s.framePrompt}</p>
