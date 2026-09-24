@@ -1,16 +1,21 @@
 // The web Script editor mirrors the allowed Delivery Tags, their formatting,
-// the unknown-tag message and the Product Details limit (it takes no imports);
-// the originals live in @agentmedia/schema and api-v2. Held equal here.
+// the unknown-tag message, the Product Details limit and the Product
+// Interaction's limit and tidying (it takes no imports); the originals live in
+// @agentmedia/schema and api-v2. Held equal here, and the Product Interaction's
+// limit also against the database CHECK.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as schema from '../../packages/schema/src/delivery-tags.ts';
-import { PRODUCT_DETAILS_MAX_CHARS, PRODUCT_INTERACTION_MAX_CHARS } from '../../services/api-v2/src/drafts/product-hero-draft.ts';
+import { PRODUCT_INTERACTION_MAX_CHARS, tidyProductInteraction as schemaTidy } from '../../packages/schema/src/product-interaction.ts';
+import { PRODUCT_DETAILS_MAX_CHARS } from '../../services/api-v2/src/drafts/product-hero-draft.ts';
 import {
   DELIVERY_TAGS,
   PRODUCT_DETAILS_MAX,
   PRODUCT_INTERACTION_MAX,
   formatDeliveryTags,
+  tidyProductInteraction as webTidy,
   insertDeliveryTag,
   unknownDeliveryTagMessage,
   unknownDeliveryTags,
@@ -44,8 +49,40 @@ describe('Product Details limit: web field mirror', () => {
   it('caps the field at the API limit', () => {
     assert.equal(PRODUCT_DETAILS_MAX, PRODUCT_DETAILS_MAX_CHARS);
   });
-  it('caps the Product Interaction field at the API limit', () => {
+});
+
+describe('Product Interaction: one limit and one tidy, everywhere', () => {
+  it('caps the web field at the schema limit', () => {
     assert.equal(PRODUCT_INTERACTION_MAX, PRODUCT_INTERACTION_MAX_CHARS);
+  });
+
+  it('the database CHECK bounds the column at the same limit', () => {
+    const sql = readFileSync(
+      new URL('../../supabase/migrations/20260924100000_short_drafts_product_interaction.sql', import.meta.url),
+      'utf8',
+    );
+    const check = /CHECK\s*\(\s*product_interaction IS NULL OR char_length\(product_interaction\) BETWEEN 1 AND (\d+)\s*\)/.exec(sql);
+    assert.ok(check, 'the migration declares the length CHECK');
+    assert.equal(Number(check[1]), PRODUCT_INTERACTION_MAX_CHARS);
+  });
+
+  it('the web tidies exactly as the schema (and so the API) stores it', () => {
+    const samples = [
+      null,
+      undefined,
+      '',
+      '   ',
+      '  removes the cap,\n sprays once on the inner wrist  ',
+      'x'.repeat(PRODUCT_INTERACTION_MAX_CHARS + 50),
+      `${'a'.repeat(PRODUCT_INTERACTION_MAX_CHARS - 1)} b`,
+      'يرش مرة على المعصم\t ثم يشمّه',
+    ];
+    for (const s of samples) assert.equal(webTidy(s), schemaTidy(s), String(s));
+    // Stored text always fits the CHECK: 1..limit characters, or null.
+    for (const s of samples) {
+      const t = schemaTidy(s);
+      if (t !== null) assert.ok(t.length >= 1 && t.length <= PRODUCT_INTERACTION_MAX_CHARS);
+    }
   });
 });
 

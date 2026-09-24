@@ -34,6 +34,8 @@ export * from './presets/hands-on.js';
 export * from './modesty.js';
 // Delivery Tags — the allowed list and the strip helpers (Captions, viewer display).
 export * from './delivery-tags.js';
+// Product Interaction (#25) — its limit and how it is tidied (api-v2, worker and web share them).
+export * from './product-interaction.js';
 // Arabic Captions (#10) — words and cues from the voiced Script's alignment (no speech-to-text).
 export * from './captions.js';
 // Edited caption lines (#22) — the Caption editor's lines and style, checked by the export route and workflow.

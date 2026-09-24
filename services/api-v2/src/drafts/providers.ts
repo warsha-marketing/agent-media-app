@@ -34,7 +34,6 @@ import {
   DraftError,
   MAX_SPEECH_MS,
   MIN_SPEECH_MS,
-  tidyProductInteraction,
   type Alignment,
   type Dialect,
   type DraftDeps,
@@ -44,7 +43,7 @@ import {
   type WriteScriptInput,
 } from './product-hero-draft.js';
 import { randomUUID } from 'node:crypto';
-import { formatDeliveryTags } from '@agentmedia/schema';
+import { formatDeliveryTags, tidyProductInteraction } from '@agentmedia/schema';
 import { supabaseVoiceRepo } from '../voices/providers.js';
 import { supabasePresetAccess } from '../presets/providers.js';
 

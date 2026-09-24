@@ -52,7 +52,16 @@
  */
 
 import { z } from 'zod';
-import { DELIVERY_TAGS, SCRIPT_DIALECTS, formatDeliveryTags, modelHonoursDeliveryTags, stripDeliveryTags, type ScriptDialect } from '@agentmedia/schema';
+import {
+  DELIVERY_TAGS,
+  PRODUCT_INTERACTION_MAX_CHARS,
+  SCRIPT_DIALECTS,
+  formatDeliveryTags,
+  modelHonoursDeliveryTags,
+  stripDeliveryTags,
+  tidyProductInteraction,
+  type ScriptDialect,
+} from '@agentmedia/schema';
 import { generatedScriptIssues, scriptTextIssues, type ScriptIssue } from './script-check.js';
 import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
 import { PresetError, assertDialectDraftable, type PresetAccess } from '../presets/qualification.js';
@@ -76,18 +85,6 @@ export const BRIEF_MAX_CHARS = 2_000;
 export const PRODUCT_DETAILS_MAX_CHARS = 3_000;
 /** Well above 15 s of speech (~40 words), well below a runaway TTS bill. */
 export const SCRIPT_MAX_CHARS = 600;
-/** A Product Interaction is one short action sentence; room for a few steps, never a prompt. */
-export const PRODUCT_INTERACTION_MAX_CHARS = 300;
-
-/**
- * A Product Interaction as stored: whitespace collapsed, trimmed, within the
- * limit; null when there is none.
- */
-export function tidyProductInteraction(text: string | null | undefined): string | null {
-  const tidy = (text ?? '').replace(/\s+/g, ' ').trim().slice(0, PRODUCT_INTERACTION_MAX_CHARS).trim();
-  return tidy || null;
-}
-
 export const CreateDraftInputSchema = z
   .object({
     brief: z.string().trim().min(1, 'brief is required').max(BRIEF_MAX_CHARS),

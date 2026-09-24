@@ -556,11 +556,24 @@ export function unknownDeliveryTagMessage(unknown: readonly string[]): string {
 /** The Product Details field's limit: the API's PRODUCT_DETAILS_MAX_CHARS (held equal by the parity test). */
 export const PRODUCT_DETAILS_MAX = 3000;
 
-/** The Product Interaction field's limit: the API's PRODUCT_INTERACTION_MAX_CHARS (held equal by the parity test). */
+/**
+ * The Product Interaction field's limit: PRODUCT_INTERACTION_MAX_CHARS in
+ * @agentmedia/schema (this file takes no imports; held equal by the parity
+ * test, which also checks the database CHECK).
+ */
 export const PRODUCT_INTERACTION_MAX = 300;
 
-/** A Product Interaction as the API stores it: whitespace collapsed and trimmed. */
-const tidyInteraction = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
+/**
+ * A Product Interaction as the API stores it: whitespace collapsed, trimmed,
+ * within the limit; null when there is none. Mirrors tidyProductInteraction in
+ * @agentmedia/schema (held equal by the parity test).
+ */
+export function tidyProductInteraction(text: string | null | undefined): string | null {
+  const tidy = (text ?? '').replace(/\s+/g, ' ').trim().slice(0, PRODUCT_INTERACTION_MAX).trim();
+  return tidy || null;
+}
+
+const tidyInteraction = (text: string | null | undefined): string => tidyProductInteraction(text) ?? '';
 
 /**
  * Whether what is on screen differs from the draft (#25): the Script, the

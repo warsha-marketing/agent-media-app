@@ -13,7 +13,14 @@
  * Pure data: the workflow sandbox imports this.
  */
 
-import { PRODUCT_HERO, type Modesty, type PresetDefinition, type ProductHeroShotKind, type ShotSubject } from '@agentmedia/schema';
+import {
+  PRODUCT_HERO,
+  tidyProductInteraction,
+  type Modesty,
+  type PresetDefinition,
+  type ProductHeroShotKind,
+  type ShotSubject,
+} from '@agentmedia/schema';
 import { modestyPrompt } from './modesty.js';
 import { REACTION_RENDER } from './reaction.js';
 import type { PresetRenderInput } from '../workflows/render-preset.js';
@@ -60,9 +67,6 @@ export const PRODUCT_HERO_RENDER: PresetRenderDefinition<ProductHeroShotKind> = 
   },
 };
 
-/** The longest Product Interaction a prompt carries (api-v2 bounds it the same). */
-export const PRODUCT_INTERACTION_PROMPT_MAX = 300;
-
 /**
  * The Product Interaction's words for one shot showing `subject` (#25): how a
  * real person uses the product, for hands and person shots only (empty for a
@@ -72,11 +76,8 @@ export const PRODUCT_INTERACTION_PROMPT_MAX = 300;
  */
 export function productInteractionPrompt(subject: ShotSubject, interaction: string | null | undefined): string {
   if (subject !== 'hands' && subject !== 'person') return '';
-  const text = (interaction ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, PRODUCT_INTERACTION_PROMPT_MAX)
-    .replace(/[.\s]+$/, '');
+  // Tidied exactly as api-v2 stored it (@agentmedia/schema), then its closing stop dropped.
+  const text = (tidyProductInteraction(interaction) ?? '').replace(/[.\s]+$/, '');
   if (!text) return '';
   return (
     `How the product is used, as a real person uses it: ${text}. ` +

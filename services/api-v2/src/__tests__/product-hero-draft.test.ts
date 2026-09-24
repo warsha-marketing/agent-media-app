@@ -20,10 +20,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerDraftRoutes, draftOpenApi } from '../routes/v1/drafts.js';
 import { anthropicScriptWriter, parseWriterReply, productionDraftDeps, systemPrompt, userPrompt } from '../drafts/providers.js';
-import { DELIVERY_TAGS } from '@agentmedia/schema';
+import { DELIVERY_TAGS, PRODUCT_INTERACTION_MAX_CHARS } from '@agentmedia/schema';
 import {
   CreateDraftInputSchema,
-  PRODUCT_INTERACTION_MAX_CHARS,
   RevoiceDraftInputSchema,
   mp3DurationMs,
   type DraftDeps,

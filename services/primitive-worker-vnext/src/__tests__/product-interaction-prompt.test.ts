@@ -4,7 +4,8 @@
 // one tidy sentence, and it says it keeps the modesty and no-speaking rules.
 
 import { describe, it, expect } from 'vitest';
-import { PRODUCT_INTERACTION_PROMPT_MAX, productInteractionPrompt } from '../presets/index.js';
+import { PRODUCT_INTERACTION_MAX_CHARS } from '@agentmedia/schema';
+import { productInteractionPrompt } from '../presets/index.js';
 
 describe('productInteractionPrompt', () => {
   it('is empty for a product shot, or a draft with none', () => {
@@ -23,8 +24,8 @@ describe('productInteractionPrompt', () => {
   });
 
   it('never carries more than the cap', () => {
-    const long = 'a'.repeat(PRODUCT_INTERACTION_PROMPT_MAX + 200);
-    expect(productInteractionPrompt('person', long)).toContain('a'.repeat(PRODUCT_INTERACTION_PROMPT_MAX));
-    expect(productInteractionPrompt('person', long)).not.toContain('a'.repeat(PRODUCT_INTERACTION_PROMPT_MAX + 1));
+    const long = 'a'.repeat(PRODUCT_INTERACTION_MAX_CHARS + 200);
+    expect(productInteractionPrompt('person', long)).toContain('a'.repeat(PRODUCT_INTERACTION_MAX_CHARS));
+    expect(productInteractionPrompt('person', long)).not.toContain('a'.repeat(PRODUCT_INTERACTION_MAX_CHARS + 1));
   });
 });
