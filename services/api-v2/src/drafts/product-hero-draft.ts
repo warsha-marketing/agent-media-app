@@ -612,16 +612,38 @@ function photoKeyOrRefuse(deps: DraftDeps, url: string, userId: string): string 
 }
 
 /**
+ * Why a vision reply cannot be the draft's Product Profile: not a valid
+ * Profile (the schema's issues), else words that break a Guardrail (its words
+ * reach the Product Interaction and the shot prompts, like a user's edit).
+ */
+function profileReplyProblems(reply: unknown): { issues: string[]; guardrail: ProfileGuardrailIssue | null } {
+  const issues = productProfileIssues(reply);
+  if (issues.length) return { issues, guardrail: null };
+  const guardrail = profileGuardrailIssue(ProductProfileSchema.parse(reply));
+  return { issues: guardrail ? [guardrail.message] : [], guardrail };
+}
+
+/**
  * Claude (vision) reads the product photo and Product Details into a Product
- * Profile. A reply that is not a valid Profile gets ONE rewrite, told why; a
- * second is PRODUCT_PROFILE_FAILED, before any Script is written or voiced.
+ * Profile. A reply that is not a valid Profile, or whose words break a
+ * Guardrail, gets ONE rewrite, told why; a second is PRODUCT_PROFILE_FAILED
+ * (or PRODUCT_PROFILE_BREAKS_GUARDRAIL), before any Script is written or voiced.
  */
 async function profileChecked(deps: DraftDeps, request: ProfileProductInput): Promise<{ profile: ProductProfile; model: string }> {
   let reply = await deps.profileProduct(request);
-  let issues = productProfileIssues(reply.profile);
+  let { issues, guardrail } = profileReplyProblems(reply.profile);
   if (issues.length) {
     reply = await deps.profileProduct({ ...request, rejected: { reply: JSON.stringify(reply.profile ?? null), issues } });
-    issues = productProfileIssues(reply.profile);
+    ({ issues, guardrail } = profileReplyProblems(reply.profile));
+  }
+  if (guardrail) {
+    throw new DraftError(
+      422,
+      'PRODUCT_PROFILE_BREAKS_GUARDRAIL',
+      `The Product Profile read from the photo breaks a Guardrail: "${guardrail.matched}" — ${guardrail.why}. ` +
+        'Use a photo of the product alone (nobody in it), or add Product Details that describe only the product, and draft again.',
+      { guardrail: guardrail.guardrail, matched: guardrail.matched },
+    );
   }
   if (issues.length) {
     throw new DraftError(
@@ -634,17 +656,19 @@ async function profileChecked(deps: DraftDeps, request: ProfileProductInput): Pr
   return { profile: ProductProfileSchema.parse(reply.profile), model: reply.model };
 }
 
+/** A Guardrail a Product Profile's words break: which, the words, why, and the message naming the Profile. */
+type ProfileGuardrailIssue = InteractionGuardrailIssue & { why: string };
+
 /**
  * The first Guardrail a Product Profile's words contradict (they reach the
  * Product Interaction and the shot prompts, #30), named as the Profile's.
  */
-function profileGuardrailIssue(profile: ProductProfile): InteractionGuardrailIssue | null {
+function profileGuardrailIssue(profile: ProductProfile): ProfileGuardrailIssue | null {
   const words = [profile.used_state, profile.grip, ...profile.interaction_verbs, ...profile.parts.map((p) => p.name)].join(', ');
   const issue = guardrailIssue(words);
   if (!issue) return null;
   return {
-    guardrail: issue.guardrail,
-    matched: issue.matched,
+    ...issue,
     message: `The Product Profile breaks a Guardrail: "${issue.matched}" — ${issue.why}. Describe only the product: its parts, the state it is used in, its grip and how it is used.`,
   };
 }

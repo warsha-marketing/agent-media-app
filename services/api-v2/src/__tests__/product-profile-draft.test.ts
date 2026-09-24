@@ -25,7 +25,9 @@ import {
   systemPrompt,
   userPrompt,
 } from '../drafts/providers.js';
-import { ownProductPhotoKey } from '../drafts/product-photo.js';
+import sharp from 'sharp';
+import { VISION_MAX_INPUT_PIXELS, ownProductPhotoKey, toVisionJpeg } from '../drafts/product-photo.js';
+import { DraftError } from '../drafts/product-hero-draft.js';
 import { interactionStateIssue } from '../drafts/interaction-state.js';
 import type { ProductProfile } from '@agentmedia/schema';
 import type {
@@ -287,6 +289,37 @@ describe('Product Profile — read from the product photo before the Script', ()
     expect(h.rows).toHaveLength(0);
   });
 
+  it('a Claude-written Profile whose words break a Guardrail gets one rewrite, told why', async () => {
+    const bad = { ...PERFUME_PROFILE, grip: 'she takes off her hijab, then holds the bottle' };
+    const h = await start({ profiles: [bad, PERFUME_PROFILE], interactions: [PERFUME_ACTION] });
+    const r = await create(h, { product_image_url: photoOf('user-a') });
+    expect(r.status).toBe(201);
+    expect(h.calls.profile).toHaveLength(2);
+    expect(h.calls.profile[1].rejected!.issues.join(' ')).toMatch(/^The Product Profile breaks a Guardrail: .*hijab/);
+    expect(h.calls.profile[1].rejected!.reply).toContain('takes off her hijab');
+    expect(r.body.draft.product_profile.grip).toBe(PERFUME_PROFILE.grip);
+  });
+
+  it('a second Claude-written Profile that breaks a Guardrail is an actionable error, before any Script is written or voiced', async () => {
+    const h = await start({
+      profiles: [
+        { ...PERFUME_PROFILE, used_state: 'uncapped, held by a woman in a sleeveless top' },
+        { ...PERFUME_PROFILE, grip: 'bare arms, one hand around the bottle' },
+      ],
+    });
+    const r = await create(h, { product_image_url: photoOf('user-a') });
+    expect(r.status).toBe(422);
+    expect(r.body.error.code).toBe('PRODUCT_PROFILE_BREAKS_GUARDRAIL');
+    expect(r.body.error.guardrail).toBe('exposed');
+    expect(r.body.error.matched).toMatch(/bare arms/);
+    expect(r.body.error.message).toMatch(/^The Product Profile read from the photo breaks a Guardrail/);
+    expect(r.body.error.message).toMatch(/photo of the product alone|Product Details/);
+    expect(h.calls.profile).toHaveLength(2);
+    expect(h.calls.write).toHaveLength(0);
+    expect(h.calls.voice).toHaveLength(0);
+    expect(h.rows).toHaveLength(0);
+  });
+
   it('refuses a photo that is not this user\'s own upload on our storage, before any provider', async () => {
     const h = await start({ profiles: [PERFUME_PROFILE] });
     for (const url of [
@@ -443,6 +476,20 @@ describe('used-state rule', () => {
     expect(ownProductPhotoKey(photoOf('u1'), 'u1', '')).toBeNull();
     expect(ownProductPhotoKey(`${PUBLIC}/vnext/uploads/u1/sub/x.png`, 'u1', PUBLIC)).toBeNull();
   });
+
+  it('a product photo is decoded under an explicit pixel limit (40 MP), refused with an actionable error above it', async () => {
+    expect(VISION_MAX_INPUT_PIXELS).toBe(40_000_000);
+    const png = await sharp({ create: { width: 200, height: 100, channels: 3, background: '#c0a080' } }).png().toBuffer();
+    const ok = await toVisionJpeg(png);
+    expect(ok.media_type).toBe('image/jpeg');
+    expect(Buffer.from(ok.data, 'base64').subarray(0, 2).toString('hex')).toBe('ffd8');
+    // A smaller limit stands in for a 40 MP+ decompression bomb.
+    const err = await toVisionJpeg(png, 19_999).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DraftError);
+    expect(err).toMatchObject({ status: 422, code: 'PRODUCT_IMAGE_TOO_LARGE' });
+    expect((err as DraftError).message).toMatch(/megapixels/);
+    await expect(toVisionJpeg(png, 20_000)).resolves.toMatchObject({ media_type: 'image/jpeg' });
+  });
 });
 
 // ── The real providers (fetch mocked) ────────────────────────────────────────
@@ -543,5 +590,7 @@ describe('Product Profile in the OpenAPI spec', () => {
     expect(create.responses['422'].description).toContain('PRODUCT_INTERACTION_NOT_IN_USED_STATE');
     expect(create.responses['502'].description).toContain('PRODUCT_PROFILE_FAILED');
     expect(revoice.responses['422'].description).toContain('PRODUCT_PROFILE_BREAKS_GUARDRAIL');
+    expect(create.responses['422'].description).toContain('PRODUCT_PROFILE_BREAKS_GUARDRAIL');
+    expect(create.responses['422'].description).toContain('PRODUCT_IMAGE_TOO_LARGE');
   });
 });

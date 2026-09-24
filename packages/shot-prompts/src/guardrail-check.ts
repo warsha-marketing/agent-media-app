@@ -6,13 +6,17 @@
  * nobody speaks (ADR 0001: the draft's voice is the only speech) and the
  * Modesty Default (arms covered or sleeved, a hijab kept on, nobody undressing).
  *
- * Two kinds of user text go into shot prompts, and both are held to it:
+ * The text that goes into shot prompts is held to it:
  *   - the Product Interaction (#25), when it is SAVED: the writer's own output
  *     (one rewrite told why, then an error, like the Script check) and the
  *     user's edit on re-voice (422 PRODUCT_INTERACTION_BREAKS_GUARDRAIL);
  *   - an edited Shot Prompt field (#26, #28: the scene, the performance, the
  *     action, …): refused by api-v2 on the quote and the run (422
- *     SHOT_EDIT_BREAKS_GUARDRAIL), and again by the worker before it renders.
+ *     SHOT_EDIT_BREAKS_GUARDRAIL), and again by the worker before it renders;
+ *   - the Product Profile's words (#30), which the Product Interaction is
+ *     written from: Claude's reading of the photo (one rewrite told why, then
+ *     an error) and the user's edit on re-voice (422
+ *     PRODUCT_PROFILE_BREAKS_GUARDRAIL).
  * The render still appends its own Guardrail lines after the text, but a video
  * model given "takes off her hijab" or "talks to the camera" may follow it, so
  * such text is refused rather than trusted to be outvoted.

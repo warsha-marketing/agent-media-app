@@ -12,6 +12,7 @@
 
 import sharp from 'sharp';
 import { getR2PublicUrlPrefix, readPublicObject } from '../lib/r2-upload.js';
+import { DraftError } from './product-hero-draft.js';
 
 const FILE = /^[A-Za-z0-9-]{1,64}\.(png|jpe?g)$/;
 
@@ -38,16 +39,43 @@ const VISION_EDGE_PX = 1568;
 const MAX_STORED_BYTES = 25 * 1024 * 1024;
 
 /**
- * A stored product photo as Claude reads it: downscaled to at most 1568 px on
- * the long edge and re-encoded as JPEG (well under the API's per-image limit),
- * base64. Read from our own bucket by key: nothing is fetched from the web.
+ * The most pixels a stored photo may decode to (width × height), set
+ * explicitly rather than left to sharp's 268 MP default: a small, highly
+ * compressed upload can decode to a huge bitmap (a decompression bomb), and a
+ * real product photo is far smaller (a 48 MP phone photo is re-saved at 12 MP).
  */
-export async function readProductPhotoForVision(key: string): Promise<{ media_type: 'image/jpeg'; data: string }> {
-  const bytes = await readPublicObject(key, MAX_STORED_BYTES);
-  const jpeg = await sharp(bytes)
-    .rotate()
-    .resize(VISION_EDGE_PX, VISION_EDGE_PX, { fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 85 })
-    .toBuffer();
+export const VISION_MAX_INPUT_PIXELS = 40_000_000;
+
+/**
+ * Photo bytes as Claude reads them: downscaled to at most 1568 px on the long
+ * edge and re-encoded as JPEG (well under the API's per-image limit), base64.
+ * A photo over `maxPixels` is refused (422 PRODUCT_IMAGE_TOO_LARGE) before it
+ * is decoded.
+ */
+export async function toVisionJpeg(bytes: Buffer, maxPixels = VISION_MAX_INPUT_PIXELS): Promise<{ media_type: 'image/jpeg'; data: string }> {
+  let jpeg: Buffer;
+  try {
+    jpeg = await sharp(bytes, { limitInputPixels: maxPixels })
+      .rotate()
+      .resize(VISION_EDGE_PX, VISION_EDGE_PX, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+  } catch (err) {
+    if (err instanceof Error && /pixel limit/i.test(err.message)) {
+      const mp = Number((maxPixels / 1_000_000).toFixed(2));
+      throw new DraftError(
+        422,
+        'PRODUCT_IMAGE_TOO_LARGE',
+        `The product photo is larger than ${mp} megapixels. Upload a smaller photo of the product (e.g. 4000 × 3000 px) and try again.`,
+        { max_pixels: maxPixels },
+      );
+    }
+    throw err;
+  }
   return { media_type: 'image/jpeg', data: jpeg.toString('base64') };
+}
+
+/** A stored product photo as Claude reads it (toVisionJpeg), read from our own bucket by key: nothing is fetched from the web. */
+export async function readProductPhotoForVision(key: string): Promise<{ media_type: 'image/jpeg'; data: string }> {
+  return toVisionJpeg(await readPublicObject(key, MAX_STORED_BYTES));
 }
