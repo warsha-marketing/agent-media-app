@@ -42,6 +42,36 @@ _Avoid_: prompt (alone), shot description, template
 A locked line of a Shot Prompt that the user sees but can never edit or remove: the fixed product and character references, the no-speaking instruction on person and hands shots (ADR 0001), the Modesty Default, nobody on a product shot, no text or captions, and the video model's own audio off. The server adds them to every shot whatever the client sends, and refuses scene text (or a Product Interaction) that contradicts one: speech, a hijab removed, bare arms or skin, undressing, in English or Arabic.
 _Avoid_: safety filter, rule, constraint, negative prompt
 
+### Product intelligence
+
+**Product Profile**:
+What the system understands about one product from its photo and Product Details: category, real size, parts and states, how it is used, grip, and physical risks for video.
+_Avoid_: product metadata, product analysis
+
+**In-use Reference**:
+An edited product image showing the product in the state it is used in (e.g. a perfume bottle uncapped), used as the video reference instead of the packshot.
+_Avoid_: modified product photo
+
+**Scale Anchor**:
+A physical comparison in a Shot Prompt that fixes the product's real size (e.g. "about the height of her palm").
+_Avoid_: size hint
+
+**Playbook**:
+Shared, tested shot and interaction rules for one product category, used by every product in it.
+_Avoid_: template, category prompt
+
+**Critic**:
+The automatic check of a rendered shot's frames against its Product Profile and Guardrails; a hard defect triggers one automatic re-render, soft defects are flagged.
+_Avoid_: QA bot, validator
+
+**Evaluation Set**:
+A fixed set of real products rendered after every pipeline change and scored by the Critic and a human, to show a change helps across products.
+_Avoid_: test products, benchmark
+
+**Set**:
+The one place, light and props a whole Short happens in, fixed before any shot is rendered.
+_Avoid_: background, location
+
 ### Arabic speech
 
 **Dialect**:
