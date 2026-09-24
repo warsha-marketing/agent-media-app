@@ -19,6 +19,8 @@ import {
   shotClipUsd,
   shotModelChain,
   modelRenderSeconds,
+  modelTakesPersonImage,
+  shotFallbacks,
 } from '../video-models.js';
 import { VIDEO_CLIP_CREDITS, VIDEO_CLIP_USD } from '../video-pricing.js';
 import { planPresetShots, presetProviderUsd, quotePresetCredits, shotVideo, type PresetDefinition } from '../preset-definition.js';
@@ -31,8 +33,15 @@ import { STANDARD_MODESTY } from '../modesty.js';
 const DURATIONS = [5_000, 5_001, 7_400, 9_999, 10_000, 10_001, 12_345, 13_750, 14_999, 15_000];
 
 describe('the per-model price table', () => {
-  it('knows Seedance (EvoLink), Kling O3 Pro and Veo 3.1', () => {
-    expect([...VIDEO_MODEL_IDS].sort()).toEqual(['kling-o3-pro', 'seedance-2.0', 'veo-3.1']);
+  it('knows Seedance (EvoLink), Kling O3 Pro, Veo 3.1 and Seedance 2.0 Mini on ModelArk', () => {
+    expect([...VIDEO_MODEL_IDS].sort()).toEqual(['kling-o3-pro', 'modelark-seedance-2.0-mini', 'seedance-2.0', 'veo-3.1']);
+  });
+
+  it('costs ModelArk Mini at the conservative placeholder, $0.12/s (not a confirmed price), for 5 and 10 s', () => {
+    expect(VIDEO_MODEL_PRICES['modelark-seedance-2.0-mini'].usd).toEqual({ 5: 0.6, 10: 1.2 });
+    // ~$0.0014 per 1K tokens: if a 720×1280 24 fps 5 s clip is 108,000 tokens, it costs ~$0.15 — the placeholder is above it.
+    expect(VIDEO_MODEL_PRICES['modelark-seedance-2.0-mini'].usd[5]!).toBeGreaterThan(((720 * 1280 * 24 * 5) / 1024 / 1000) * 0.0014);
+    expect(modelRenderSeconds('modelark-seedance-2.0-mini', 5)).toBe(5);
   });
 
   it('prices Seedance exactly as the shared clip table (every Preset without a model is unchanged)', () => {
@@ -77,6 +86,14 @@ describe('a shot kind’s model chain', () => {
     expect(shotModelChain({ model: 'kling-o3-pro', fallback: 'veo-3.1' })).toEqual(['kling-o3-pro', 'veo-3.1']);
   });
 
+  it('takes a chain of fallbacks, tried in order, without repeats', () => {
+    const v = { model: 'modelark-seedance-2.0-mini', fallback: ['kling-o3-pro', 'veo-3.1'] } as const;
+    expect(shotModelChain(v)).toEqual(['modelark-seedance-2.0-mini', 'kling-o3-pro', 'veo-3.1']);
+    expect(shotFallbacks(v)).toEqual(['kling-o3-pro', 'veo-3.1']);
+    expect(shotModelChain({ model: 'veo-3.1', fallback: ['veo-3.1', 'kling-o3-pro', 'kling-o3-pro'] })).toEqual(['veo-3.1', 'kling-o3-pro']);
+    expect(shotFallbacks(undefined)).toEqual([]);
+  });
+
   it('charges a shot the most any model in its chain charges, so the fallback never changes the charge', () => {
     const chain = { model: 'kling-o3-pro', fallback: 'veo-3.1' } as const;
     expect(shotClipCredits(chain, 5)).toBe(Math.max(VIDEO_MODEL_PRICES['kling-o3-pro'].credits[5]!, VIDEO_MODEL_PRICES['veo-3.1'].credits[5]!));
@@ -96,15 +113,16 @@ describe('a shot kind’s model chain', () => {
   });
 });
 
-describe('Reaction’s person shots render on Kling O3 Pro, falling back to Veo 3.1', () => {
-  it('budgets the provider cost for the worst case: both person shots failing on Kling and rendering on Veo', () => {
-    // Two person shots (Kling $0.56 then Veo $1.60 each) and two product clips ($0.60 each).
-    expect(REACTION.budget.maxProviderUsd).toBeCloseTo(2 * (0.56 + 1.6) + 2 * VIDEO_CLIP_USD[5], 9);
+describe('Reaction’s person shots render on ModelArk Mini, falling back to Kling O3 Pro, then Veo 3.1 (ADR 0003)', () => {
+  it('budgets the provider cost for the worst case: both person shots failing on ModelArk and Kling and rendering on Veo', () => {
+    // Two person shots (ModelArk $0.60, Kling $0.56, then Veo $1.60 each) and two product clips ($0.60 each).
+    expect(REACTION.budget.maxProviderUsd).toBeCloseTo(2 * (0.6 + 0.56 + 1.6) + 2 * VIDEO_CLIP_USD[5], 9);
     expect(presetProviderUsd(REACTION, 15_000)).toBeCloseTo(REACTION.budget.maxProviderUsd, 9);
   });
 
   it('declares it as data on the shot kind; product shots keep the default', () => {
-    expect(shotVideo(REACTION, 'reaction')).toEqual({ model: 'kling-o3-pro', fallback: 'veo-3.1' });
+    expect(shotVideo(REACTION, 'reaction')).toEqual({ model: 'modelark-seedance-2.0-mini', fallback: ['kling-o3-pro', 'veo-3.1'] });
+    expect(shotModelChain(shotVideo(REACTION, 'reaction'))).toEqual(['modelark-seedance-2.0-mini', 'kling-o3-pro', 'veo-3.1']);
     expect(shotVideo(REACTION, 'product')).toEqual(DEFAULT_SHOT_VIDEO);
   });
 
@@ -137,6 +155,17 @@ describe.each(Object.values(PRESETS) as PresetDefinition[])('$name: quote == cha
         }
       }
     }
+  });
+});
+
+describe('which person images a model takes as a face (ADR 0003)', () => {
+  it('ModelArk takes only its own account’s output, never a re-hosted face', () => {
+    expect(modelTakesPersonImage('modelark-seedance-2.0-mini', 'rehosted')).toBe(false);
+    expect(modelTakesPersonImage('modelark-seedance-2.0-mini', 'modelark_output')).toBe(true);
+  });
+
+  it('Kling, Veo and EvoLink’s Seedance take a re-hosted face (the fallback carries it)', () => {
+    for (const m of ['kling-o3-pro', 'veo-3.1', 'seedance-2.0'] as const) expect(modelTakesPersonImage(m, 'rehosted')).toBe(true);
   });
 });
 

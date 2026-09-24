@@ -28,10 +28,13 @@
  */
 
 import {
+  modelTakesPersonImage,
   planPresetShots,
   shotFrame,
+  shotModelChain,
   shotVideo,
   type Modesty,
+  type PersonImageSource,
   type PresetDefinition,
   type ShotSubject,
   type ShotVideo,
@@ -39,7 +42,8 @@ import {
   type VideoModelId,
 } from '@agentmedia/schema';
 import type { InteractionGuardrail } from './guardrail-check.js';
-import { shotGuardrails, type Guardrail, type ShotStage, type StageGuardrails } from './guardrails.js';
+import { shotGuardrails, stageGuardrails, type Guardrail, type ShotStage, type StageGuardrails } from './guardrails.js';
+import { personDescriptionLine, type PersonWords } from './person.js';
 import { withReferences, type ReferenceWords } from './references.js';
 import { fillPrompt, productInteractionAction, type PresetPrompts } from './scenes.js';
 import {
@@ -65,6 +69,7 @@ export const VIDEO_MODEL_LABELS: Readonly<Record<VideoModelId, string>> = {
   'seedance-2.0': 'Seedance 2.0',
   'kling-o3-pro': 'Kling O3 Pro',
   'veo-3.1': 'Veo 3.1',
+  'modelark-seedance-2.0-mini': 'Seedance 2.0 Mini (ModelArk)',
 };
 
 /**
@@ -81,13 +86,23 @@ export function shotIds(roles: readonly string[]): string[] {
 }
 
 /**
- * Whether the person's reference image goes with a shot of `kind`: a shot that
- * shows a person, of a Preset that takes a character (Reaction). The one
- * answer api-v2 (the person_reference Guardrail it shows) and the worker (the
- * image it sends, and the Guardrail it adds) both use.
+ * Whether the person's reference image goes with a shot of `kind` rendering on
+ * `model`: a shot that shows a person, of a Preset that takes a character
+ * (Reaction), on a model that takes that image as a face (ADR 0003: ModelArk
+ * only takes its own account's output, `source` 'modelark_output'; a saved
+ * character's re-hosted portrait is 'rehosted', the default). The one answer
+ * api-v2 (the person_reference Guardrail it shows) and the worker (the image
+ * it sends, and the Guardrail it adds) both use. Without `model`: whether the
+ * shot has a person reference at all, on any model.
  */
-export function shotHasPersonReference(preset: Pick<PresetDefinition, 'shotKinds' | 'requiredInputs'>, kind: string): boolean {
-  return preset.shotKinds[kind]?.shows === 'person' && preset.requiredInputs.includes('character');
+export function shotHasPersonReference(
+  preset: Pick<PresetDefinition, 'shotKinds' | 'requiredInputs'>,
+  kind: string,
+  model?: VideoModelId,
+  source: PersonImageSource = 'rehosted',
+): boolean {
+  if (preset.shotKinds[kind]?.shows !== 'person' || !preset.requiredInputs.includes('character')) return false;
+  return model === undefined || modelTakesPersonImage(model, source);
 }
 
 // ── Edits ────────────────────────────────────────────────────────────────────
@@ -156,6 +171,13 @@ export interface ShotPlanContext {
   interaction?: string | null;
   /** The Short's Set, once there is one (#33). Absent: the Preset's own setting words. */
   set?: ShotSetRef | null;
+  /**
+   * The person on screen in words (ADR 0003): the saved character's gender and
+   * description, said on a person shot whose model does not take the face.
+   */
+  person?: PersonWords | null;
+  /** Where the person's reference image came from; absent = 'rehosted' (every saved character today). */
+  personImage?: PersonImageSource;
 }
 
 export interface ShotPlanShot {
@@ -185,8 +207,15 @@ export interface ShotPlanShot {
   /** The fields the user's edits changed, in SHOT_FIELDS order. */
   edited_fields: ShotField[];
   edited: boolean;
-  /** The locked lines per stage, each in prompt order (./guardrails.ts). */
+  /** The locked lines per stage, each in prompt order (./guardrails.ts), for the shot's model (video.model). */
   guardrails: StageGuardrails;
+  /**
+   * The video stage's locked lines on every model of the shot's chain, the
+   * model first (its entry equals guardrails.video). They differ where one
+   * model takes the person's face and another gets the person in words
+   * (ADR 0003): the worker sends each attempt its own model's prompt.
+   */
+  video_guardrails_by_model: Partial<Record<VideoModelId, Guardrail[]>>;
 }
 
 export interface ShotPlan {
@@ -224,6 +253,7 @@ export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, ed
     }
   }
   const set = ctx.set ?? null;
+  const personLine = personDescriptionLine(ctx.person);
   let elapsed = 0;
   const shots = planned.map((s, index): ShotPlanShot => {
     const { kind } = s;
@@ -238,6 +268,16 @@ export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, ed
     const edited_fields = SHOT_FIELDS.filter((f) => fields[f] !== defaults[f]);
     const frameScene = frame ? preset.frameScenes?.[kind] : undefined;
     if (frame && !frameScene) throw new Error(`${preset.name} has no frame scene for ${kind} shots`);
+    const video = shotVideo(preset, kind);
+    const guardrailCtx = (model: VideoModelId) => ({
+      shows,
+      startingFrame: frame !== null,
+      personReference: shotHasPersonReference(preset, kind, model, ctx.personImage),
+      personDescription: personLine,
+      modesty: ctx.modesty,
+    });
+    const video_guardrails_by_model: Partial<Record<VideoModelId, Guardrail[]>> = {};
+    for (const m of shotModelChain(video)) video_guardrails_by_model[m] = stageGuardrails('video', guardrailCtx(m));
     return {
       shot_id: id,
       index,
@@ -248,18 +288,14 @@ export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, ed
       planned_on_screen_ms: s.onScreenMs ?? null,
       starting_frame: frame,
       frame_scene: frameScene ? fillPrompt(frameScene, ctx.vars ?? {}) : null,
-      video: shotVideo(preset, kind),
+      video,
       set_id: set?.set_id ?? null,
       default_fields: defaults,
       fields,
       edited_fields,
       edited: edited_fields.length > 0,
-      guardrails: shotGuardrails({
-        shows,
-        startingFrame: frame !== null,
-        personReference: shotHasPersonReference(preset, kind),
-        modesty: ctx.modesty,
-      }),
+      guardrails: shotGuardrails(guardrailCtx(video.model)),
+      video_guardrails_by_model,
     };
   });
   return { set, shots };
@@ -275,9 +311,11 @@ export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, ed
  * for the image stage of a shot with no starting frame.
  */
 export function shotPrompt(
-  shot: Pick<ShotPlanShot, 'fields' | 'guardrails' | 'frame_scene' | 'shot_id'>,
+  shot: Pick<ShotPlanShot, 'fields' | 'guardrails' | 'frame_scene' | 'shot_id'> & Partial<Pick<ShotPlanShot, 'video_guardrails_by_model'>>,
   stage: ShotStage,
   words: ReferenceWords,
+  /** The video stage on this model of the shot's chain (its own Guardrails); absent = the shot's model. */
+  model?: VideoModelId,
 ): string {
   let content: string;
   if (stage === 'image') {
@@ -286,7 +324,13 @@ export function shotPrompt(
   } else {
     content = composeFields(shot.fields);
   }
-  const lines = (at: Guardrail['at']) => shot.guardrails[stage].filter((g) => g.at === at).map((g) => g.text);
+  let list = shot.guardrails[stage];
+  if (stage === 'video' && model !== undefined) {
+    const own = shot.video_guardrails_by_model?.[model];
+    if (!own) throw new Error(`${shot.shot_id} does not render on ${model}`);
+    list = own;
+  }
+  const lines = (at: Guardrail['at']) => list.filter((g) => g.at === at).map((g) => g.text);
   return withReferences([...lines('before_scene'), content, ...lines('after_scene')].join(' '), words);
 }
 

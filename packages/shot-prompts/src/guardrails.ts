@@ -20,8 +20,13 @@
  *           still says it.
  *   video — the clip, every shot.
  * Both stages carry the product (and character) reference, the Modesty
- * Default, nobody on a product shot, and no text. (#27's realism rules will be
- * a both-stage Guardrail on person shots.)
+ * Default, nobody on a product shot, and no text. The realism rules (#27,
+ * ADR 0003, #29: the look the owner accepted in tests M1b, M2 and M3) are a
+ * both-stage Guardrail on every person and hands shot, never a product shot.
+ *
+ * The person, both stages: pinned to their reference image (person_reference)
+ * when the shot's model takes the face, else described in words
+ * (person_description, ./person.ts) — ModelArk refuses a re-hosted face.
  *
  * Where a line goes:
  *   before_scene — the references, so "the product" and "the person" in the
@@ -42,11 +47,13 @@ export type ShotStage = 'image' | 'video';
 
 export type GuardrailId =
   | 'person_reference'
+  | 'person_description'
   | 'product_reference'
   | 'start_frame'
   | 'no_speaking'
   | 'hands_only'
   | 'simple_physics'
+  | 'realism'
   | 'modesty'
   | 'hijab'
   | 'no_people'
@@ -80,6 +87,14 @@ export const HANDS_ONLY_FRAME = 'Only the hands and forearms are in frame: no fa
 export const SIMPLE_PHYSICS =
   'The hands and the product stay physically simple: one continuous action, the product already in the state it is used in, no parts appearing, vanishing or coming apart. The camera and the body may move freely.';
 
+/**
+ * Every hands and person shot, both stages (ADR 0003): the raw phone look the
+ * owner accepted. Cinematic light makes Seedance skin waxy, so it is excluded
+ * outright. Never on a product shot, which keeps its commercial look.
+ */
+export const REALISM =
+  'Raw unedited iPhone video/photo look, not a commercial, not cinematic; flat soft everyday light (no studio, ring light, dramatic or warm glow, no glare); sharp background, no bokeh; slight handheld motion; real matte skin with visible pores and small natural imperfections, no airbrushing, no waxy or glossy look, no beauty filter.';
+
 /** Every product shot: the product alone. */
 export const NO_PEOPLE = 'No people, no hands.';
 
@@ -101,8 +116,13 @@ export interface ShotGuardrailContext {
   shows: ShotSubject;
   /** The shot is animated from a generated starting frame (#18), not the product photo. */
   startingFrame: boolean;
-  /** The person's reference image goes with the shot (shotHasPersonReference). */
+  /** The person's reference image goes with the shot (shotHasPersonReference, for the shot's model). */
   personReference: boolean;
+  /**
+   * The person in words (./person.ts personDescriptionLine), for a person
+   * shot whose reference image does NOT go with it. Ignored when it does.
+   */
+  personDescription?: string | null;
   /** The resolved Modesty Default (#17). */
   modesty: Modesty;
 }
@@ -122,13 +142,17 @@ export function stageGuardrails(stage: ShotStage, ctx: ShotGuardrailContext): Gu
   // References, both stages: the frame is an edit of the product photo; the clip is animated from the frame, else the photo.
   if (person && ctx.personReference) {
     out.push({ id: 'person_reference', label: 'Same character', text: PERSON_REFERENCE, at: 'before_scene' });
+  } else if (person && ctx.personDescription) {
+    out.push({ id: 'person_description', label: 'The character, described', text: ctx.personDescription, at: 'before_scene' });
   }
   out.push(
     video && ctx.startingFrame
       ? { id: 'start_frame', label: 'Starts from the frame, exact product', text: START_FRAME_REFERENCE, at: 'before_scene' }
       : { id: 'product_reference', label: 'Exact product', text: PRODUCT_REFERENCE, at: 'before_scene' },
   );
-  // The rules. Speech and motion are the video stage's; a still says "only hands" its own way.
+  // The rules. The look first (both stages), then speech and motion (the video
+  // stage's); a still says "only hands" its own way.
+  if (person || hands) out.push({ id: 'realism', label: 'Real phone look', text: REALISM, at: 'after_scene' });
   if (person && video) out.push({ id: 'no_speaking', label: 'Nobody speaks', text: NO_SPEAKING_PERSON, at: 'after_scene' });
   if (hands) {
     out.push(

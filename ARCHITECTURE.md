@@ -273,11 +273,24 @@ it in `providers/index.js`, add it to `PROVIDERS`. No pipeline changes.
 
 The vNext Preset render does the same per shot kind: a Preset's shot kind
 names its video model (and a fallback) as data
-(`shotKinds.reaction.video = { model: 'kling-o3-pro', fallback: 'veo-3.1' }`,
-`packages/schema/src/video-models.ts`; absent = Seedance via EvoLink), and
+(`shotKinds.reaction.video = { model: 'modelark-seedance-2.0-mini', fallback: ['kling-o3-pro', 'veo-3.1'] }`,
+`packages/schema/src/video-models.ts`; absent = Seedance via EvoLink; a
+fallback is one model or a chain tried in order), and
 `services/primitive-worker-vnext/src/video-models/` maps each model id to its
 client and request builder (fal's queue API for Kling O3 Pro and Veo 3.1,
-`FAL_KEY`). A shot is charged its model chain's price whichever model ran, so
+`FAL_KEY`; BytePlus ModelArk for Seedance 2.0 Mini, `ARK_API_KEY`).
+Person shots render on ModelArk Seedance 2.0 Mini, with Kling and Veo as the
+fallback chain — see
+[ADR 0003](docs/adr/0003-person-shots-on-modelark-seedance.md). ModelArk
+refuses a photoreal face unless it is the same account's own Seedream output
+passed on untouched, so a shot on ModelArk never gets a re-hosted character
+image: it sends the product reference alone and describes the person in words
+(the character's gender and saved description, plus the Modesty Default); the
+face goes only to a fallback that takes it (`modelTakesPersonImage`), and each
+attempt gets its own model's prompt. ModelArk's refusals
+(`InputImageSensitiveContentDetected.PrivacyInformation` at submit, a
+moderation verdict on a failed task) map to the one content-policy refusal, so
+the fallback runs. A shot is charged its model chain's price whichever model ran, so
 the quote is the charge with or without the fallback; its provider cost is
 budgeted worst case (the failed primary attempt plus the fallback). What a
 failure allows — a Temporal retry, the fallback — is one map,
@@ -299,9 +312,12 @@ package — never published, unlike `@agentmedia/schema`, because the prompt
 craft is server-side — shared by api-v2 (which composes the **Shot Plan** for
 `POST /v1/skills/{slug}/shot-plan` and checks a quote's or run's
 `shot_edits`) and the worker (which re-checks the edits and always adds its
-own Guardrails). Fields and Guardrails name images with provider-neutral
-tokens; each video model adapter puts in its own reference syntax (EvoLink
-`@image1` / `@image2`, fal "the first / second reference image"). The prompt
+own Guardrails). Every hands and person stage also carries the realism
+Guardrail (a raw phone look, flat everyday light, a sharp background, matte
+skin with pores, no beauty filter; ADR 0003), never a product shot. Fields and
+Guardrails name images with provider-neutral tokens; each video model adapter
+puts in its own reference syntax (EvoLink `@image1` / `@image2`, fal "the
+first / second reference image", ModelArk "image 1" / "image 2"). The prompt
 as sent is stored on its clip row and on the Short (`final_output.shots`).
 
 Images go through `gpt-image-2` (`OPENAI_API_KEY`) and prompt craft through

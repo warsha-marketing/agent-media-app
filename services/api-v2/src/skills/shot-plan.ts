@@ -28,7 +28,7 @@
  */
 
 import { z } from 'zod';
-import type { Modesty, PresetDefinition } from '@agentmedia/schema';
+import { shotFallbacks, type Modesty, type PersonGender, type PresetDefinition } from '@agentmedia/schema';
 import {
   PEOPLE_FIELDS,
   SHOT_ENERGIES,
@@ -104,6 +104,11 @@ export function composeRenderShotPlan(
         modesty: renderModesty(preset, presetInputs),
         vars: prompts.promptVars ? prompts.promptVars(presetInputs.run) : {},
         interaction: draft.product_interaction ?? null,
+        // The person in words, as the worker says it on a model that does not take the face (ADR 0003).
+        person: {
+          gender: (presetInputs.run.character_gender as PersonGender | undefined) ?? null,
+          description: (presetInputs.run.character_description as string | null | undefined) ?? null,
+        },
       },
       (edits ?? null) as Record<string, unknown> | null,
     );
@@ -137,7 +142,9 @@ export function shotView(shot: ShotPlanShot) {
     on_screen_ms: shot.on_screen_ms,
     starting_frame: shot.starting_frame,
     model: { id: shot.video.model, name: VIDEO_MODEL_LABELS[shot.video.model] },
-    fallback: shot.video.fallback ? { id: shot.video.fallback, name: VIDEO_MODEL_LABELS[shot.video.fallback] } : null,
+    // The first fallback (null for none), and the whole chain after the model, in the order tried (ADR 0003).
+    fallback: shotFallbacks(shot.video).map((id) => ({ id, name: VIDEO_MODEL_LABELS[id] }))[0] ?? null,
+    fallbacks: shotFallbacks(shot.video).map((id) => ({ id, name: VIDEO_MODEL_LABELS[id] })),
     set_id: shot.set_id,
     fields: shot.fields,
     default_fields: shot.default_fields,

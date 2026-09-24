@@ -120,6 +120,17 @@ describe('parseShotPlan', () => {
     assert.equal(lengthLabel(r.onScreenMs), '4.5 s');
     assert.equal(modelLine(r), 'Kling O3 Pro → Veo 3.1');
     assert.equal(modelLine(p), 'Seedance 2.0');
+    // A chain of fallbacks (ADR 0003) is shown in the order tried.
+    const chained = parseShotPlan({
+      ...PLAN_BODY,
+      shots: [{
+        ...PLAN_BODY.shots[0],
+        model: { id: 'modelark-seedance-2.0-mini', name: 'Seedance 2.0 Mini (ModelArk)' },
+        fallback: { id: 'kling-o3-pro', name: 'Kling O3 Pro' },
+        fallbacks: [{ id: 'kling-o3-pro', name: 'Kling O3 Pro' }, { id: 'veo-3.1', name: 'Veo 3.1' }],
+      }],
+    })!;
+    assert.equal(modelLine(chained.shots[0]), 'Seedance 2.0 Mini (ModelArk) → Kling O3 Pro → Veo 3.1');
     assert.equal(r.fields.scene, 'The person holds the product and smiles.');
     assert.equal(r.fields.energy, 'natural');
     assert.deepEqual(r.guardrails.image, []);

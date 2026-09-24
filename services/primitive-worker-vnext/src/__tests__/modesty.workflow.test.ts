@@ -21,6 +21,7 @@ import {
   NO_SPEAKING_PERSON,
   PRODUCT_REFERENCE,
   SIMPLE_PHYSICS,
+  REALISM,
   composeShotPlan,
   shotPrompt,
   REFERENCE_TOKENS,
@@ -111,8 +112,8 @@ describe('the Modesty Default in every people and hands prompt', () => {
     const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => c.shot_kind)).toEqual(['person', 'hands', 'product']);
     const byKind = Object.fromEntries(clips.map((c) => [c.shot_kind, c.prompt]));
-    expect(byKind.person).toBe(prompt(PEOPLE.shots.person.scene, NO_SPEAKING_PERSON, SIMPLE_PHYSICS, MODESTY_PROMPTS.person.covered));
-    expect(byKind.hands).toBe(prompt(PEOPLE.shots.hands.scene, HANDS_ONLY, SIMPLE_PHYSICS, MODESTY_PROMPTS.hands.covered));
+    expect(byKind.person).toBe(prompt(PEOPLE.shots.person.scene, REALISM, NO_SPEAKING_PERSON, SIMPLE_PHYSICS, MODESTY_PROMPTS.person.covered));
+    expect(byKind.hands).toBe(prompt(PEOPLE.shots.hands.scene, REALISM, HANDS_ONLY, SIMPLE_PHYSICS, MODESTY_PROMPTS.hands.covered));
     expect(byKind.product).toBe(prompt(PEOPLE.shots.product.scene, NO_PEOPLE));
   });
 
@@ -122,9 +123,9 @@ describe('the Modesty Default in every people and hands prompt', () => {
 
     const byKind = Object.fromEntries((fakes.callsTo('presetClip') as PresetClipInput[]).map((c) => [c.shot_kind, c.prompt]));
     expect(byKind.person).toBe(
-      prompt(PEOPLE.shots.person.scene, NO_SPEAKING_PERSON, SIMPLE_PHYSICS, MODESTY_PROMPTS.person.sleeved, MODESTY_PROMPTS.hijab),
+      prompt(PEOPLE.shots.person.scene, REALISM, NO_SPEAKING_PERSON, SIMPLE_PHYSICS, MODESTY_PROMPTS.person.sleeved, MODESTY_PROMPTS.hijab),
     );
-    expect(byKind.hands).toBe(prompt(PEOPLE.shots.hands.scene, HANDS_ONLY, SIMPLE_PHYSICS, MODESTY_PROMPTS.hands.sleeved));
+    expect(byKind.hands).toBe(prompt(PEOPLE.shots.hands.scene, REALISM, HANDS_ONLY, SIMPLE_PHYSICS, MODESTY_PROMPTS.hands.sleeved));
     expect(byKind.product).toBe(prompt(PEOPLE.shots.product.scene, NO_PEOPLE));
   });
 
@@ -140,7 +141,7 @@ describe('the Modesty Default in every people and hands prompt', () => {
     await harness.execute('renderTestPresetWorkflow', [renderInput(12_000, undefined, handsOnly)], fakes);
     const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => c.prompt)).toEqual([
-      prompt(PEOPLE.shots.hands.scene, HANDS_ONLY, SIMPLE_PHYSICS, MODESTY_PROMPTS.hands.covered),
+      prompt(PEOPLE.shots.hands.scene, REALISM, HANDS_ONLY, SIMPLE_PHYSICS, MODESTY_PROMPTS.hands.covered),
       prompt(PEOPLE.shots.product.scene, NO_PEOPLE),
     ]);
   });

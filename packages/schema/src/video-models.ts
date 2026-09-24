@@ -16,6 +16,13 @@
  * and the owner accepted both. So person shots move to Kling O3 Pro with Veo 3.1
  * as the fallback, and product and hands shots stay on Seedance.
  *
+ * ADR 0003 (#29): person shots move again, to Seedance 2.0 Mini on BytePlus
+ * ModelArk (the most real-looking result, with the realism Guardrails), with
+ * Kling O3 Pro and then Veo 3.1 as the fallback chain. ModelArk refuses a
+ * photoreal face as an input image unless it is the same account's own
+ * Seedream output passed on untouched (modelTakesPersonImage), so a shot on
+ * ModelArk describes the person in words instead of sending a re-hosted face.
+ *
  * ── Pricing: quote == charge across mixed models ────────────────────────────
  * Credits stay duration-based and model-independent (ARCHITECTURE.md, "Credits
  * & spend safety"): every model charges the 5/10 s tier of VIDEO_CLIP_CREDITS
@@ -34,6 +41,18 @@
  * (checked 2026-09-24 on fal.ai's model pages):
  *   kling-o3-pro  fal-ai/kling-video/o3/pro/reference-to-video   $0.112/s
  *   veo-3.1       fal-ai/veo3.1/reference-to-video (720p)        $0.20/s, renders 8 s only
+ *   modelark-seedance-2.0-mini  dreamina-seedance-2-0-mini on ModelArk: a
+ *                 CONSERVATIVE PLACEHOLDER of $0.60 per 5 s ($0.12/s). ModelArk
+ *                 lists Seedance 2.0 Mini at ~$0.0014 per 1K tokens (video
+ *                 without input video, a "Discount" price on 2026-09-24), and
+ *                 bills only successful tasks (no fee on a moderation failure).
+ *                 If a clip costs (width × height × fps × seconds) / 1024
+ *                 tokens, as ModelArk's earlier Seedance docs state, a 720×1280
+ *                 24 fps 5 s clip is 108,000 tokens ≈ $0.15 — but that formula
+ *                 is not confirmed for 2.0 Mini and the discount may end, so the
+ *                 placeholder stays until a real invoice confirms it. It is our
+ *                 cost estimate only: the credits are the tier, so the quote is
+ *                 the charge whatever this number is.
  * A Veo fallback shot (8 s × $0.20 = $1.60) is charged the 5 s tier, 140 credits
  * (~$2.06 of revenue): a thinner margin, accepted because it only runs when
  * Kling refused or failed.
@@ -41,7 +60,7 @@
 
 import { VIDEO_CLIP_CREDITS, VIDEO_CLIP_USD, type VideoClipSeconds } from './video-pricing.js';
 
-export const VIDEO_MODEL_IDS = ['seedance-2.0', 'kling-o3-pro', 'veo-3.1'] as const;
+export const VIDEO_MODEL_IDS = ['seedance-2.0', 'kling-o3-pro', 'veo-3.1', 'modelark-seedance-2.0-mini'] as const;
 export type VideoModelId = (typeof VIDEO_MODEL_IDS)[number];
 
 /** What one planned clip costs on a model. A clip length it has no price for, it cannot render. */
@@ -75,12 +94,57 @@ export const VIDEO_MODEL_PRICES: Readonly<Record<VideoModelId, VideoModelPrice>>
     usd: { 5: 1.6 },
     renders: { 5: 8 },
   },
+  /**
+   * Seedance 2.0 Mini on BytePlus ModelArk (ADR 0003), audio off, 720×1280 24 fps.
+   * USD: a CONSERVATIVE PLACEHOLDER, $0.12/s (see the header), not a confirmed price.
+   */
+  'modelark-seedance-2.0-mini': {
+    credits: { 5: VIDEO_CLIP_CREDITS[5], 10: VIDEO_CLIP_CREDITS[10] },
+    usd: { 5: 0.6, 10: 1.2 },
+  },
 };
 
-/** The video model a shot kind renders on, and the one it falls back to when that one refuses or fails. */
+/**
+ * Where a person's reference image came from (ADR 0003):
+ *   rehosted        — anything we host ourselves (a saved character's portrait
+ *                     or sheet, re-hosted on R2 by api-v2): every character today;
+ *   modelark_output — the same ModelArk account's own Seedream output, its
+ *                     BytePlus URL passed on untouched (the personas of #33).
+ */
+export type PersonImageSource = 'rehosted' | 'modelark_output';
+
+/**
+ * Which person images a model accepts as a face reference. ModelArk refuses a
+ * photoreal face ("input image may contain real person",
+ * InputImageSensitiveContentDetected.PrivacyInformation) unless it is the same
+ * account's own output; fal's Kling and Veo accept a re-hosted face.
+ */
+export const VIDEO_MODEL_PERSON_IMAGES: Readonly<Record<VideoModelId, readonly PersonImageSource[]>> = {
+  'seedance-2.0': ['rehosted', 'modelark_output'],
+  'kling-o3-pro': ['rehosted', 'modelark_output'],
+  'veo-3.1': ['rehosted', 'modelark_output'],
+  'modelark-seedance-2.0-mini': ['modelark_output'],
+};
+
+/**
+ * Whether a shot on `model` sends the person's image from `source` as its
+ * face reference. When it does not, the shot describes the person in words
+ * (@agentmedia/shot-prompts person_description) and sends the product alone —
+ * the face never reaches a model that would refuse it, and a refusal is not
+ * spent to learn that. The face goes to a fallback model that takes it.
+ */
+export function modelTakesPersonImage(model: VideoModelId, source: PersonImageSource): boolean {
+  return VIDEO_MODEL_PERSON_IMAGES[model].includes(source);
+}
+
+/**
+ * The video model a shot kind renders on, and what it falls back to when that
+ * one refuses or fails: one model, or a chain tried in order (ADR 0003:
+ * ModelArk Mini, then Kling O3 Pro, then Veo 3.1).
+ */
 export interface ShotVideo {
   model: VideoModelId;
-  fallback?: VideoModelId;
+  fallback?: VideoModelId | readonly VideoModelId[];
 }
 
 /** A shot kind that names no model renders on Seedance via EvoLink. */
@@ -89,7 +153,16 @@ export const DEFAULT_SHOT_VIDEO: ShotVideo = { model: 'seedance-2.0' };
 /** The models a shot may run on, in the order they are tried. */
 export function shotModelChain(video: ShotVideo | undefined): VideoModelId[] {
   const v = video ?? DEFAULT_SHOT_VIDEO;
-  return v.fallback && v.fallback !== v.model ? [v.model, v.fallback] : [v.model];
+  const chain: VideoModelId[] = [v.model];
+  for (const m of shotFallbacks(v)) if (!chain.includes(m)) chain.push(m);
+  return chain;
+}
+
+/** The fallback models of a shot, in the order they are tried (none: []). */
+export function shotFallbacks(video: ShotVideo | undefined): VideoModelId[] {
+  const f = video?.fallback;
+  const list: readonly VideoModelId[] = f === undefined ? [] : typeof f === 'string' ? [f] : f;
+  return list.filter((m, i) => m !== video!.model && list.indexOf(m) === i);
 }
 
 function priceOf(model: VideoModelId, seconds: VideoClipSeconds, table: 'credits' | 'usd'): number {

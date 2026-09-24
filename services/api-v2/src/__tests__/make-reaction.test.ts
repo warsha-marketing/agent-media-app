@@ -260,6 +260,16 @@ describe('make_reaction — the saved character', () => {
     expect(workflowInput().product_interaction).toBeNull();
   });
 
+  it('hands the render the character in words (gender + saved description) for ModelArk, which never gets the face (ADR 0003)', async () => {
+    seedCharacter({ public_id: 'char_desc', description: '  Gulf woman in her late twenties, warm brown eyes ' });
+    const r = await call(runSkillRoute, OWNER, body(seedDraft(), { character_id: 'char_desc' }));
+    expect(r.status).toBe(202);
+    expect(workflowInput()).toMatchObject({ character_gender: 'female', character_description: 'Gulf woman in her late twenties, warm brown eyes' });
+    const plain = await call(runSkillRoute, OWNER, body(seedDraft()));
+    expect(plain.status).toBe(202);
+    expect(workflowInput()).toMatchObject({ character_gender: 'female', character_description: null });
+  });
+
   it('uses the character sheet when the character has no portrait, and takes the row id too', async () => {
     const legacy = seedCharacter({ public_id: null, portrait_url: null, character_sheet_url: 'https://r2.example.com/chars/omar-sheet.png' });
     const r = await call(runSkillRoute, OWNER, body(seedDraft(), { character_id: legacy.id, character_gender: 'male' }));

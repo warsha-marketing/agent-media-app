@@ -14,6 +14,7 @@
 export * from './guardrail-check.js';
 export * from './modesty.js';
 export * from './references.js';
+export * from './person.js';
 export * from './guardrails.js';
 export * from './scenes.js';
 export * from './shot-fields.js';

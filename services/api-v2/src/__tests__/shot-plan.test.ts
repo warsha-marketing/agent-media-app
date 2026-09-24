@@ -138,6 +138,7 @@ function seedCharacter(over: Partial<Row> = {}): Row {
     name: 'Layla',
     portrait_url: PORTRAIT,
     character_sheet_url: SHEET,
+    description: 'Gulf woman in her late twenties, warm brown eyes',
     archived_at: null,
     ...over,
   };
@@ -208,6 +209,7 @@ type ShotView = {
   on_screen_ms: number;
   model: { id: string; name: string };
   fallback: { id: string; name: string } | null;
+  fallbacks: Array<{ id: string; name: string }>;
   set_id: string | null;
   fields: Record<string, string>;
   default_fields: Record<string, string>;
@@ -237,10 +239,16 @@ describe('POST /v1/skills/{slug}/shot-plan', () => {
     );
     expect(shots.map((s) => s.shot_id)).toEqual(['reaction', 'product-cutaway', 'reaction-2', 'product-closer']);
     const [reaction, product] = shots;
-    expect(reaction.model).toEqual({ id: 'kling-o3-pro', name: 'Kling O3 Pro' });
-    expect(reaction.fallback).toEqual({ id: 'veo-3.1', name: 'Veo 3.1' });
+    // ADR 0003: ModelArk Seedance 2.0 Mini, then Kling O3 Pro, then Veo 3.1.
+    expect(reaction.model).toEqual({ id: 'modelark-seedance-2.0-mini', name: 'Seedance 2.0 Mini (ModelArk)' });
+    expect(reaction.fallback).toEqual({ id: 'kling-o3-pro', name: 'Kling O3 Pro' });
+    expect(reaction.fallbacks).toEqual([
+      { id: 'kling-o3-pro', name: 'Kling O3 Pro' },
+      { id: 'veo-3.1', name: 'Veo 3.1' },
+    ]);
     expect(product.model).toEqual({ id: 'seedance-2.0', name: 'Seedance 2.0' });
     expect(product.fallback).toBeNull();
+    expect(product.fallbacks).toEqual([]);
     expect(reaction.fields.scene).toBe(REACTION_PROMPTS.shots.reaction.scene);
     expect(reaction.fields.performance).toBe(REACTION_PROMPTS.shots.reaction.performance);
     expect(reaction.fields.action).toBe(`How the product is used, as a real person uses it: ${PERFUME}.`);
@@ -250,8 +258,10 @@ describe('POST /v1/skills/{slug}/shot-plan', () => {
     expect(reaction.set_id).toBeNull();
     // A Gulf woman: hijab on by default, locked with the rest. No starting frame: no image stage.
     expect(reaction.guardrails.video.map((g) => g.id)).toEqual([
-      'person_reference', 'product_reference', 'no_speaking', 'simple_physics', 'modesty', 'hijab', 'format', 'audio_off',
+      'person_description', 'product_reference', 'realism', 'no_speaking', 'simple_physics', 'modesty', 'hijab', 'format', 'audio_off',
     ]);
+    // ModelArk never gets the re-hosted face: the saved character in words (ADR 0003).
+    expect(reaction.guardrails.video[0].text).toBe('The person is a woman: Gulf woman in her late twenties, warm brown eyes. The same person in every shot.');
     expect(reaction.guardrails.image).toEqual([]);
     expect(reaction.prompt_preview.image).toBeNull();
     expect(reaction.guardrails.video.find((g) => g.id === 'no_speaking')!.text).toBe(NO_SPEAKING_PERSON);
@@ -262,7 +272,8 @@ describe('POST /v1/skills/{slug}/shot-plan', () => {
       expect(s.prompt_preview.video).not.toMatch(/@image|\{\{/);
       expect(s.prompt_preview.video).toContain(s.fields.scene);
     }
-    expect(reaction.prompt_preview.video).toContain('the character’s photo');
+    expect(reaction.prompt_preview.video).not.toContain('the character’s photo');
+    expect(reaction.prompt_preview.video).toContain('Gulf woman in her late twenties');
   });
 
   it('shows the edits it is given, and refuses a bad one as the quote would', async () => {
@@ -294,7 +305,7 @@ describe('POST /v1/skills/{slug}/shot-plan', () => {
     expect(h.fields.environment_interaction).toContain(SETTING_WORDS.kitchen);
     expect(h.guardrails.video.map((g) => g.id)).toContain('hands_only');
     // The starting frame's stage: its own Guardrails, never speech or audio.
-    expect(h.guardrails.image.map((g) => g.id)).toEqual(['product_reference', 'hands_only', 'modesty', 'format']);
+    expect(h.guardrails.image.map((g) => g.id)).toEqual(['product_reference', 'realism', 'hands_only', 'modesty', 'format']);
     expect(h.prompt_preview.image).toContain('the product photo');
     expect(h.prompt_preview.image).not.toMatch(/speaks|audio/);
     expect(p.fields.environment_interaction).toContain(SETTING_WORDS.kitchen);

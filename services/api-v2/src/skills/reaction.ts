@@ -22,6 +22,12 @@
  *
  * #20 adds a short description instead of a saved character: it joins as
  * `character_description`, exactly one of the two.
+ *
+ * ADR 0003 (#29): reaction shots render on ModelArk Seedance 2.0 Mini, which
+ * never gets the re-hosted face; the worker describes the person in words
+ * instead, from the character's gender and its saved description (passed to
+ * the Shot Plan and the workflow as character_description). The face goes to
+ * the Kling / Veo fallbacks.
  */
 
 import { z } from 'zod';
@@ -57,6 +63,7 @@ interface SavedCharacterRow {
   public_id: string | null;
   portrait_url: string | null;
   character_sheet_url: string | null;
+  description: string | null;
 }
 
 /**
@@ -77,7 +84,7 @@ export const resolveReactionInputs: PresetInputResolver = async ({ userId, body,
   const ref = String(body.character_id ?? '').trim();
   const { data, error } = await db
     .from('user_characters')
-    .select('id, public_id, portrait_url, character_sheet_url')
+    .select('id, public_id, portrait_url, character_sheet_url, description')
     .eq('user_id', userId)
     .eq(UUID.test(ref) ? 'id' : 'public_id', ref)
     .is('archived_at', null)
@@ -93,13 +100,20 @@ export const resolveReactionInputs: PresetInputResolver = async ({ userId, body,
     );
   }
 
+  const description = character.description?.trim() || null;
   const run = {
     character_id: character.public_id ?? character.id,
     character_gender: body.character_gender,
+    // The person in words on a model that does not take the face (ADR 0003).
+    character_description: description,
     modesty,
   };
   const quote = { preset_inputs: run };
   if (stage === 'preview') return { run, workflow: {}, quote };
   const hosted = await rehostImage(userId, source);
-  return { run, workflow: { character_image_url: hosted.url, modesty }, quote };
+  return {
+    run,
+    workflow: { character_image_url: hosted.url, character_gender: body.character_gender, character_description: description, modesty },
+    quote,
+  };
 };

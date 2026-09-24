@@ -43,7 +43,7 @@ import { r2UploadVnext } from '../client/r2.js';
 import { DRAFT_AUDIO, probeSeconds, readPrivateObject } from '../lib/media-io.js';
 import { downloadProviderVideo } from '../lib/provider-video.js';
 import { runChargedStep } from './charged-step.js';
-import { modelClipUsd, shotModelChain, shotVideo, type ShotVideo, type VideoModelId } from '@agentmedia/schema';
+import { modelClipUsd, modelTakesPersonImage, shotFrame, shotModelChain, shotVideo, type ShotVideo, type VideoModelId } from '@agentmedia/schema';
 import { presetRender } from '../presets/index.js';
 import { videoModel, type VideoModelClient } from '../video-models/index.js';
 import { hasReferenceTokens } from '@agentmedia/shot-prompts';
@@ -144,7 +144,9 @@ export interface PresetClipInput {
   generate_audio: false;
   /**
    * R2-hosted reference of the person on screen (`@image2` in the prompt), set
-   * only on shots that show a person (Reaction, #19). Never on a product shot.
+   * only on shots that show a person (Reaction, #19), and only for a model
+   * that takes a re-hosted face (ADR 0003: never ModelArk, which gets the
+   * person in words instead). Never on a product shot.
    */
   character_image_url?: string;
   /**
@@ -197,8 +199,11 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
     // The shot's model chain comes from the Preset's definition (server-side),
     // never from the input: the input only says which model of it to run now.
     let video: ShotVideo;
+    let startImageIsFrame = false;
     try {
-      video = shotVideo(presetRender(input.preset), input.shot_kind);
+      const definition = presetRender(input.preset);
+      video = shotVideo(definition, input.shot_kind);
+      startImageIsFrame = shotFrame(definition, input.shot_kind) !== undefined;
     } catch (err) {
       throw ApplicationFailure.nonRetryable((err as Error).message, 'INVALID_INPUT');
     }
@@ -209,6 +214,12 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
     const client = videoModel(model);
 
     const characterImageUrl = input.character_image_url;
+    // A character reference is always re-hosted on R2 (checked below): never
+    // send it to a model that refuses a re-hosted face (ADR 0003). The render
+    // never asks; this refuses a caller that does, before any spend.
+    if (characterImageUrl !== undefined && !modelTakesPersonImage(model, 'rehosted')) {
+      throw ApplicationFailure.nonRetryable(`${model} never gets a re-hosted face: the person is described in words`, 'INVALID_INPUT');
+    }
     // The Shot Prompt in this model's reference syntax: what is sent, and what is recorded.
     const prompt = client.promptFor(input.prompt);
     if (hasReferenceTokens(prompt)) {
@@ -272,6 +283,7 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
               prompt,
               startImageUrl: input.start_image_url,
               ...(characterImageUrl ? { characterImageUrl } : {}),
+              ...(startImageIsFrame ? { startImageIsFrame } : {}),
               seconds: input.duration,
               // ADR 0001: the video model never speaks.
               generateAudio: false,
