@@ -35,6 +35,7 @@ import {
   ModestyError,
   modestyChoiceSchema,
   presetShows,
+  presetTakesInUseReference,
   resolveModesty,
   type Dialect,
   type Modesty,
@@ -45,6 +46,7 @@ import {
 } from '@agentmedia/schema';
 import { RenderRefusal, refuseCaptionsField, type RenderableDraft } from './product-hero-render.js';
 import { shotEditsField } from './shot-plan.js';
+import { useOriginalProductPhotoField } from './in-use-reference.js';
 
 // ── The resolver ─────────────────────────────────────────────────────────────
 
@@ -152,6 +154,8 @@ const renderFields = (preset: Pick<PresetDefinition, 'aspectRatio' | 'shotKinds'
       'Music Bed under the voice, on by default. Set false for a voice-only Short, e.g. when the user will add a sound in TikTok (trending sounds are licensed only inside TikTok, so they can never be baked in). The quote says whether a bed will be mixed.',
     ),
   ...(takesModesty(preset) ? { modesty: modestyField } : {}),
+  // In-use Reference (#31): "use original instead", where hands or a person handle the product.
+  ...(presetTakesInUseReference(preset) ? { use_original_product_photo: useOriginalProductPhotoField } : {}),
   // Shot Plan review (#26): scene text per shot id; checked on the quote and the run (skills/shot-plan.ts).
   shot_edits: shotEditsField,
 });

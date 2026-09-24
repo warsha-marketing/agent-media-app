@@ -96,6 +96,7 @@ import { ReactionCharacterPicker } from '@/components/reaction-character-picker'
 import { HandsOnInputs } from '@/components/hands-on-inputs'; // #18
 import { ShotPlanReview } from '@/components/shot-plan-review'; // #26
 import { ProductProfileFields } from '@/components/product-profile-fields'; // #30
+import { InUseReferenceNote } from '@/components/in-use-reference-note'; // #31
 import { isProfileEdited, profileEdit, profileFieldsOf, type ProductProfile, type ProfileFields } from '@/lib/product-profile-flow';
 import { HANDS_ON_PRESET, NO_HANDS_ON_CHOICE, handsOnInputs, handsOnView, type HandsOnChoice } from '@/lib/hands-on-flow';
 import {
@@ -567,20 +568,22 @@ export default function ProductHeroPage() {
     setShotEdits({});
   }, [planKey]);
   const shotEditsKey = JSON.stringify(shotEdits);
+  // #31: "use original instead" of the In-use Reference; part of the request, so it re-quotes.
+  const [useOriginalPhoto, setUseOriginalPhoto] = useState(false);
   const choice = useMemo<RenderChoice | null>(
     () => {
       if (!draftId || !photoUrl) return null;
       if (isReaction && !presetInputs) return null;
-      return { draftId, photoUrl, music, skill, presetInputs, shotEdits };
+      return { draftId, photoUrl, music, skill, presetInputs, shotEdits, ...(useOriginalPhoto ? { useOriginalPhoto } : {}) };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- presetInputsKey / shotEditsKey stand for presetInputs / shotEdits
-    [draftId, photoUrl, music, skill, isReaction, presetInputsKey, shotEditsKey],
+    [draftId, photoUrl, music, skill, isReaction, presetInputsKey, shotEditsKey, useOriginalPhoto],
   );
 
   // A different Preset, Reaction pick or scene edit is a different request:
   // withdraw the quote on screen and re-quote (the reducer leaves a running
   // render alone); the next Confirm is a new confirmation with a new key.
-  const requestKey = `${skill ?? ''}|${presetInputsKey}|${shotEditsKey}`;
+  const requestKey = `${skill ?? ''}|${presetInputsKey}|${shotEditsKey}|${useOriginalPhoto}`;
   useEffect(() => {
     dispatch({ type: 'invalidate_quote' });
   }, [requestKey]);
@@ -802,6 +805,15 @@ export default function ProductHeroPage() {
             {photoBusy ? 'Uploading and checking…' : 'Upload a product photo (PNG or JPEG)'}
           </button>
         )}
+        {photo ? (
+          <InUseReferenceNote
+            quote={('quote' in render ? render.quote?.inUseReference : null) ?? null}
+            useOriginal={useOriginalPhoto}
+            imageUrl={render.phase === 'succeeded' ? render.inUseReferenceUrl ?? null : null}
+            disabled={renderLocked}
+            onUseOriginal={setUseOriginalPhoto}
+          />
+        ) : null}
         {photoError ? (
           <p role="alert" className="rounded-xl px-3 py-2 text-sm" style={{ border: '1px solid rgba(255,79,79,0.3)', backgroundColor: 'rgba(255,79,79,0.08)', color: '#FCA5A5' }}>
             {photoError.kind === 'moderation_blocked'

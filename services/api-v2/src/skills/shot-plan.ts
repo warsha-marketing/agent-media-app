@@ -90,9 +90,11 @@ function renderModesty(preset: PresetDefinition, presetInputs: PresetInputs): Mo
  */
 export function composeRenderShotPlan(
   preset: PresetDefinition,
-  draft: Pick<RenderableDraft, 'duration_ms' | 'product_interaction'>,
+  draft: Pick<RenderableDraft, 'duration_ms' | 'product_interaction' | 'product_profile'>,
   presetInputs: PresetInputs,
   edits: unknown,
+  /** #31: the render makes an In-use Reference (renderMakesInUseReference). */
+  inUseReference = false,
 ): ShotPlan {
   const prompts = presetPrompts(preset.id);
   const plannable = { ...preset, ...prompts } as ShotPlanPreset;
@@ -108,6 +110,12 @@ export function composeRenderShotPlan(
         person: {
           gender: (presetInputs.run.character_gender as PersonGender | undefined) ?? null,
           description: (presetInputs.run.character_description as string | null | undefined) ?? null,
+        },
+        // #31: the Scale Anchor and the In-use Reference line, as the worker adds them.
+        product: {
+          profile: draft.product_profile ?? null,
+          inUseReference,
+          handGender: (presetInputs.run.hand_gender as PersonGender | undefined) ?? null,
         },
       },
       (edits ?? null) as Record<string, unknown> | null,
@@ -131,8 +139,11 @@ function guardrailView(g: Guardrail, words: ReferenceWords) {
 
 /** One shot as the API shows it: plain words for the reference images, never a provider's syntax. */
 export function shotView(shot: ShotPlanShot) {
-  const video = displayReferences(shot.starting_frame !== null);
-  const image = displayReferences(false); // a starting frame is an edit of the product photo
+  // #31: a hands or person shot of a render that makes an In-use Reference takes it as its product reference.
+  const inUse = shot.guardrails.video.some((g) => g.id === 'in_use_reference');
+  const productWords = inUse ? { start: 'the In-use Reference' } : {};
+  const video = { ...displayReferences(shot.starting_frame !== null), ...(shot.starting_frame === null ? productWords : {}) };
+  const image = { ...displayReferences(false), ...productWords }; // a starting frame is an edit of the product reference
   return {
     shot_id: shot.shot_id,
     number: shot.index + 1,
@@ -141,6 +152,7 @@ export function shotView(shot: ShotPlanShot) {
     clip_seconds: shot.clip_seconds,
     on_screen_ms: shot.on_screen_ms,
     starting_frame: shot.starting_frame,
+    product_reference: inUse ? 'in_use_reference' : 'product_photo',
     model: { id: shot.video.model, name: VIDEO_MODEL_LABELS[shot.video.model] },
     // The first fallback (null for none), and the whole chain after the model, in the order tried (ADR 0003).
     fallback: shotFallbacks(shot.video).map((id) => ({ id, name: VIDEO_MODEL_LABELS[id] }))[0] ?? null,

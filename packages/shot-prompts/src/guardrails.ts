@@ -50,6 +50,8 @@ export type GuardrailId =
   | 'person_description'
   | 'product_reference'
   | 'start_frame'
+  | 'in_use_reference'
+  | 'scale_anchor'
   | 'no_speaking'
   | 'hands_only'
   | 'simple_physics'
@@ -125,6 +127,13 @@ export interface ShotGuardrailContext {
   personDescription?: string | null;
   /** The resolved Modesty Default (#17). */
   modesty: Modesty;
+  /**
+   * #31 (./product-reference.ts): the In-use Reference line, when the render
+   * made one (inUseReferenceLine), and the Scale Anchor line (scaleAnchorLine).
+   * Both go on hands and person shots only, both stages; ignored elsewhere.
+   */
+  inUseReference?: string | null;
+  scaleAnchor?: string | null;
 }
 
 /** One shot's Guardrails per stage, each list in prompt order. `image` is empty for a shot with no starting frame. */
@@ -150,6 +159,13 @@ export function stageGuardrails(stage: ShotStage, ctx: ShotGuardrailContext): Gu
       ? { id: 'start_frame', label: 'Starts from the frame, exact product', text: START_FRAME_REFERENCE, at: 'before_scene' }
       : { id: 'product_reference', label: 'Exact product', text: PRODUCT_REFERENCE, at: 'before_scene' },
   );
+  // #31: the product as it is used, and its real size — where hands or a person handle it.
+  if ((person || hands) && ctx.inUseReference) {
+    out.push({ id: 'in_use_reference', label: 'Product as used', text: ctx.inUseReference, at: 'before_scene' });
+  }
+  if ((person || hands) && ctx.scaleAnchor) {
+    out.push({ id: 'scale_anchor', label: 'Real size', text: ctx.scaleAnchor, at: 'before_scene' });
+  }
   // The rules. The look first (both stages), then speech and motion (the video
   // stage's); a still says "only hands" its own way.
   if (person || hands) out.push({ id: 'realism', label: 'Real phone look', text: REALISM, at: 'after_scene' });

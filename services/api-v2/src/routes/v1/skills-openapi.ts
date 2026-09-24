@@ -96,7 +96,7 @@ export function skillRouteOpenApi(): { paths: Record<string, unknown>; schemas: 
       security: [{ bearerAuth: [] }],
       parameters: [SLUG],
       responses: {
-        '200': { description: 'The quote: credits, available (after reservations), committed, sufficient; for a Preset render also music_bed (on, track_id, mood, reason off|no_tracks, detail) and, for a Preset with its own inputs, preset_inputs (what renders: the resolved modesty; make_hands_on: hand_gender, setting and source user|product_details for each; make_reaction: character_id, character_gender)' },
+        '200': { description: 'The quote: credits, available (after reservations), committed, sufficient; for a Preset render also music_bed (on, track_id, mood, reason off|no_tracks, detail), in_use_reference (null, or when the Product Profile says the product is used in another state than the photo on a Preset with hands or a person: made, use_original_product_photo, used_state, removed_parts, credits — set use_original_product_photo: true to render from the original photo and drop the step) and, for a Preset with its own inputs, preset_inputs (what renders: the resolved modesty; make_hands_on: hand_gender, setting and source user|product_details for each; make_reaction: character_id, character_gender)' },
         '400': skillError(sentences('`invalid_input`: the body fails the skill schema', ...refusalLines(400))),
         '404': skillError(sentences('`unknown_skill`', ...refusalLines(404))),
         '409': skillError(sentences(...refusalLines(409))),

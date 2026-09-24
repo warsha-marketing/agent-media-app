@@ -27,7 +27,7 @@
 
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { CharacterAlignment, PresetDefinition } from '@agentmedia/schema';
+import type { CharacterAlignment, PresetDefinition, ProductProfile } from '@agentmedia/schema';
 
 /** Where the run holding a draft's claim is. */
 export type RenderRunStatus = 'submitted' | 'running' | 'succeeded' | 'failed' | 'canceled';
@@ -51,6 +51,11 @@ export interface RenderableDraft {
   product_details?: string | null;
   /** Product Interaction (#25): how a real person uses the product; every Preset render passes it to the worker. */
   product_interaction?: string | null;
+  /**
+   * Product Profile (#30): the render reads its size (the Scale Anchor) and
+   * its used state and parts (the In-use Reference, #31). Null on drafts from before it.
+   */
+  product_profile?: ProductProfile | null;
   /** That run's status (null when there is no claim, or its run is missing). */
   render_run_status: RenderRunStatus | null;
 }
@@ -218,7 +223,7 @@ export function supabaseProductHeroDraftStore(supabase: SupabaseClient): Product
       // Service-role client bypasses RLS, so ownership is enforced here.
       const { data, error } = await supabase
         .from(TABLE)
-        .select('id, user_id, dialect, voice_catalog_id, audio_key, duration_ms, alignment, render_run_id, brief, product_details, product_interaction')
+        .select('id, user_id, dialect, voice_catalog_id, audio_key, duration_ms, alignment, render_run_id, brief, product_details, product_interaction, product_profile')
         .eq('id', id)
         .eq('user_id', userId)
         .maybeSingle();

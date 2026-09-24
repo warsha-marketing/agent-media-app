@@ -50,6 +50,8 @@ export interface Quote {
    * #18). Each Preset's flow reads its own (lib/hands-on-flow.ts).
    */
   presetInputs?: Record<string, unknown>;
+  /** #31: the In-use Reference the render makes (or could make), when the quote says so. */
+  inUseReference?: InUseReferenceQuote;
 }
 
 /** The quote's Music Bed (#9): a bed will play, or why the Short is voice only. */
@@ -66,6 +68,7 @@ export function parseQuote(body: unknown): Quote | null {
   if (typeof b.credits !== 'number' || !Number.isFinite(b.credits)) return null;
   const available = typeof b.available === 'number' ? b.available : null;
   const musicBed = parseMusicBed(b.music_bed);
+  const inUseReference = parseInUseReference(b.in_use_reference);
   const presetInputs =
     b.preset_inputs && typeof b.preset_inputs === 'object' && !Array.isArray(b.preset_inputs)
       ? (b.preset_inputs as Record<string, unknown>)
@@ -76,7 +79,52 @@ export function parseQuote(body: unknown): Quote | null {
     sufficient: b.sufficient !== false,
     ...(musicBed ? { musicBed } : {}),
     ...(presetInputs ? { presetInputs } : {}),
+    ...(inUseReference ? { inUseReference } : {}),
   };
+}
+
+// ── In-use Reference (#31) ──────────────────────────────────────────────────
+//
+// What the quote says about it (`in_use_reference`), the line next to the
+// product photo, and the image the render made (final_output.in_use_reference).
+// The server decides whether one is made and prices it; the page only offers
+// "use original instead" (use_original_product_photo), part of the request.
+
+/** The quote's In-use Reference: null when the render could never make one. */
+export interface InUseReferenceQuote {
+  made: boolean;
+  usedState: string;
+  removedParts: string[];
+  credits: number;
+}
+
+/** The quote's `in_use_reference`, or null. */
+export function parseInUseReference(v: unknown): InUseReferenceQuote | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.made !== 'boolean' || typeof o.used_state !== 'string') return null;
+  return {
+    made: o.made,
+    usedState: o.used_state,
+    removedParts: Array.isArray(o.removed_parts) ? o.removed_parts.filter((p): p is string => typeof p === 'string') : [],
+    credits: typeof o.credits === 'number' ? o.credits : 0,
+  };
+}
+
+/** The line next to the product photo. */
+export function inUseReferenceLine(q: InUseReferenceQuote): string {
+  const removed = q.removedParts.length ? ` (${q.removedParts.join(', ')} removed)` : '';
+  return q.made
+    ? `Hands and person shots will show your product as it is used: ${q.usedState}${removed}. We make this image from your photo at render${q.credits ? ` (${q.credits} credits, in the quote)` : ''}.`
+    : 'Hands and person shots will use your original photo.';
+}
+
+/** The In-use Reference a finished render made, from its final_output; null when none. */
+export function inUseReferenceUrl(finalOutput: Record<string, unknown> | null | undefined): string | null {
+  const r = finalOutput?.in_use_reference;
+  if (!r || typeof r !== 'object') return null;
+  const url = (r as { image_url?: unknown }).image_url;
+  return typeof url === 'string' && /^https:\/\//.test(url) ? url : null;
 }
 
 // ── Music Bed (#9) ──────────────────────────────────────────────────────────
@@ -131,6 +179,8 @@ export interface RenderChoice {
    * re-quotes and makes the next Confirm a new confirmation.
    */
   shotEdits?: Readonly<Record<string, Readonly<Record<string, string>>>> | null;
+  /** #31: "use original instead" of the In-use Reference. Part of the request: it re-quotes. */
+  useOriginalPhoto?: boolean;
 }
 
 /** The skill a choice is quoted and run with. */
@@ -149,6 +199,7 @@ export function renderBody(choice: RenderChoice) {
     product_image_url: choice.photoUrl,
     music: choice.music,
     ...(choice.presetInputs ?? {}),
+    ...(choice.useOriginalPhoto ? { use_original_product_photo: true } : {}),
     ...(choice.shotEdits && Object.keys(choice.shotEdits).length
       ? { shot_edits: Object.fromEntries(Object.entries(choice.shotEdits).map(([id, edit]) => [id, { ...edit }])) }
       : {}),
@@ -276,7 +327,7 @@ export function refundOf(run: SkillRunBody): RefundView {
 
 export type RunView =
   | { kind: 'rendering'; stage: RenderStage; shot: number | null; label: string; frame?: boolean }
-  | { kind: 'succeeded'; videoUrl: string; durationMs: number | null; shots?: unknown[] }
+  | { kind: 'succeeded'; videoUrl: string; durationMs: number | null; shots?: unknown[]; inUseReferenceUrl?: string }
   | { kind: 'failed'; canceled: boolean; moderation: boolean; code: string | null; message: string | null; refund: RefundView };
 
 /** The ordered checklist the progress panel draws. */
@@ -305,6 +356,7 @@ const STEP_STAGE: Readonly<Record<string, RenderStage>> = {
   mux: 'cut',
   music_bed: 'cut',
   done: 'cut',
+  in_use_reference: 'visuals', // #31: made before any frame or shot
 };
 
 /**
@@ -333,6 +385,8 @@ export function viewOfRun(run: SkillRunBody): RunView {
         durationMs: typeof out.duration_ms === 'number' ? out.duration_ms : null,
         // #26: what ran, each shot's final prompt (absent on a Short from before it).
         ...(Array.isArray(out.shots) ? { shots: out.shots as unknown[] } : {}),
+        // #31: the In-use Reference the hands and person shots used.
+        ...(inUseReferenceUrl(out) ? { inUseReferenceUrl: inUseReferenceUrl(out)! } : {}),
       };
     }
     // Succeeded without a Short is not a result the user can use.
@@ -349,7 +403,9 @@ export function viewOfRun(run: SkillRunBody): RunView {
       ? frame
         ? `Making the starting frame for shot ${shot}`
         : `Generating shot ${shot}`
-      : RENDER_STAGES.find((s) => s.stage === stage)!.label;
+      : run.current_step === 'in_use_reference'
+        ? 'Making the In-use Reference of your product'
+        : RENDER_STAGES.find((s) => s.stage === stage)!.label;
   return { kind: 'rendering', stage, shot, label, ...(frame ? { frame } : {}) };
 }
 
@@ -372,7 +428,7 @@ export type RenderPhase =
   /** A refusal the user must act on (credits, moderation, re-voice, …). */
   | { phase: 'refused'; outcome: ApiOutcome; quote: Quote | null }
   | { phase: 'rendering'; runId: string; view: Extract<RunView, { kind: 'rendering' }> | null; quote: Quote | null }
-  | { phase: 'succeeded'; runId: string; videoUrl: string; durationMs: number | null; quote: Quote | null; shots?: unknown[] }
+  | { phase: 'succeeded'; runId: string; videoUrl: string; durationMs: number | null; quote: Quote | null; shots?: unknown[]; inUseReferenceUrl?: string }
   | { phase: 'failed'; runId: string; canceled: boolean; moderation: boolean; message: string | null; refund: RefundView; quote: Quote | null };
 
 export interface RenderState {
@@ -407,6 +463,7 @@ export function sameChoice(a: RenderChoice, b: RenderChoice): boolean {
     a.music === b.music &&
     skillOf(a) === skillOf(b) &&
     JSON.stringify(a.presetInputs ?? {}) === JSON.stringify(b.presetInputs ?? {}) &&
+    !!a.useOriginalPhoto === !!b.useOriginalPhoto &&
     sameEdits(a.shotEdits, b.shotEdits)
   );
 }
@@ -484,6 +541,7 @@ export function renderReducer(state: RenderState, event: RenderEvent): RenderSta
             durationMs: view.durationMs,
             quote: r.quote,
             ...(view.shots ? { shots: view.shots } : {}),
+            ...(view.inUseReferenceUrl ? { inUseReferenceUrl: view.inUseReferenceUrl } : {}),
           },
         };
       }
