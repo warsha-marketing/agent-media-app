@@ -21,7 +21,7 @@
  * anywhere else.
  */
 
-import { DEFAULT_SHOT_VIDEO, shotClipCredits, shotClipUsd, type ShotVideo } from './video-models.js';
+import { normalizedShotVideo, shotClipCredits, shotClipUsd, type ShotVideo, type VideoModelId } from './video-models.js';
 import type { MusicBedTrack } from './music-bed/types.js';
 import type { ModestyDefault, ShotSubject } from './modesty.js';
 import { STARTING_FRAME_CREDITS, STARTING_FRAME_USD, type StartingFrame } from './starting-frames.js';
@@ -264,8 +264,8 @@ export function shotFrame(preset: Pick<PresetDefinition, 'shotKinds'>, kind: str
 }
 
 /** The video model (and fallback) a planned shot of `kind` renders on (#25); Seedance when the kind names none. */
-export function shotVideo(preset: Pick<PresetDefinition, 'shotKinds'>, kind: string): ShotVideo {
-  return (preset.shotKinds as Record<string, { video?: ShotVideo }>)[kind]?.video ?? DEFAULT_SHOT_VIDEO;
+export function shotVideo(preset: Pick<PresetDefinition, 'shotKinds'>, kind: string): ShotVideo & { fallback: VideoModelId[] } {
+  return normalizedShotVideo((preset.shotKinds as Record<string, { video?: ShotVideo }>)[kind]?.video);
 }
 
 /**

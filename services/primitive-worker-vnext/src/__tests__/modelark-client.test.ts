@@ -8,7 +8,7 @@
 // reference-to-video and image-to-video (a first frame).
 
 import { describe, it, expect } from 'vitest';
-import { modelArkVideoBody, runModelArkVideo, type ModelArkDeps } from '../client/byteplus.js';
+import { modelArkVideoBody, runModelArkVideo, type ModelArkDeps } from '../client/modelark.js';
 import { CONTENT_POLICY_REFUSED, failurePolicy } from '../failure-policy.js';
 
 const BASE = 'https://ark.example.test/api/v3';

@@ -53,8 +53,12 @@ export const FAILURE_POLICY: Readonly<Record<string, FailurePolicy>> = {
   BUDGET_CAP_DAY: FINAL,
   INSUFFICIENT_CREDITS: FINAL,
   REFERENCE_URL_NOT_ALLOWED: FINAL,
-  // A missing provider key (FAL_KEY, EVOLINK_API_KEY): fail fast; a fallback
-  // on the same deployment would fail the same way.
+  // A missing provider key (FAL_KEY, EVOLINK_API_KEY, ARK_API_KEY): FINAL, on
+  // purpose. Another model may well be configured (a missing ARK_API_KEY would
+  // leave Kling and Veo on fal working), but a person shot silently degrading
+  // from ModelArk to Kling on every render hides a deployment fault and ships
+  // the look the owner rejected (ADR 0003): the render fails loudly instead,
+  // naming the missing key, and refunds what it charged.
   PROVIDER_UNCONFIGURED: FINAL,
   DRAFT_AUDIO_MISSING: FINAL,
   DRAFT_STORAGE_UNCONFIGURED: FINAL,
@@ -71,7 +75,7 @@ export const FAILURE_POLICY: Readonly<Record<string, FailurePolicy>> = {
   FAL_TIMEOUT: TRY_FALLBACK,
   FAL_UNAVAILABLE: TRY_FALLBACK,
   FAL_BAD_RESPONSE: TRY_FALLBACK,
-  // BytePlus ModelArk (#29, client/byteplus.ts runModelArkVideo): like fal, a
+  // BytePlus ModelArk (#29, client/modelark.ts runModelArkVideo): like fal, a
   // submitted task is never resubmitted; the shot's fallback is its retry.
   ...byStatus('MODELARK'),
   MODELARK_FAILED: TRY_FALLBACK,

@@ -102,9 +102,17 @@ import { makeChildRunId } from './child-run-id.js';
 import { failureInfo } from './failure-info.js';
 import { CONTENT_POLICY_REFUSED, NON_RETRYABLE_TYPES, failurePolicy } from '../failure-policy.js';
 import type { PresetRenderDefinition } from '../presets/index.js';
-import { PRESET_PLAN_IN_ACTIVITY, PresetPlanRefusal, planPresetRender, type PresetPlan, type PresetPlanInput } from './preset-plan.js';
+import {
+  PRESET_PLAN_IN_ACTIVITY,
+  PresetPlanRefusal,
+  planPresetRender,
+  type ClipAttempt,
+  type PresetPlan,
+  type PresetPlanInput,
+} from './preset-plan.js';
 import {
   VIDEO_MODEL_LABELS,
+  personWordsOf,
   shotHasPersonReference,
   type ShotEdit,
   type ShotField,
@@ -331,7 +339,8 @@ export async function renderPreset(
       modesty,
       vars,
       interaction,
-      person: { gender: input.character_gender ?? null, description: input.character_description ?? null },
+      // The person in words, read as api-v2's Shot Plan reads it (ADR 0003).
+      person: personWordsOf(input),
       product: { profile, inUseReference: inUseUrl !== null, handGender: input.hand_gender ?? null },
       playbook: input.playbook ?? null,
       shot_edits: input.shot_edits ?? null,
@@ -348,7 +357,7 @@ export async function renderPreset(
         throw err;
       }
     }
-    const { shots, playbook, frame_prompts: framePrompts, clip_prompts: clipPrompts } = plan;
+    const { shots, playbook, frame_prompts: framePrompts, clip_attempts: clipAttempts } = plan;
     const rendered: RenderedShot[] = [];
 
     // ── 1. The draft's audio, first ─────────────────────────────────────────
@@ -393,16 +402,18 @@ export async function renderPreset(
     const clipUrls: string[] = [];
     for (let i = 0; i < shots.length; i += 1) {
       await composedSkillState({ skill_run_id: skillRunId, current_step: `clip_${i + 1}` });
-      // The models this shot may render on (#25): its kind's model, then its
-      // fallback — as the Preset declares them, never chosen by vendor here.
-      const chain = shotModelChain(shots[i].video);
+      // The models this shot may render on (#25), each with its own prompt: its
+      // kind's model, then its fallbacks — as the Preset declares them, never
+      // chosen by vendor here.
+      const attempts = clipAttempts[i];
       let clip: Awaited<ReturnType<typeof presetClip>> | undefined;
       // A content refusal on an earlier model of the chain: if the fallback
       // then fails for another reason, the refusal is what the run reports.
       let refused: string | undefined;
-      let ranOn: string | undefined;
-      for (let a = 0; a < chain.length && !clip; a += 1) {
-        const childId = mint(a === 0 ? `clip_${i}` : `clip_${i}_${chain[a]}`);
+      let ranOn: ClipAttempt = attempts[0];
+      for (let a = 0; a < attempts.length && !clip; a += 1) {
+        const { model, prompt } = attempts[a];
+        const childId = mint(a === 0 ? `clip_${i}` : `clip_${i}_${model}`);
         try {
           clip = await presetClip({
             primitive_run_id: childId,
@@ -415,20 +426,20 @@ export async function renderPreset(
             shot_count: shots.length,
             preset: preset.id,
             shot_kind: shots[i].kind,
-            model: chain[a],
-            prompt: clipPrompts[i][chain[a]]!,
+            model,
+            prompt,
             generate_audio: false,
             // The person's reference only where the shot shows that person (#19)
             // and this model takes a re-hosted face (ADR 0003: never ModelArk),
             // decided as the Guardrails' person_reference line is (one helper).
-            ...(shotHasPersonReference(preset, shots[i].kind, chain[a], 'rehosted') && input.character_image_url
+            ...(shotHasPersonReference(preset, shots[i].kind, model, 'rehosted') && input.character_image_url
               ? { character_image_url: input.character_image_url }
               : {}),
           });
-          ranOn = chain[a];
+          ranOn = attempts[a];
         } catch (err) {
           const f = failureInfo(err);
-          const last = a === chain.length - 1;
+          const last = a === attempts.length - 1;
           if (last || !failurePolicy(f.code).fallbackable) {
             if (refused === undefined || f.code === CONTENT_POLICY_REFUSED) throw err;
             // The fallback failed too, for another reason: record its own
@@ -436,7 +447,7 @@ export async function renderPreset(
             await markPrimitiveRunFailed({ primitive_run_id: childId, error_code: f.code, error_message: f.message });
             currentChild = undefined;
             throw ApplicationFailure.nonRetryable(
-              `shot ${i + 1}: ${refused}; the fallback ${chain[a]} then failed (${f.code})`.slice(0, 500),
+              `shot ${i + 1}: ${refused}; the fallback ${model} then failed (${f.code})`.slice(0, 500),
               CONTENT_POLICY_REFUSED,
             );
           }
@@ -445,7 +456,7 @@ export async function renderPreset(
           // try the fallback. The shot is charged the same whichever model runs,
           // but the failed attempt may still have cost us: count it (worst case,
           // as the Preset's maxProviderUsd budgets it).
-          totalUsd += modelClipUsd(chain[a], shots[i].clip_seconds);
+          totalUsd += modelClipUsd(model, shots[i].clip_seconds);
           await refundCredits({ primitive_run_id: childId });
           await markPrimitiveRunFailed({ primitive_run_id: childId, error_code: f.code, error_message: f.message });
         }
@@ -454,22 +465,22 @@ export async function renderPreset(
       clipUrls.push(clip.video_url);
       const framePrompt = framePrompts[i];
       // A clip from before #26 (a replayed history) reports neither; fall back to what was asked.
-      const model = clip.model ?? ranOn ?? chain[0];
+      const model: VideoModelId = clip.model ?? ranOn.model;
       rendered.push({
         shot_id: shots[i].shot_id,
         kind: shots[i].kind,
         model,
-        model_name: (VIDEO_MODEL_LABELS as Readonly<Record<string, string>>)[model] ?? model,
+        model_name: VIDEO_MODEL_LABELS[model] ?? model,
         fields: shots[i].fields,
         edited_fields: shots[i].edited_fields,
         edited: shots[i].edited,
         guardrails: {
           image: shots[i].guardrails.image.map((g) => g.id),
           // The lines of the model that rendered it (the face, or the person in words).
-          video: (shots[i].video_guardrails_by_model?.[model as VideoModelId] ?? shots[i].guardrails.video).map((g) => g.id),
+          video: (shots[i].video_guardrails_by_model?.[model] ?? shots[i].guardrails.video).map((g) => g.id),
         },
         ...(framePrompt ? { frame_prompt: framePrompt } : {}),
-        prompt: clip.prompt ?? clipPrompts[i][model as VideoModelId] ?? clipPrompts[i][chain[0]]!,
+        prompt: clip.prompt ?? (attempts.find((t) => t.model === model) ?? ranOn).prompt,
         product_reference: shots[i].product_reference,
       });
       totalUsd += clip.credits_actual_usd;

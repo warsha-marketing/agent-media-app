@@ -275,10 +275,11 @@ The vNext Preset render does the same per shot kind: a Preset's shot kind
 names its video model (and a fallback) as data
 (`shotKinds.reaction.video = { model: 'modelark-seedance-2.0-mini', fallback: ['kling-o3-pro', 'veo-3.1'] }`,
 `packages/schema/src/video-models.ts`; absent = Seedance via EvoLink; a
-fallback is one model or a chain tried in order), and
+fallback is always a list, tried in order), and
 `services/primitive-worker-vnext/src/video-models/` maps each model id to its
 client and request builder (fal's queue API for Kling O3 Pro and Veo 3.1,
-`FAL_KEY`; BytePlus ModelArk for Seedance 2.0 Mini, `ARK_API_KEY`).
+`FAL_KEY`; BytePlus ModelArk for Seedance 2.0 Mini, `ARK_API_KEY`,
+`client/modelark.ts`).
 Person shots render on ModelArk Seedance 2.0 Mini, with Kling and Veo as the
 fallback chain — see
 [ADR 0003](docs/adr/0003-person-shots-on-modelark-seedance.md). ModelArk

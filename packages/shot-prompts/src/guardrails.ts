@@ -20,7 +20,7 @@
  *           still says it.
  *   video — the clip, every shot.
  * Both stages carry the product (and character) reference, the Modesty
- * Default, nobody on a product shot, and no text. The realism rules (#27,
+ * Default, nobody on a product shot, and no text. The realism Guardrail (#27,
  * ADR 0003, #29: the look the owner accepted in tests M1b, M2 and M3) are a
  * both-stage Guardrail on every person and hands shot, never a product shot.
  *
@@ -31,7 +31,7 @@
  * Where a line goes:
  *   before_scene — the references, so "the product" and "the person" in the
  *                  fields are pinned to the images before the fields are read;
- *   after_scene  — the rules, last, so they are the prompt's final word;
+ *   after_scene  — every other line, last, so they are the prompt's final word;
  *   request      — enforced by the request itself (generate_audio: false),
  *                  shown to the user but not prompt text.
  *
@@ -168,7 +168,7 @@ export function stageGuardrails(stage: ShotStage, ctx: ShotGuardrailContext): Gu
   if ((person || hands) && ctx.scaleAnchor) {
     out.push({ id: 'scale_anchor', label: 'Real size', text: ctx.scaleAnchor, at: 'before_scene' });
   }
-  // The rules. The look first (both stages), then speech and motion (the video
+  // The other lines. The look first (both stages), then speech and motion (the video
   // stage's); a still says "only hands" its own way.
   if (person || hands) out.push({ id: 'realism', label: 'Real phone look', text: REALISM, at: 'after_scene' });
   if (person && video) out.push({ id: 'no_speaking', label: 'Nobody speaks', text: NO_SPEAKING_PERSON, at: 'after_scene' });

@@ -50,7 +50,7 @@ const PEOPLE: PresetRenderDefinition<'person' | 'hands' | 'product'> = {
   },
 };
 
-/** A test shot's Shot Prompt (#26, #28): the product reference, its scene and energy, then its rule Guardrails. */
+/** A test shot's Shot Prompt (#26, #28): the product reference, its scene and energy, then its other Guardrails. */
 const prompt = (scene: string, ...rules: string[]) => [PRODUCT_REFERENCE, scene, ENERGY_WORDS.calm, ...rules, FORMAT].join(' ');
 
 function renderInput(

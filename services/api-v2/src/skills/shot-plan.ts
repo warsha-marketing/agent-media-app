@@ -48,6 +48,7 @@ import {
   choosePlaybook,
   composeShotPlan,
   displayReferences,
+  personWordsOf,
   presetPrompts,
   shotPrompt,
   withReferences,
@@ -126,11 +127,8 @@ export function composeRenderShotPlan(
         modesty: renderModesty(preset, presetInputs),
         vars: prompts.promptVars ? prompts.promptVars(presetInputs.run) : {},
         interaction: draft.product_interaction ?? null,
-        // The person in words, as the worker says it on a model that does not take the face (ADR 0003).
-        person: {
-          gender: (presetInputs.run.character_gender as PersonGender | undefined) ?? null,
-          description: (presetInputs.run.character_description as string | null | undefined) ?? null,
-        },
+        // The person in words, read as the worker reads it, for a model that does not take the face (ADR 0003).
+        person: personWordsOf(presetInputs.run),
         // #31: the Scale Anchor and the In-use Reference line, as the worker adds them.
         product: {
           profile: draft.product_profile ?? null,

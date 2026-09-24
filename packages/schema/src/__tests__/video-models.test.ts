@@ -83,7 +83,19 @@ describe('the per-model price table', () => {
 describe('a shot kind’s model chain', () => {
   it('is the model then its fallback; Seedance when the kind names none', () => {
     expect(shotModelChain(undefined)).toEqual(['seedance-2.0']);
-    expect(shotModelChain({ model: 'kling-o3-pro', fallback: 'veo-3.1' })).toEqual(['kling-o3-pro', 'veo-3.1']);
+    expect(shotModelChain({ model: 'kling-o3-pro', fallback: ['veo-3.1'] })).toEqual(['kling-o3-pro', 'veo-3.1']);
+  });
+
+  it('reads a kind’s video from the Preset data with its fallback always a list (none: [])', () => {
+    for (const preset of Object.values(PRESETS)) {
+      for (const kind of Object.keys(preset.shotKinds)) {
+        const v = shotVideo(preset, kind);
+        expect(Array.isArray(v.fallback), `${preset.id}.${kind}`).toBe(true);
+        expect(v.fallback).toEqual(shotFallbacks(v));
+      }
+    }
+    expect(shotVideo(REACTION, 'reaction').fallback).toEqual(['kling-o3-pro', 'veo-3.1']);
+    expect(shotVideo(REACTION, 'product')).toEqual({ model: 'seedance-2.0', fallback: [] });
   });
 
   it('takes a chain of fallbacks, tried in order, without repeats', () => {
@@ -95,12 +107,12 @@ describe('a shot kind’s model chain', () => {
   });
 
   it('charges a shot the most any model in its chain charges, so the fallback never changes the charge', () => {
-    const chain = { model: 'kling-o3-pro', fallback: 'veo-3.1' } as const;
+    const chain = { model: 'kling-o3-pro', fallback: ['veo-3.1'] } as const;
     expect(shotClipCredits(chain, 5)).toBe(Math.max(VIDEO_MODEL_PRICES['kling-o3-pro'].credits[5]!, VIDEO_MODEL_PRICES['veo-3.1'].credits[5]!));
   });
 
   it('costs a shot its worst case: a failed primary attempt AND the fallback that rendered it', () => {
-    const chain = { model: 'kling-o3-pro', fallback: 'veo-3.1' } as const;
+    const chain = { model: 'kling-o3-pro', fallback: ['veo-3.1'] } as const;
     expect(modelClipUsd('kling-o3-pro', 5)).toBeCloseTo(0.56, 9);
     expect(modelClipUsd('veo-3.1', 5)).toBeCloseTo(1.6, 9);
     expect(shotClipUsd(chain, 5)).toBeCloseTo(0.56 + 1.6, 9);
@@ -109,7 +121,7 @@ describe('a shot kind’s model chain', () => {
   });
 
   it('refuses a clip length a model in the chain cannot render', () => {
-    expect(() => shotClipCredits({ model: 'kling-o3-pro', fallback: 'veo-3.1' }, 10)).toThrow(RangeError);
+    expect(() => shotClipCredits({ model: 'kling-o3-pro', fallback: ['veo-3.1'] }, 10)).toThrow(RangeError);
   });
 });
 
@@ -123,12 +135,12 @@ describe('Reaction’s person shots render on ModelArk Mini, falling back to Kli
   it('declares it as data on the shot kind; product shots keep the default', () => {
     expect(shotVideo(REACTION, 'reaction')).toEqual({ model: 'modelark-seedance-2.0-mini', fallback: ['kling-o3-pro', 'veo-3.1'] });
     expect(shotModelChain(shotVideo(REACTION, 'reaction'))).toEqual(['modelark-seedance-2.0-mini', 'kling-o3-pro', 'veo-3.1']);
-    expect(shotVideo(REACTION, 'product')).toEqual(DEFAULT_SHOT_VIDEO);
+    expect(shotVideo(REACTION, 'product')).toEqual({ ...DEFAULT_SHOT_VIDEO, fallback: [] });
   });
 
   it('leaves every Product Hero and Hands-on shot on Seedance', () => {
-    for (const kind of Object.keys(PRODUCT_HERO.shotKinds)) expect(shotVideo(PRODUCT_HERO, kind)).toEqual(DEFAULT_SHOT_VIDEO);
-    for (const kind of Object.keys(HANDS_ON.shotKinds)) expect(shotVideo(HANDS_ON, kind)).toEqual(DEFAULT_SHOT_VIDEO);
+    for (const kind of Object.keys(PRODUCT_HERO.shotKinds)) expect(shotVideo(PRODUCT_HERO, kind)).toEqual({ ...DEFAULT_SHOT_VIDEO, fallback: [] });
+    for (const kind of Object.keys(HANDS_ON.shotKinds)) expect(shotVideo(HANDS_ON, kind)).toEqual({ ...DEFAULT_SHOT_VIDEO, fallback: [] });
   });
 });
 

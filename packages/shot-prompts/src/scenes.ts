@@ -18,7 +18,7 @@
  * face (a smell beat is on the skin, after the product is set down). Shots
  * that show hands or a person carry no cinematic wording (shallow depth of
  * field, smooth cinematic motion, golden hour, warm lamps): it makes skin look
- * waxy on Seedance (ADR 0003), and the realism rules (#29) forbid it.
+ * waxy on Seedance (ADR 0003), and the realism Guardrail (#29) forbids it.
  *
  * A shot kind that starts from a frame (#18, Hands-on's product-in-hands image)
  * also has a frame scene: what the still shows. Not editable; the image-stage

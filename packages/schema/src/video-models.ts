@@ -139,12 +139,13 @@ export function modelTakesPersonImage(model: VideoModelId, source: PersonImageSo
 
 /**
  * The video model a shot kind renders on, and what it falls back to when that
- * one refuses or fails: one model, or a chain tried in order (ADR 0003:
- * ModelArk Mini, then Kling O3 Pro, then Veo 3.1).
+ * one refuses or fails: a chain tried in order (ADR 0003: ModelArk Mini, then
+ * Kling O3 Pro, then Veo 3.1), always a list. Preset data may leave it out
+ * (no fallback); shotVideo reads it back as [] then.
  */
 export interface ShotVideo {
   model: VideoModelId;
-  fallback?: VideoModelId | readonly VideoModelId[];
+  fallback?: readonly VideoModelId[];
 }
 
 /** A shot kind that names no model renders on Seedance via EvoLink. */
@@ -158,11 +159,16 @@ export function shotModelChain(video: ShotVideo | undefined): VideoModelId[] {
   return chain;
 }
 
-/** The fallback models of a shot, in the order they are tried (none: []). */
+/** The fallback models of a shot, in the order they are tried, without repeats or the model itself (none: []). */
 export function shotFallbacks(video: ShotVideo | undefined): VideoModelId[] {
-  const f = video?.fallback;
-  const list: readonly VideoModelId[] = f === undefined ? [] : typeof f === 'string' ? [f] : f;
+  const list = video?.fallback ?? [];
   return list.filter((m, i) => m !== video!.model && list.indexOf(m) === i);
+}
+
+/** A kind's video as the pipeline reads it: its fallback always a list, normalised (shotFallbacks). */
+export function normalizedShotVideo(video: ShotVideo | undefined): ShotVideo & { fallback: VideoModelId[] } {
+  const v = video ?? DEFAULT_SHOT_VIDEO;
+  return { model: v.model, fallback: shotFallbacks(v) };
 }
 
 function priceOf(model: VideoModelId, seconds: VideoClipSeconds, table: 'credits' | 'usd'): number {

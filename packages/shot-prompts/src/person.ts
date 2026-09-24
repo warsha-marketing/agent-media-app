@@ -23,7 +23,7 @@
  * Pure: the workflow sandbox imports this.
  */
 
-import type { PersonGender } from '@agentmedia/schema';
+import { PERSON_GENDERS, type PersonGender } from '@agentmedia/schema';
 import { guardrailIssue } from './guardrail-check.js';
 
 /** Who is on screen, as the render input knows them. */
@@ -31,6 +31,26 @@ export interface PersonWords {
   gender?: PersonGender | null;
   /** The saved character's description, if it has one. */
   description?: string | null;
+}
+
+/** The fields a render input carries the person in (api-v2's Preset inputs, the worker's run input). */
+export interface PersonInputFields {
+  character_gender?: unknown;
+  character_description?: unknown;
+}
+
+/**
+ * The person on screen from a render input's fields: the ONE reading api-v2
+ * (the Shot Plan it shows) and the worker (the prompts it sends) share. A
+ * gender that is not one, or a description that is not text, reads as none.
+ */
+export function personWordsOf(fields: PersonInputFields | null | undefined): Required<PersonWords> {
+  const g = fields?.character_gender;
+  const d = fields?.character_description;
+  return {
+    gender: typeof g === 'string' && (PERSON_GENDERS as readonly string[]).includes(g) ? (g as PersonGender) : null,
+    description: typeof d === 'string' ? d : null,
+  };
 }
 
 /** The longest description a prompt carries (cut at a word). */

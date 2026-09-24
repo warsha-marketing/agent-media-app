@@ -18,7 +18,7 @@
 //     "holds the product near their face"); a smell beat is on the skin of the
 //     wrist after the product is set down; no "enjoying the scent" beat;
 //   - hands and person shots drop the cinematic wording (shallow depth of
-//     field, flattering light) for the realism rules' phone-camera look, sharp
+//     field, flattering light) for the realism Guardrail's phone-camera look, sharp
 //     background and flat everyday daylight (#26: "Soft natural light"); the
 //     Hands-on settings lose golden hour, warm lamplight and a blurred garden;
 //   - the perfume Product Interaction starts from the uncapped bottle and sets

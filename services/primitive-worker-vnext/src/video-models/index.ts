@@ -35,7 +35,7 @@ import type { VideoModelId } from '@agentmedia/schema';
 import { withReferences, type ReferenceWords } from '@agentmedia/shot-prompts';
 import { generateSimpleSelfieEvolink } from '../client/evolink.js';
 import { runFalQueue } from '../client/fal.js';
-import { modelArkVideoBody, runModelArkVideo, type ModelArkVideoParams } from '../client/byteplus.js';
+import { modelArkVideoBody, runModelArkVideo, type ModelArkVideoParams } from '../client/modelark.js';
 import { providerFailure } from '../client/provider-failure.js';
 
 /** One shot, as every model is asked for it. */
@@ -220,6 +220,9 @@ export function modelArkParams(model: string, shot: VideoShotRequest): ModelArkV
 /** The ModelArk model id (activated on the account 2026-09-24); MODELARK_SEEDANCE_MINI_MODEL pins another. */
 const modelArkModelName = () => process.env.MODELARK_SEEDANCE_MINI_MODEL?.trim() || 'dreamina-seedance-2-0-mini-260615';
 
+/** The ModelArk task body for a shot: what generate() sends, and what the tests read. */
+const modelArkRequest = (shot: VideoShotRequest) => modelArkVideoBody(modelArkParams(modelArkModelName(), shot));
+
 /** Seedance 2.0 Mini on ModelArk (ADR 0003): 720×1280, 24 fps, ~5.04 s for a 5 s shot; audio off. */
 const modelArkSeedanceMini: ModelArkVideoModel = {
   id: 'modelark-seedance-2.0-mini',
@@ -228,9 +231,9 @@ const modelArkSeedanceMini: ModelArkVideoModel = {
   // Like fal: a submitted task is never resubmitted; the shot's fallback is its retry.
   resubmitOnRetry: false,
   promptFor: (prompt) => withReferences(prompt, MODELARK_REFERENCES),
-  buildRequest: (shot) => modelArkVideoBody(modelArkParams(modelArkModelName(), shot)),
+  buildRequest: modelArkRequest,
   async generate(shot) {
-    const body = modelArkVideoBody(modelArkParams(modelArkModelName(), shot));
+    const body = modelArkRequest(shot);
     const out = await runModelArkVideo({ apiKey: arkKey(), body, onPoll: (s) => shot.onProgress?.(s) });
     return { videoUrl: out.videoUrl, taskId: out.taskId };
   },

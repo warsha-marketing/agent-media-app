@@ -43,6 +43,7 @@ import {
   ShotEditError,
   cleanPersonDescription,
   personDescriptionLine,
+  personWordsOf,
   composeFields,
   composeShotPlan,
   displayReferences,
@@ -98,7 +99,7 @@ describe('the Preset prompt registry', () => {
   });
 });
 
-describe('the Preset defaults (the simple_physics Guardrail, one main action, the realism rules)', () => {
+describe('the Preset defaults (the simple_physics Guardrail, one main action, the realism Guardrail)', () => {
   /** Every default text of the shots that show hands or a person, frame scenes included, filled with every Preset input. */
   const peopleTexts = (): Array<[string, string]> => {
     const out: Array<[string, string]> = [];
@@ -146,7 +147,7 @@ describe('the Preset defaults (the simple_physics Guardrail, one main action, th
     expect(all).not.toMatch(/enjoying the scent/i);
   });
 
-  it('carry no cinematic wording on a hands or person shot (the realism rules, ADR 0003)', () => {
+  it('carry no cinematic wording on a hands or person shot (the realism Guardrail, ADR 0003)', () => {
     for (const [where, text] of peopleTexts()) {
       expect(text, where).not.toMatch(/shallow depth of field|cinematic|bokeh|golden[\s-]hour|softly blurred|warm lamplight|flattering light/i);
     }
@@ -223,7 +224,7 @@ describe('composeShotPlan', () => {
     const plan = shotsOf(REACT, { durationMs: 12_000, modesty: HIJAB });
     for (const s of plan) {
       expect(s.video).toEqual(
-        s.kind === 'reaction' ? { model: 'modelark-seedance-2.0-mini', fallback: ['kling-o3-pro', 'veo-3.1'] } : { model: 'seedance-2.0' },
+        s.kind === 'reaction' ? { model: 'modelark-seedance-2.0-mini', fallback: ['kling-o3-pro', 'veo-3.1'] } : { model: 'seedance-2.0', fallback: [] },
       );
       // Every model of the chain has its own video-stage Guardrails; the model's are the shot's.
       expect(Object.keys(s.video_guardrails_by_model)).toEqual(
@@ -347,6 +348,16 @@ describe('the person in words (ADR 0003: a shot whose model does not take the fa
     expect(onKling).toContain(REFERENCE_TOKENS.person);
     expect(onKling).not.toContain(ark!.text);
     expect(product.guardrails.video.map((g) => g.id)).not.toContain('person_description');
+  });
+
+  it('reads the person from a render input’s fields, one way for api-v2 and the worker (personWordsOf)', () => {
+    expect(personWordsOf({ character_gender: 'female', character_description: 'Gulf woman, late twenties' })).toEqual({
+      gender: 'female',
+      description: 'Gulf woman, late twenties',
+    });
+    expect(personWordsOf({})).toEqual({ gender: null, description: null });
+    expect(personWordsOf({ character_gender: 'robot', character_description: 42 })).toEqual({ gender: null, description: null });
+    expect(personWordsOf(null)).toEqual({ gender: null, description: null });
   });
 
   it('says only the gender when the character has no usable description', () => {
@@ -512,7 +523,7 @@ describe('the Guardrails, per stage', () => {
     }
   });
 
-  it('are appended to every stage’s prompt, the rules after the fields', () => {
+  it('are appended to every stage’s prompt, the locked lines after the fields', () => {
     const [hands] = shotsOf(HANDS, { durationMs: 9_000, modesty: COVERED, vars: handsVars, interaction: PERFUME });
     const video = shotPrompt(hands, 'video', EVOLINK);
     expect(video.startsWith('The video starts exactly from the frame in @image1')).toBe(true);

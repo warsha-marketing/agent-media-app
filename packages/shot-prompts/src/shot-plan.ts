@@ -375,7 +375,7 @@ export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, ed
 
 /**
  * A shot's final prompt for one stage: the stage's reference Guardrails, the
- * shot's content, then the stage's rule Guardrails — with the reference images
+ * shot's content, then the stage's other Guardrails — with the reference images
  * named in `words` (a provider's syntax, or plain words for the Shot Plan
  * view). The video stage's content is the fields (composeFields); the image
  * stage's is the frame scene and the shot's action (the frame is already

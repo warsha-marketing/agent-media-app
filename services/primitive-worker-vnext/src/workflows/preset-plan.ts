@@ -67,8 +67,17 @@ export interface PresetPlan {
   playbook: PlaybookChoice | null;
   /** Each shot's starting-frame prompt (image stage), or null without a frame. */
   frame_prompts: Array<string | null>;
-  /** Each shot's clip prompt on every model of its chain (the face, or the person in words). */
-  clip_prompts: Array<Partial<Record<VideoModelId, string>>>;
+  /**
+   * Each shot's attempts, in the order tried: every model of its chain with
+   * its own clip prompt (the face, or the person in words).
+   */
+  clip_attempts: ClipAttempt[][];
+}
+
+/** One model a shot may render on, and the clip prompt it is sent. */
+export interface ClipAttempt {
+  model: VideoModelId;
+  prompt: string;
 }
 
 /** A plan that cannot render: its code (the failure's type) and why. Nothing was requested. */
@@ -114,9 +123,7 @@ export function planPresetRender(
       // A starting frame is an image edit of the product reference: its one reference image.
       frame_prompts: plan.shots.map((s) => (s.starting_frame ? shotPrompt(s, 'image', IMAGE_REFERENCES) : null)),
       // Each model of the chain gets its own prompt; the provider adapter (presetClip) swaps the tokens for its syntax.
-      clip_prompts: plan.shots.map((s) =>
-        Object.fromEntries(shotModelChain(s.video).map((m) => [m, shotPrompt(s, 'video', REFERENCE_TOKENS, m)])),
-      ),
+      clip_attempts: plan.shots.map((s) => shotModelChain(s.video).map((model) => ({ model, prompt: shotPrompt(s, 'video', REFERENCE_TOKENS, model) }))),
     };
   } catch (err) {
     if (err instanceof ShotEditError) throw new PresetPlanRefusal(err.code, err.message);
