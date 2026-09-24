@@ -43,7 +43,7 @@ import { r2UploadVnext } from '../client/r2.js';
 import { DRAFT_AUDIO, probeSeconds, readPrivateObject } from '../lib/media-io.js';
 import { downloadProviderVideo } from '../lib/provider-video.js';
 import { runChargedStep } from './charged-step.js';
-import { shotClipUsd, shotModelChain, shotVideo, type ShotVideo, type VideoModelId } from '@agentmedia/schema';
+import { modelClipUsd, shotModelChain, shotVideo, type ShotVideo, type VideoModelId } from '@agentmedia/schema';
 import { presetRender } from '../presets/index.js';
 import { videoModel, type VideoModelClient } from '../video-models/index.js';
 import { PROVIDER_FAILED } from '../failure-policy.js';
@@ -203,9 +203,13 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
     const prompt = input.prompt;
     // Spend: the per-primitive cap does not apply (the Preset's budget governs
     // the whole render; see the header). The day cap still does (runChargedStep).
-    // Cost and charge are the shot's (its chain's), whichever model runs, so a
-    // fallback never changes the price the user was quoted.
-    const estimatedUsd = shotClipUsd(video, input.duration);
+    // The charge is the shot's (its chain's), whichever model runs, so a
+    // fallback never changes the price the user was quoted. The cost is this
+    // attempt's model; the day cap is held to the worst case left for the shot
+    // (this model, then every fallback after it), as the Preset budgets it.
+    const chain = shotModelChain(video);
+    const estimatedUsd = modelClipUsd(model, input.duration);
+    const worstCaseUsd = chain.slice(chain.indexOf(model)).reduce((sum, m) => sum + modelClipUsd(m, input.duration), 0);
     return runChargedStep({
       cfg,
       db,
@@ -217,7 +221,7 @@ export function makePresetClipActivity(cfg: WorkerConfig) {
         ['start_image_url', input.start_image_url],
         ...(characterImageUrl !== undefined ? ([['character_image_url', characterImageUrl]] as const) : []),
       ],
-      estimatedUsd,
+      estimatedUsd: worstCaseUsd,
       rowInput: {
         start_image_url: input.start_image_url,
         duration: input.duration,

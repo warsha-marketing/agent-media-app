@@ -29,7 +29,8 @@
  *
  * USD is our provider-cost estimate (the day cap, each clip's recorded cost,
  * and a Preset's declared budget), per clip, for the seconds the model really
- * renders — fal's published per-second prices with the model's audio OFF
+ * renders; a shot's is its worst case, every model of its chain run (a failed
+ * primary attempt may still cost us, and then the fallback renders it) — fal's published per-second prices with the model's audio OFF
  * (checked 2026-09-24 on fal.ai's model pages):
  *   kling-o3-pro  fal-ai/kling-video/o3/pro/reference-to-video   $0.112/s
  *   veo-3.1       fal-ai/veo3.1/reference-to-video (720p)        $0.20/s, renders 8 s only
@@ -102,9 +103,18 @@ export function shotClipCredits(video: ShotVideo | undefined, seconds: VideoClip
   return Math.max(...shotModelChain(video).map((m) => priceOf(m, seconds, 'credits')));
 }
 
-/** Our provider-cost estimate (USD) for one planned shot: the most any model in its chain costs. */
+/** Our provider-cost estimate (USD) for one attempt of a planned clip on `model`. */
+export function modelClipUsd(model: VideoModelId, seconds: VideoClipSeconds): number {
+  return priceOf(model, seconds, 'usd');
+}
+
+/**
+ * Our provider-cost estimate (USD) for one planned shot, worst case: every
+ * model in its chain ran — the model failed or refused after costing us, and
+ * the fallback then rendered the shot. A Preset's maxProviderUsd budgets this.
+ */
 export function shotClipUsd(video: ShotVideo | undefined, seconds: VideoClipSeconds): number {
-  return Math.max(...shotModelChain(video).map((m) => priceOf(m, seconds, 'usd')));
+  return shotModelChain(video).reduce((sum, m) => sum + modelClipUsd(m, seconds), 0);
 }
 
 /** How long `model` really renders a planned clip of `seconds`. */

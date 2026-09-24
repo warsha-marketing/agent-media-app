@@ -59,10 +59,11 @@ export const REACTION = {
     /** The most one render may charge: four 5 s clips (two pairs) for 10–15 s of speech. */
     maxCredits: 560,
     /**
-     * The most one render may cost us at the provider (the same four clips):
-     * two person shots at the costliest model of their chain (a Veo 3.1
-     * fallback, $1.60) and two product clips ($0.60).
+     * The most one render may cost us at the provider (the same four clips),
+     * worst case: each of the two person shots fails on Kling O3 Pro after
+     * costing us ($0.56) and then renders on the Veo 3.1 fallback ($1.60), plus
+     * two product clips ($0.60).
      */
-    maxProviderUsd: 4.4,
+    maxProviderUsd: 5.52,
   },
 } as const satisfies PresetDefinition<ReactionShotKind>;

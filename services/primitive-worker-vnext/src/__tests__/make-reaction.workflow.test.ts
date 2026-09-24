@@ -10,7 +10,7 @@
 import { describe, it, expect, expectTypeOf, beforeAll, afterAll } from 'vitest';
 import { ApplicationFailure } from '@temporalio/activity';
 import { WorkflowFailedError } from '@temporalio/client';
-import { REACTION, REACTION_MAX_SHOT_MS, quotePresetCredits, shotVideo, type Modesty } from '@agentmedia/schema';
+import { REACTION, REACTION_MAX_SHOT_MS, modelClipUsd, quotePresetCredits, shotVideo, type Modesty, type VideoModelId } from '@agentmedia/schema';
 import { runFalQueue } from '../client/fal.js';
 import { CONTENT_POLICY_REFUSED, NON_RETRYABLE_TYPES } from '../failure-policy.js';
 import { VIDEO_MODELS, type FalVideoModel } from '../video-models/index.js';
@@ -462,6 +462,31 @@ describe('makeReactionWorkflow — the failure policy decides the fallback (#25)
     const refunded = new Set((fakes.callsTo('refundCredits') as Array<{ primitive_run_id: string }>).map((r) => r.primitive_run_id));
     for (const c of clips) expect(refunded.has(c.primitive_run_id)).toBe(true);
     expect(fakes.callsTo('releaseDraftRender')).toHaveLength(1);
+  });
+});
+
+describe('makeReactionWorkflow — provider cost counts every attempt (#25)', () => {
+  const costed = (refuseKling: boolean) =>
+    happyFakes({
+      presetClip: (i: PresetClipInput) => {
+        if (refuseKling && i.model === 'kling-o3-pro') throw refusedBy('kling');
+        return { primitive_run_id: i.primitive_run_id, video_url: 'https://r2.example.test/c.mp4', duration_seconds: i.duration, credits_actual_usd: modelClipUsd(i.model as VideoModelId, i.duration) };
+      },
+    });
+
+  it('a shot that fell back costs the failed Kling attempt plus the Veo clip, within the Preset’s budget', async () => {
+    const fakes = costed(true);
+    const result = await harness.execute('makeReactionWorkflow', [renderInput(15_000)], fakes);
+    const worst = 2 * (modelClipUsd('kling-o3-pro', 5) + modelClipUsd('veo-3.1', 5)) + 2 * modelClipUsd('seedance-2.0', 5);
+    expect(result.credits_actual_usd).toBeCloseTo(worst, 9);
+    expect(result.credits_actual_usd).toBeLessThanOrEqual(REACTION.budget.maxProviderUsd + 1e-9);
+    const states = fakes.callsTo('composedSkillState') as Array<{ final_output?: { credits_actual_usd: number } }>;
+    expect(states.at(-1)!.final_output!.credits_actual_usd).toBeCloseTo(worst, 9);
+  });
+
+  it('without a fallback, each shot costs its own model', async () => {
+    const result = await harness.execute('makeReactionWorkflow', [renderInput(15_000)], costed(false));
+    expect(result.credits_actual_usd).toBeCloseTo(2 * modelClipUsd('kling-o3-pro', 5) + 2 * modelClipUsd('seedance-2.0', 5), 9);
   });
 });
 

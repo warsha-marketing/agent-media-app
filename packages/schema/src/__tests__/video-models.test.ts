@@ -15,6 +15,7 @@ import {
   VIDEO_MODEL_IDS,
   VIDEO_MODEL_PRICES,
   shotClipCredits,
+  modelClipUsd,
   shotClipUsd,
   shotModelChain,
   modelRenderSeconds,
@@ -76,10 +77,18 @@ describe('a shot kind’s model chain', () => {
     expect(shotModelChain({ model: 'kling-o3-pro', fallback: 'veo-3.1' })).toEqual(['kling-o3-pro', 'veo-3.1']);
   });
 
-  it('prices a shot at the most any model in its chain costs, so the fallback never changes the charge', () => {
+  it('charges a shot the most any model in its chain charges, so the fallback never changes the charge', () => {
     const chain = { model: 'kling-o3-pro', fallback: 'veo-3.1' } as const;
     expect(shotClipCredits(chain, 5)).toBe(Math.max(VIDEO_MODEL_PRICES['kling-o3-pro'].credits[5]!, VIDEO_MODEL_PRICES['veo-3.1'].credits[5]!));
-    expect(shotClipUsd(chain, 5)).toBeCloseTo(Math.max(VIDEO_MODEL_PRICES['kling-o3-pro'].usd[5]!, VIDEO_MODEL_PRICES['veo-3.1'].usd[5]!), 9);
+  });
+
+  it('costs a shot its worst case: a failed primary attempt AND the fallback that rendered it', () => {
+    const chain = { model: 'kling-o3-pro', fallback: 'veo-3.1' } as const;
+    expect(modelClipUsd('kling-o3-pro', 5)).toBeCloseTo(0.56, 9);
+    expect(modelClipUsd('veo-3.1', 5)).toBeCloseTo(1.6, 9);
+    expect(shotClipUsd(chain, 5)).toBeCloseTo(0.56 + 1.6, 9);
+    expect(shotClipUsd(undefined, 5)).toBeCloseTo(VIDEO_CLIP_USD[5], 9);
+    expect(() => modelClipUsd('veo-3.1', 10)).toThrow(RangeError);
   });
 
   it('refuses a clip length a model in the chain cannot render', () => {
@@ -88,6 +97,12 @@ describe('a shot kind’s model chain', () => {
 });
 
 describe('Reaction’s person shots render on Kling O3 Pro, falling back to Veo 3.1', () => {
+  it('budgets the provider cost for the worst case: both person shots failing on Kling and rendering on Veo', () => {
+    // Two person shots (Kling $0.56 then Veo $1.60 each) and two product clips ($0.60 each).
+    expect(REACTION.budget.maxProviderUsd).toBeCloseTo(2 * (0.56 + 1.6) + 2 * VIDEO_CLIP_USD[5], 9);
+    expect(presetProviderUsd(REACTION, 15_000)).toBeCloseTo(REACTION.budget.maxProviderUsd, 9);
+  });
+
   it('declares it as data on the shot kind; product shots keep the default', () => {
     expect(shotVideo(REACTION, 'reaction')).toEqual({ model: 'kling-o3-pro', fallback: 'veo-3.1' });
     expect(shotVideo(REACTION, 'product')).toEqual(DEFAULT_SHOT_VIDEO);

@@ -277,7 +277,12 @@ names its video model (and a fallback) as data
 `services/primitive-worker-vnext/src/video-models/` maps each model id to its
 client and request builder (fal's queue API for Kling O3 Pro and Veo 3.1,
 `FAL_KEY`). A shot is charged its model chain's price whichever model ran, so
-the quote is the charge with or without the fallback.
+the quote is the charge with or without the fallback; its provider cost is
+budgeted worst case (the failed primary attempt plus the fallback). What a
+failure allows — a Temporal retry, the fallback — is one map,
+`services/primitive-worker-vnext/src/failure-policy.ts`: a fal job is never
+resubmitted by a retry (the fallback is its retry), and a missing provider key
+fails fast.
 
 Images go through `gpt-image-2` (`OPENAI_API_KEY`) and prompt craft through
 Anthropic (`ANTHROPIC_API_KEY`). The legacy b-roll and talking-head lanes still

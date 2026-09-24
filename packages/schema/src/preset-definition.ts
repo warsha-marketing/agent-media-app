@@ -232,7 +232,7 @@ export function quotePresetCredits(preset: PresetDefinition, durationMs: number)
   }, 0);
 }
 
-/** Provider USD for rendering `durationMs` of speech under `preset`: its planned clips (the costliest model of each chain) plus their starting frames. */
+/** Provider USD for rendering `durationMs` of speech under `preset`: its planned clips (each shot worst case: every model of its chain run) plus their starting frames. */
 export function presetProviderUsd(preset: PresetDefinition, durationMs: number): number {
   return planPresetShots(preset, durationMs).reduce((sum, s) => {
     const frame = shotFrame(preset, s.kind);

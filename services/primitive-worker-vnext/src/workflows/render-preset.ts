@@ -65,6 +65,7 @@
 import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
 import {
   armsAtLeast,
+  modelClipUsd,
   modelRenderSeconds,
   planPresetShots,
   presetShows,
@@ -310,7 +311,10 @@ export async function renderPreset(
           }
           if (f.code === CONTENT_POLICY_REFUSED) refused ??= f.message;
           // This model refused or failed: give its charge back, record it, and
-          // try the fallback. The shot is charged the same whichever model runs.
+          // try the fallback. The shot is charged the same whichever model runs,
+          // but the failed attempt may still have cost us: count it (worst case,
+          // as the Preset's maxProviderUsd budgets it).
+          totalUsd += modelClipUsd(chain[a], shots[i].seconds);
           await refundCredits({ primitive_run_id: childId });
           await markPrimitiveRunFailed({ primitive_run_id: childId, error_code: f.code, error_message: f.message });
         }
