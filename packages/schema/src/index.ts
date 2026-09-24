@@ -45,3 +45,5 @@ export * from './caption-lines.js';
 export * from './music-bed/index.js';
 // Dialects — the one list (every Dialect, and the ones a Script can be written in).
 export * from './dialects.js';
+// Product Profile (#30) — the vision understanding of one product (category, size, parts, used state, risks).
+export * from './product-profile.js';

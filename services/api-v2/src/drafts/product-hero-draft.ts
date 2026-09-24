@@ -43,6 +43,18 @@
  * written by the same writer call, in the same structured reply, and stored on
  * the draft; the user may edit it, which re-voices into a new draft like a
  * Script edit (a re-voice carries the parent's over unless it is given).
+ * The Product Profile (#30) — what the system understands about the product:
+ * category, real size, parts and the state it is used in, how it is used,
+ * grip, physics risks — is read by Claude (vision) from the product photo and
+ * the Product Details BEFORE the Script is written, and the writer writes the
+ * Product Interaction from it (simple, continuous, the product already in its
+ * used state). It is taken only when the draft is given a product photo that
+ * is this user's own upload on our storage (product-photo.ts); a reply that is
+ * not a valid Profile (@agentmedia/schema ProductProfileSchema) gets ONE
+ * rewrite, then PRODUCT_PROFILE_FAILED. It is stored on the draft; the user may
+ * edit it, which re-voices into a new draft and, unless they also edit the
+ * Product Interaction, re-writes the Product Interaction from the edited
+ * Profile.
  * Delivery Tags are voiced only by a TTS model that honours them (eleven_v3);
  * with any other model they are stripped before voicing, and the draft stores
  * the Script exactly as it was spoken.
@@ -56,14 +68,18 @@ import {
   DELIVERY_TAGS,
   PRODUCT_INTERACTION_MAX_CHARS,
   SCRIPT_DIALECTS,
+  ProductProfileSchema,
   formatDeliveryTags,
+  productProfileIssues,
   modelHonoursDeliveryTags,
   stripDeliveryTags,
   tidyProductInteraction,
+  type ProductProfile,
   type ScriptDialect,
 } from '@agentmedia/schema';
 import { generatedScriptIssues, scriptTextIssues, type ScriptIssue } from './script-check.js';
 import { productInteractionGuardrailIssue, type InteractionGuardrailIssue } from './interaction-check.js';
+import { interactionStateIssue } from './interaction-state.js';
 import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
 import { PresetError, assertDialectDraftable, type PresetAccess } from '../presets/qualification.js';
 
@@ -86,6 +102,14 @@ export const BRIEF_MAX_CHARS = 2_000;
 export const PRODUCT_DETAILS_MAX_CHARS = 3_000;
 /** Well above 15 s of speech (~40 words), well below a runaway TTS bill. */
 export const SCRIPT_MAX_CHARS = 600;
+/** A product photo URL (#30): checked against the user's own uploads when drafting (PRODUCT_IMAGE_NOT_HOSTED). */
+const productImageUrlField = z
+  .string()
+  .url()
+  .max(2_000)
+  .regex(/^https?:\/\//, 'product_image_url must be an http(s) URL')
+  .optional();
+
 export const CreateDraftInputSchema = z
   .object({
     brief: z.string().trim().min(1, 'brief is required').max(BRIEF_MAX_CHARS),
@@ -94,6 +118,12 @@ export const CreateDraftInputSchema = z
     dialect: DialectSchema,
     /** An Approved Voice of `dialect`, from GET /v1/voices. */
     voice_id: z.string().uuid(),
+    /**
+     * Optional, recommended: the product photo, as uploaded to our storage by
+     * this user (the URL upload_image or the web uploader returns). Claude reads
+     * it with the Product Details into the Product Profile (#30).
+     */
+    product_image_url: productImageUrlField,
   })
   .strict();
 export type CreateDraftInput = z.infer<typeof CreateDraftInputSchema>;
@@ -115,6 +145,17 @@ export const RevoiceDraftInputSchema = z
      * parent's carries over. Editing it re-drafts, like editing the Script.
      */
     product_interaction: z.string().trim().max(PRODUCT_INTERACTION_MAX_CHARS).optional(),
+    /**
+     * The Product Profile (#30), edited by the user. Given, it replaces the
+     * parent's (and, unless product_interaction is also given, the Product
+     * Interaction is re-written from it); omitted, the parent's carries over.
+     */
+    product_profile: ProductProfileSchema.optional(),
+    /**
+     * Only used when there is no parent and no product_profile: the product
+     * photo to read the Product Profile from (a first draft that was refused).
+     */
+    product_image_url: productImageUrlField,
     /** An Approved Voice of `dialect`. Optional with a parent: the parent's Voice is reused. */
     voice_id: z.string().uuid().optional(),
   })
@@ -148,6 +189,13 @@ export interface DraftRow {
    * person shot. Null when there is none (every draft before #25).
    */
   product_interaction: string | null;
+  /**
+   * Product Profile (#30): what the system understands about the product
+   * (category, size, parts and used state, how it is used, grip, physics
+   * risks). Read from the product photo when the draft was given one, or the
+   * user's edit; null otherwise (and on every draft before #30).
+   */
+  product_profile: ProductProfile | null;
   script: string;
   script_source: 'generated' | 'edited';
   parent_draft_id: string | null;
@@ -194,6 +242,8 @@ export interface WriteScriptInput {
   dialect: Dialect;
   /** Whether the voice honours Delivery Tags (eleven_v3); without, the writer adds none. */
   delivery_tags: boolean;
+  /** The Product Profile (#30) the Product Interaction is written from; null/absent = none. */
+  product_profile?: ProductProfile | null;
   /** Set on the duration rewrite: what the last Script measured and which way to go. */
   previous?: { script: string; duration_ms: number; direction: 'shorten' | 'lengthen' };
   /**
@@ -218,6 +268,31 @@ export interface WrittenScript {
   model: string;
 }
 
+/** What the vision call reads the Product Profile from (#30). */
+export interface ProfileProductInput {
+  /** The storage key of the user's own product photo (product-photo.ts). */
+  photo_key: string;
+  brief: string | null;
+  product_details: string | null;
+  /** Set on the one rewrite: the last reply and why it is not a Product Profile. */
+  rejected?: { reply: string; issues: string[] };
+}
+
+export interface ProfiledProduct {
+  /** The reply as parsed JSON, NOT yet validated: the draft holds it to ProductProfileSchema. */
+  profile: unknown;
+  model: string;
+}
+
+/** What the Product Interaction is re-written from when the user edits the Product Profile (#30). */
+export interface WriteInteractionInput {
+  brief: string | null;
+  product_details: string | null;
+  product_profile: ProductProfile;
+  /** Set on the one rewrite: the refused Product Interaction and why. */
+  rejected?: { product_interaction: string; reasons: string[] };
+}
+
 export interface VoicedScript {
   audio: Buffer;
   mime: string;
@@ -236,6 +311,15 @@ export interface SignedAudioUrl {
 
 export interface DraftDeps {
   writeScript(input: WriteScriptInput): Promise<WrittenScript>;
+  /** Claude (vision): the Product Profile from the product photo and Product Details (#30). */
+  profileProduct(input: ProfileProductInput): Promise<ProfiledProduct>;
+  /** The Product Interaction alone, from an edited Product Profile (#30). */
+  writeProductInteraction(input: WriteInteractionInput): Promise<{ product_interaction: string | null; model: string }>;
+  /**
+   * The storage key of `url` when it is `userId`'s own uploaded photo on our
+   * storage; null for any other URL (product-photo.ts).
+   */
+  productPhotoKey(url: string, userId: string): string | null;
   voiceScript(input: SpokenScript): Promise<VoicedScript>;
   /** The TTS model voiceScript speaks with: decides whether Delivery Tags are voiced or stripped. */
   ttsModel: string;
@@ -414,7 +498,10 @@ function assertInBand(take: VoiceTake): void {
 async function persist(
   deps: DraftDeps,
   userId: string,
-  fields: Pick<NewDraftRow, 'brief' | 'product_details' | 'product_interaction' | 'script_source' | 'parent_draft_id' | 'script_model'>,
+  fields: Pick<
+    NewDraftRow,
+    'brief' | 'product_details' | 'product_interaction' | 'product_profile' | 'script_source' | 'parent_draft_id' | 'script_model'
+  >,
   take: VoiceTake,
 ): Promise<DraftRow> {
   const id = deps.newId();
@@ -465,20 +552,25 @@ function interactionRefused(issue: InteractionGuardrailIssue, interaction: strin
  * and the reasons, so they can fix it in the editor and re-voice.
  */
 async function writeChecked(deps: DraftDeps, request: WriteScriptInput): Promise<WrittenScript> {
+  const profile = request.product_profile ?? null;
   let written = await write(deps, request);
   let issues = generatedScriptIssues(written.script, written.product_terms);
   let guardrail = productInteractionGuardrailIssue(written.product_interaction);
-  if (issues.length === 0 && !guardrail) return written;
+  // The Product Interaction written from a Profile keeps the product in its used state (#30).
+  let state = interactionStateIssue(written.product_interaction, profile);
+  if (issues.length === 0 && !guardrail && !state) return written;
+  const interactionRefusal = guardrail ?? state;
   written = await write(deps, {
     ...request,
     rejected: {
       script: written.script,
-      reasons: [...issues.map((i) => i.message), ...(guardrail ? [guardrail.message] : [])],
-      ...(guardrail && written.product_interaction ? { product_interaction: written.product_interaction } : {}),
+      reasons: [...issues.map((i) => i.message), ...(guardrail ? [guardrail.message] : []), ...(state ? [state.message] : [])],
+      ...(interactionRefusal && written.product_interaction ? { product_interaction: written.product_interaction } : {}),
     },
   });
   issues = generatedScriptIssues(written.script, written.product_terms);
   guardrail = productInteractionGuardrailIssue(written.product_interaction);
+  state = interactionStateIssue(written.product_interaction, profile);
   if (issues.length > 0) {
     throw new DraftError(
       422,
@@ -489,7 +581,84 @@ async function writeChecked(deps: DraftDeps, request: WriteScriptInput): Promise
     );
   }
   if (guardrail) throw interactionRefused(guardrail, written.product_interaction ?? '');
+  if (state) throw interactionNotInUsedState(state.message, state.matched, written.product_interaction ?? '');
   return written;
+}
+
+/** A written Product Interaction that still changes the product's state after its rewrite (#30). */
+function interactionNotInUsedState(message: string, matched: string, interaction: string): DraftError {
+  return new DraftError(
+    422,
+    'PRODUCT_INTERACTION_NOT_IN_USED_STATE',
+    `${message} Edit the Product Interaction (or the Product Profile's used state) and re-voice.`,
+    { matched, product_interaction: interaction },
+  );
+}
+
+// ── The Product Profile (#30) ────────────────────────────────────────────────
+
+/** The storage key of the user's own product photo, or PRODUCT_IMAGE_NOT_HOSTED before any provider is paid. */
+function photoKeyOrRefuse(deps: DraftDeps, url: string, userId: string): string {
+  const key = deps.productPhotoKey(url, userId);
+  if (!key) {
+    throw new DraftError(
+      422,
+      'PRODUCT_IMAGE_NOT_HOSTED',
+      'product_image_url must be a product photo you uploaded to agent-media (PNG or JPEG). Upload it first (upload_image, or the photo step of the web flow) and pass the URL it returns.',
+      { product_image_url: url },
+    );
+  }
+  return key;
+}
+
+/**
+ * Claude (vision) reads the product photo and Product Details into a Product
+ * Profile. A reply that is not a valid Profile gets ONE rewrite, told why; a
+ * second is PRODUCT_PROFILE_FAILED, before any Script is written or voiced.
+ */
+async function profileChecked(deps: DraftDeps, request: ProfileProductInput): Promise<{ profile: ProductProfile; model: string }> {
+  let reply = await deps.profileProduct(request);
+  let issues = productProfileIssues(reply.profile);
+  if (issues.length) {
+    reply = await deps.profileProduct({ ...request, rejected: { reply: JSON.stringify(reply.profile ?? null), issues } });
+    issues = productProfileIssues(reply.profile);
+  }
+  if (issues.length) {
+    throw new DraftError(
+      502,
+      'PRODUCT_PROFILE_FAILED',
+      'Could not read the product from its photo. Try again, or use a clear photo of the product alone and add Product Details (what it is, its size, how it is used).',
+      { issues },
+    );
+  }
+  return { profile: ProductProfileSchema.parse(reply.profile), model: reply.model };
+}
+
+/** The Guardrails hold for the user's own words in a Profile too (they reach the shot prompts, #30). */
+function profileGuardrailIssue(profile: ProductProfile): InteractionGuardrailIssue | null {
+  const words = [profile.used_state, profile.grip, ...profile.interaction_verbs, ...profile.parts.map((p) => p.name)].join(', ');
+  return productInteractionGuardrailIssue(words);
+}
+
+/**
+ * The Product Interaction re-written from an edited Profile, held to the
+ * Guardrails and the used-state rule with ONE rewrite, like the Script writer's.
+ */
+async function interactionFromProfile(deps: DraftDeps, request: WriteInteractionInput): Promise<string | null> {
+  const check = (text: string | null) =>
+    productInteractionGuardrailIssue(text) ?? interactionStateIssue(text, request.product_profile);
+  let text = tidyProductInteraction((await deps.writeProductInteraction(request)).product_interaction);
+  let issue = check(text);
+  if (!issue) return text;
+  text = tidyProductInteraction(
+    (await deps.writeProductInteraction({ ...request, rejected: { product_interaction: text ?? '', reasons: [issue.message] } }))
+      .product_interaction,
+  );
+  const guardrail = productInteractionGuardrailIssue(text);
+  if (guardrail) throw interactionRefused(guardrail, text ?? '');
+  const state = interactionStateIssue(text, request.product_profile);
+  if (state) throw interactionNotInUsedState(state.message, state.matched, text ?? '');
+  return text;
 }
 
 /** Write a checked Script, then voice and measure it. */
@@ -512,11 +681,17 @@ export async function createDraftFromBrief(deps: DraftDeps, userId: string, inpu
   await assertQualified(deps, userId, input.dialect);
   const voice = await approvedVoice(deps, input.voice_id, input.dialect);
   const productDetails = input.product_details?.trim() || null;
+  const photoKey = input.product_image_url ? photoKeyOrRefuse(deps, input.product_image_url, userId) : null;
+  // The Profile first (#30): the writer writes the Product Interaction from it.
+  const profile = photoKey
+    ? (await profileChecked(deps, { photo_key: photoKey, brief: input.brief, product_details: productDetails })).profile
+    : null;
   const request: WriteScriptInput = {
     brief: input.brief,
     product_details: productDetails,
     dialect: input.dialect,
     delivery_tags: modelHonoursDeliveryTags(deps.ttsModel),
+    product_profile: profile,
   };
   let take = await writeAndVoice(deps, request, voice);
   if (!inBand(take.durationMs)) {
@@ -534,6 +709,7 @@ export async function createDraftFromBrief(deps: DraftDeps, userId: string, inpu
     brief: input.brief,
     product_details: productDetails,
     product_interaction: take.productInteraction,
+    product_profile: profile,
     script_source: 'generated',
     parent_draft_id: null,
     script_model: take.model,
@@ -557,6 +733,8 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
   let brief = input.brief?.trim() || null;
   let productDetails = input.product_details?.trim() || null;
   let productInteraction = tidyProductInteraction(input.product_interaction);
+  let profile: ProductProfile | null = input.product_profile ?? null;
+  let parentProfile: ProductProfile | null = null;
   let voiceId = input.voice_id ?? null;
   if (input.parent_draft_id) {
     const parent = await deps.repo.getOwned(input.parent_draft_id, userId);
@@ -574,11 +752,28 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
     productDetails = parent.product_details ?? null;
     // The user's edit of the Product Interaction, else the parent's.
     if (input.product_interaction === undefined) productInteraction = parent.product_interaction ?? null;
+    // The user's edit of the Product Profile (#30), else the parent's.
+    parentProfile = parent.product_profile ?? null;
+    profile ??= parentProfile;
     voiceId ??= parent.voice_catalog_id;
   }
+  // A first draft that was refused: its photo is read again unless the Profile is given.
+  const photoKey =
+    !input.parent_draft_id && !input.product_profile && input.product_image_url
+      ? photoKeyOrRefuse(deps, input.product_image_url, userId)
+      : null;
   await assertQualified(deps, userId, input.dialect);
   const issues = scriptTextIssues(input.script);
   if (issues.length) throw refuseEditedScript(issues);
+  if (input.product_profile) {
+    const guardrail = profileGuardrailIssue(input.product_profile);
+    if (guardrail) {
+      throw new DraftError(422, 'PRODUCT_PROFILE_BREAKS_GUARDRAIL', guardrail.message, {
+        guardrail: guardrail.guardrail,
+        matched: guardrail.matched,
+      });
+    }
+  }
   // The user's own Product Interaction is held to the Guardrails (#25); one
   // carried over from the parent was checked when that draft was saved.
   if (input.product_interaction !== undefined && productInteraction) {
@@ -589,12 +784,19 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
     throw new DraftError(400, 'VOICE_REQUIRED', 'Pick an Approved Voice for this Dialect (voice_id) and re-voice.');
   }
   const voice = await approvedVoice(deps, voiceId, input.dialect);
+  if (photoKey) profile = (await profileChecked(deps, { photo_key: photoKey, brief, product_details: productDetails })).profile;
+  // An edited Profile re-writes the Product Interaction from it, unless the user edited that too.
+  const profileEdited = !!input.product_profile && JSON.stringify(input.product_profile) !== JSON.stringify(parentProfile);
+  if (profile && profileEdited && input.product_interaction === undefined) {
+    productInteraction = await interactionFromProfile(deps, { brief, product_details: productDetails, product_profile: profile });
+  }
   const take = await voiceAndMeasure(deps, { script: forVoice(deps, input.script), dialect: input.dialect, voice: voiceRef(voice) }, voice.id);
   assertInBand(take);
   return persist(deps, userId, {
     brief,
     product_details: productDetails,
     product_interaction: productInteraction,
+    product_profile: profile,
     script_source: 'edited',
     parent_draft_id: input.parent_draft_id ?? null,
     script_model: null,
@@ -613,6 +815,7 @@ export function toDraftView(row: DraftRow, audio: SignedAudioUrl) {
     brief: row.brief,
     product_details: row.product_details ?? null,
     product_interaction: row.product_interaction ?? null,
+    product_profile: row.product_profile ?? null,
     script: row.script,
     script_source: row.script_source,
     parent_draft_id: row.parent_draft_id,

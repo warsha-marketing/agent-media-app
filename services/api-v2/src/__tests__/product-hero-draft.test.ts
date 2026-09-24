@@ -114,6 +114,10 @@ async function start(opts: { durations: number[]; scripts?: Written[]; ttsModel?
         ttsModel: opts.ttsModel ?? 'eleven_v3',
       };
     },
+    // The Product Profile (#30) is covered in product-profile-draft.test.ts; no photo is sent here.
+    profileProduct: async () => { throw new Error('no product photo in this test'); },
+    writeProductInteraction: async () => ({ product_interaction: null, model: 'claude-test' }),
+    productPhotoKey: () => null,
     ttsModel: opts.ttsModel ?? 'eleven_v3',
     storeAudio: async ({ userId, draftId }) => {
       const key = `vnext/drafts/${userId}/${draftId}.mp3`;

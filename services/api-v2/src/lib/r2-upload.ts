@@ -141,6 +141,24 @@ export async function putPrivateObject(key: string, body: Buffer, contentType: s
   await getClient().send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }));
 }
 
+/**
+ * Read one object of the PUBLIC bucket by key (e.g. a user's uploaded product
+ * photo, for the Product Profile's vision call, #30), refusing one over
+ * `maxBytes`. Straight from the bucket: no outbound web fetch.
+ */
+export async function readPublicObject(key: string, maxBytes: number): Promise<Buffer> {
+  const env = readEnv();
+  const got = await getClient().send(new GetObjectCommand({ Bucket: env.bucket, Key: key }));
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of got.Body as AsyncIterable<Uint8Array>) {
+    total += chunk.byteLength;
+    if (total > maxBytes) throw new Error('r2: stored object is too large');
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
 /** A read capability for one private object, minted per request. */
 export interface SignedGet {
   url: string;

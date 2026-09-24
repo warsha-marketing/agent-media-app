@@ -5,11 +5,18 @@
  * this file is only HTTP: validate, call, map DraftError to a status.
  *
  *   POST /v1/drafts/product-hero          { brief, product_details?,
- *                                           dialect, voice_id }         → 201 { draft }
+ *                                           dialect, voice_id,
+ *                                           product_image_url? }        → 201 { draft }
  *   POST /v1/drafts/product-hero/revoice  { script, dialect, voice_id?,
  *                                           parent_draft_id?, brief?,
  *                                           product_details?,
- *                                           product_interaction? }      → 201 { draft }
+ *                                           product_interaction?,
+ *                                           product_profile?,
+ *                                           product_image_url? }        → 201 { draft }
+ *
+ * product_image_url (#30) is the user's own uploaded product photo; Claude
+ * (vision) reads it into the draft's Product Profile. An edited
+ * product_profile on re-voice makes a new draft like a Script edit.
  *
  * voice_id is an Approved Voice of the Dialect (GET /v1/voices, #7); anything
  * else is refused with 422 VOICE_NOT_APPROVED before a provider is called. The
@@ -44,7 +51,7 @@ import {
 import { isUuid } from '../../lib/uuid.js';
 import { sendInvalidInput, userOf } from './route-helpers.js';
 import { PRESET_NOT_QUALIFIED } from '../../presets/qualification.js';
-import { SCRIPT_DIALECTS, formatDeliveryTags } from '@agentmedia/schema';
+import { ProductProfileSchema, SCRIPT_DIALECTS, formatDeliveryTags } from '@agentmedia/schema';
 
 interface DraftRouteMiddleware {
   generateLimiter: RequestHandler;
@@ -121,7 +128,9 @@ const DRAFT_ERRORS = {
   '401': draftError('Unauthorized'),
   '404': draftError('NOT_FOUND: no such draft on this account'),
   '429': draftError('RATE_LIMITED: per-user draft ceiling'),
-  '502': draftError('DRAFT_FAILED / SCRIPT_GENERATION_FAILED: an upstream provider failed; retryable'),
+  '502': draftError(
+    'DRAFT_FAILED / SCRIPT_GENERATION_FAILED: an upstream provider failed; retryable. PRODUCT_PROFILE_FAILED: the product photo could not be read into a Product Profile after one rewrite (carries issues) — retry, or use a clear photo of the product alone and add Product Details',
+  ),
   '503': draftError(
     'DRAFTING_UNCONFIGURED: this server lacks a provider key / DRAFT_STORAGE_UNCONFIGURED: no private bucket (R2_PRIVATE_BUCKET) for draft audio',
   ),
@@ -148,20 +157,24 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
   const tagList = formatDeliveryTags();
   const guardrail =
     'PRODUCT_INTERACTION_BREAKS_GUARDRAIL: the Product Interaction contradicts a Guardrail — speech, removing the hijab/headscarf/abaya, bare arms/shoulders/skin, undressing (carries guardrail, matched and product_interaction)';
+  const photo =
+    'PRODUCT_IMAGE_NOT_HOSTED: product_image_url is not a photo this account uploaded to agent-media (upload it first; carries product_image_url); PRODUCT_PHOTO_REFUSED: the photo cannot be used for an ad';
+  const usedState =
+    'PRODUCT_INTERACTION_NOT_IN_USED_STATE: the Product Interaction written from the Product Profile still takes a part off or opens the product on camera after one rewrite (carries matched and product_interaction, to edit)';
   const outOfBand = `SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG: voiced speech outside ${MIN_SPEECH_MS / 1000}–${MAX_SPEECH_MS / 1000} s (carries action, duration_ms and the Script)`;
   return {
     paths: {
       '/v1/drafts/product-hero': post(
         'createProductHeroDraft',
-        'Product Hero draft: write a Script (plain dialect spelling, Targeted Diacritics, Delivery Tags) that sells the Product Details, in a Dialect, and voice it. Free (no credits).',
+        'Product Hero draft: read the product photo (product_image_url, recommended) into a Product Profile, write a Script (plain dialect spelling, Targeted Diacritics, Delivery Tags) that sells the Product Details and a Product Interaction from the Profile, in a Dialect, and voice it. Free (no credits).',
         bodySchema(CreateDraftInputSchema, 'create_draft_input'),
-        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, stray brackets, Latin letters) — carries the Script and issues, to fix in the editor and re-voice; ${guardrail}, after one rewrite; ${PRESET_NOT_QUALIFIED}: no Preset is a Qualified Preset in this Dialect yet (carries dialect and available; see GET /v1/presets); BRIEF_REFUSED; ${voiceRefused}`,
+        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, stray brackets, Latin letters) — carries the Script and issues, to fix in the editor and re-voice; ${guardrail}, after one rewrite; ${usedState}; ${photo}; ${PRESET_NOT_QUALIFIED}: no Preset is a Qualified Preset in this Dialect yet (carries dialect and available; see GET /v1/presets); BRIEF_REFUSED; ${voiceRefused}`,
       ),
       '/v1/drafts/product-hero/revoice': post(
         'revoiceProductHeroDraft',
-        `Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief, Product Details and Dialect carry over. The Script may carry Delivery Tags: ${tagList}.`,
+        `Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief, Product Details, Product Profile and Dialect carry over. An edited product_profile replaces the parent's and, unless product_interaction is also given, the Product Interaction is re-written from it. The Script may carry Delivery Tags: ${tagList}.`,
         bodySchema(RevoiceDraftInputSchema, 'revoice_draft_input'),
-        `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_STRAY_BRACKETS: a [ or ] outside a Delivery Tag (carries found); SCRIPT_NO_ARABIC: no Arabic text to speak (Latin words such as a brand name are allowed in an edit); DIALECT_MISMATCH (dialect differs from the parent's); ${guardrail}; ${PRESET_NOT_QUALIFIED}; ${voiceRefused}`,
+        `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_STRAY_BRACKETS: a [ or ] outside a Delivery Tag (carries found); SCRIPT_NO_ARABIC: no Arabic text to speak (Latin words such as a brand name are allowed in an edit); DIALECT_MISMATCH (dialect differs from the parent's); ${guardrail}; PRODUCT_PROFILE_BREAKS_GUARDRAIL: the edited Product Profile's words contradict a Guardrail (carries guardrail and matched); ${usedState}; ${photo}; ${PRESET_NOT_QUALIFIED}; ${voiceRefused}`,
       ),
       '/v1/drafts/{id}': {
         get: {
@@ -187,6 +200,16 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
             type: ['string', 'null'],
             description:
               'Product Interaction: how a real person uses the product, in English (e.g. perfume: "removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles"). Written with the Script; the render adds it to every hands and person shot. Edit it by re-voicing with product_interaction (a new draft); carried over on re-voice otherwise.',
+          },
+          product_profile: {
+            anyOf: [
+              {
+                ...bodySchema(ProductProfileSchema, 'product_profile'),
+                description:
+                  'Product Profile: what the system understands about the product from its photo and Product Details — category, real size (dimensions, size_class), parts and the state it is in while used (used_state; differs_from_photo when the photo shows another state), how it is used (interaction_verbs, grip), physics_risks for video, and confidence (0–1). Edit it by re-voicing with product_profile (a new draft).',
+              },
+              { type: 'null', description: 'No Product Profile: the draft was made without a product photo (or before #30).' },
+            ],
           },
           script: {
             type: 'string',
@@ -252,12 +275,16 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
               found: { type: 'array', items: { type: 'string' }, description: 'On SCRIPT_STRAY_BRACKETS: the stray brackets found.' },
               guardrail: { type: 'string', enum: ['speech', 'hijab', 'exposed', 'undress'], description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL: which Guardrail it contradicts.' },
               matched: { type: 'string', description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL: the words that matched.' },
-              product_interaction: { type: 'string', description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL: the refused Product Interaction, to edit.' },
+              product_interaction: {
+                type: 'string',
+                description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL / PRODUCT_INTERACTION_NOT_IN_USED_STATE: the refused Product Interaction, to edit.',
+              },
+              product_image_url: { type: 'string', description: 'On PRODUCT_IMAGE_NOT_HOSTED: the refused photo URL.' },
               preset: { type: 'string', description: 'The Preset refused, where one is named (skill routes).' },
               available: { type: 'array', items: { type: 'string' }, description: 'On PRESET_NOT_QUALIFIED: the Dialects some Preset is qualified for.' },
               issues: {
                 type: 'array',
-                description: 'INVALID_INPUT: zod issues. SCRIPT_CHECK_FAILED / UNKNOWN_DELIVERY_TAG / SCRIPT_STRAY_BRACKETS / SCRIPT_NO_ARABIC: Script check issues ({ code, message, found }).',
+                description: 'INVALID_INPUT: zod issues. PRODUCT_PROFILE_FAILED: why the vision reply was not a Product Profile (strings). SCRIPT_CHECK_FAILED / UNKNOWN_DELIVERY_TAG / SCRIPT_STRAY_BRACKETS / SCRIPT_NO_ARABIC: Script check issues ({ code, message, found }).',
                 items: { type: 'object' },
               },
             },
