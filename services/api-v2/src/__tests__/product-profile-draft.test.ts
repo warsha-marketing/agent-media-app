@@ -390,6 +390,9 @@ describe('Product Profile — edited by the user, re-drafted', () => {
     expect(r.status).toBe(422);
     expect(r.body.error.code).toBe('PRODUCT_PROFILE_BREAKS_GUARDRAIL');
     expect(r.body.error.guardrail).toBe('hijab');
+    // It names what the user edited: the Product Profile, not the Product Interaction.
+    expect(r.body.error.message).toMatch(/^The Product Profile breaks a Guardrail: ".*remov.*hijab"/);
+    expect(r.body.error.message).not.toMatch(/Product Interaction/);
   });
 
   it('a re-written Product Interaction is held to the used state, with one rewrite', async () => {

@@ -1,6 +1,6 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 //
-// Shot Plan review (#26, the Shot List of #28) through the real routes: POST
+// Shot Plan review (#26, #28) through the real routes: POST
 // /v1/skills/{slug}/shot-plan composes every shot of a Preset render (stable id,
 // kind, on-screen length, model → fallback, structured fields, locked
 // Guardrails per stage) behind the same draft gate as the quote; `shot_edits`

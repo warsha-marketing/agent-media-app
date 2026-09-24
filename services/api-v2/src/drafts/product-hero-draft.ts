@@ -78,7 +78,7 @@ import {
   type ScriptDialect,
 } from '@agentmedia/schema';
 import { generatedScriptIssues, scriptTextIssues, type ScriptIssue } from './script-check.js';
-import { productInteractionGuardrailIssue, type InteractionGuardrailIssue } from '@agentmedia/shot-prompts';
+import { guardrailIssue, productInteractionGuardrailIssue, type InteractionGuardrailIssue } from '@agentmedia/shot-prompts';
 import { interactionStateIssue } from './interaction-state.js';
 import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
 import { PresetError, assertDialectDraftable, type PresetAccess } from '../presets/qualification.js';
@@ -634,10 +634,19 @@ async function profileChecked(deps: DraftDeps, request: ProfileProductInput): Pr
   return { profile: ProductProfileSchema.parse(reply.profile), model: reply.model };
 }
 
-/** The Guardrails hold for the user's own words in a Profile too (they reach the shot prompts, #30). */
+/**
+ * The first Guardrail a Product Profile's words contradict (they reach the
+ * Product Interaction and the shot prompts, #30), named as the Profile's.
+ */
 function profileGuardrailIssue(profile: ProductProfile): InteractionGuardrailIssue | null {
   const words = [profile.used_state, profile.grip, ...profile.interaction_verbs, ...profile.parts.map((p) => p.name)].join(', ');
-  return productInteractionGuardrailIssue(words);
+  const issue = guardrailIssue(words);
+  if (!issue) return null;
+  return {
+    guardrail: issue.guardrail,
+    matched: issue.matched,
+    message: `The Product Profile breaks a Guardrail: "${issue.matched}" — ${issue.why}. Describe only the product: its parts, the state it is used in, its grip and how it is used.`,
+  };
 }
 
 /**

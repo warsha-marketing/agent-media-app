@@ -1,7 +1,7 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * Shot Plan review (#26, reshaped into the Shot List by #28) — the Preset
+ * Shot Plan review (#26, #28) — the Preset
  * render's shots, composed at the API so the user can see (and edit the fields
  * of) each Shot Prompt before the render.
  *

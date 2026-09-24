@@ -273,8 +273,8 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
               tags: { type: 'array', items: { type: 'string' }, description: 'On UNKNOWN_DELIVERY_TAG: the refused tags, as written (e.g. "[wisper]").' },
               allowed: { type: 'array', items: { type: 'string' }, description: 'On UNKNOWN_DELIVERY_TAG: the allowed Delivery Tags.' },
               found: { type: 'array', items: { type: 'string' }, description: 'On SCRIPT_STRAY_BRACKETS: the stray brackets found.' },
-              guardrail: { type: 'string', enum: ['speech', 'hijab', 'exposed', 'undress'], description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL: which Guardrail it contradicts.' },
-              matched: { type: 'string', description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL: the words that matched.' },
+              guardrail: { type: 'string', enum: ['speech', 'hijab', 'exposed', 'undress'], description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL / PRODUCT_PROFILE_BREAKS_GUARDRAIL: which Guardrail it contradicts.' },
+              matched: { type: 'string', description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL / PRODUCT_PROFILE_BREAKS_GUARDRAIL: the words that matched.' },
               product_interaction: {
                 type: 'string',
                 description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL / PRODUCT_INTERACTION_NOT_IN_USED_STATE: the refused Product Interaction, to edit.',

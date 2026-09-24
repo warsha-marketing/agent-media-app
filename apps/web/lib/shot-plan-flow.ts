@@ -1,7 +1,7 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * Shot Plan review (#26, the Shot List of #28) in the web flow, as pure
+ * Shot Plan review (#26, #28) in the web flow, as pure
  * functions (tested by scripts/tests/shot-plan-flow.test.ts, without a browser).
  *
  *   quote on screen ─► "Review shots" (collapsed) ─► POST …/shot-plan ─► cards

@@ -1,4 +1,4 @@
-// Shot Plan review in the web flow (#26, the Shot List of #28): reading the
+// Shot Plan review in the web flow (#26, #28): reading the
 // plan (structured fields, Guardrails per stage), turning the cards' fields
 // into `shot_edits` ({ shot_id: { field: value } }, only what changed), the
 // request and its Idempotency-Key lifecycle with edits, what ran on the

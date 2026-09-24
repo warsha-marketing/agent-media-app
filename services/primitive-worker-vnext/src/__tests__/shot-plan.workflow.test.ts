@@ -1,6 +1,6 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 //
-// Shot Plan review (#26, the Shot List of #28) through the real Preset
+// Shot Plan review (#26, #28) through the real Preset
 // workflows: a render with and without field edits. The worker builds every
 // frame and clip prompt as fields + that stage's Guardrails from its OWN copy
 // of the Guardrails, so an edit can change what happens in a shot but never

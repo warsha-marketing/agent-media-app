@@ -3,7 +3,7 @@
 'use client';
 
 /**
- * Shot Plan review (#26, the Shot List of #28) on /dashboard/product-hero: an
+ * Shot Plan review (#26, #28) on /dashboard/product-hero: an
  * optional, collapsed "Review shots" panel before Confirm. One card per shot
  * the render will make — number, kind, on-screen length, model → fallback —
  * with its scene (editable, "Reset to Preset"), its energy (calm | natural |
@@ -253,7 +253,7 @@ export function RenderedShots({ shots }: { shots: unknown }) {
   if (!rendered.length) return null;
   return (
     <details className="rounded-xl p-3 text-sm" style={inner}>
-      <summary className="cursor-pointer" style={text}>The prompts that ran ({rendered.length} shots)</summary>
+      <summary className="cursor-pointer" style={text}>The Shot Prompts that ran ({rendered.length} shots)</summary>
       <ol className="mt-2 flex flex-col gap-2">
         {rendered.map((s, i) => (
           <li key={s.shotId || i} className="flex flex-col gap-1">

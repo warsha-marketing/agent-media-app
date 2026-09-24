@@ -1,6 +1,6 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 //
-// The Shot Plan (#26, reshaped into the Shot List by #28): shot ids that do not
+// The Shot Plan (#26, #28): shot ids that do not
 // depend on a shot's position, each shot's structured fields composed in a
 // fixed order, the Guardrails every shot keeps per stage whatever its fields
 // say, and the check that refuses an edit that cannot render. The default

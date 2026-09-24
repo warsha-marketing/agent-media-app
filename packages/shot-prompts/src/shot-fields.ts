@@ -1,7 +1,7 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * A shot's structured fields (#28, the Shot List): what the director layer
+ * A shot's structured fields (#28, the Shot Plan): what the director layer
  * (#27) reads and writes per shot, instead of one block of scene text.
  *
  *   framing                 — shot size and point of view ("medium close-up", "first-person POV")
