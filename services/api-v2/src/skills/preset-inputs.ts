@@ -12,7 +12,8 @@
  * One shape for every Preset:
  *   presetRenderInputSchema(preset, extra) — the skill input of a Preset render:
  *       draft_id, the product photo (exactly one), aspect_ratio, music, the
- *       Modesty choice `modesty` (where hands or a person are on screen), plus
+ *       Modesty choice `modesty` (where hands or a person are on screen),
+ *       optional `shot_edits` (Shot Plan review, #26), plus
  *       the Preset's own fields. A `captions`
  *       field is refused (#22, refuseCaptionsField).
  *   PresetInputResolver — SkillEntry.presetInputs. The quote and the run both
@@ -43,6 +44,7 @@ import {
   type PresetDefinition,
 } from '@agentmedia/schema';
 import { RenderRefusal, refuseCaptionsField, type RenderableDraft } from './product-hero-render.js';
+import { shotEditsField } from './shot-plan.js';
 
 // ── The resolver ─────────────────────────────────────────────────────────────
 
@@ -144,6 +146,8 @@ const renderFields = (preset: Pick<PresetDefinition, 'aspectRatio' | 'shotKinds'
       'Music Bed under the voice, on by default. Set false for a voice-only Short, e.g. when the user will add a sound in TikTok (trending sounds are licensed only inside TikTok, so they can never be baked in). The quote says whether a bed will be mixed.',
     ),
   ...(takesModesty(preset) ? { modesty: modestyField } : {}),
+  // Shot Plan review (#26): scene text per shot id; checked on the quote and the run (skills/shot-plan.ts).
+  shot_edits: shotEditsField,
 });
 
 /**

@@ -28,6 +28,8 @@ import type { PresetDefinition } from '@agentmedia/schema';
 import { PresetError, assertPresetAvailable } from '../../presets/qualification.js';
 import { supabasePresetAccess } from '../../presets/providers.js';
 import type { PresetInputs } from '../../skills/preset-inputs.js'; // #19
+import { composeRenderShotPlan, runShotEdits, shotPlanView } from '../../skills/shot-plan.js'; // #26
+import type { ShotPlanShot } from '@agentmedia/shot-prompts';
 
 /**
  * Credits already COMMITTED to the user's in-flight (submitted/running) jobs.
@@ -207,6 +209,8 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     // A Preset's own inputs (Reaction: character, Modesty Default) refuse here as on the run.
     const own = await presetInputsOrRespond(res, userId, slug, skill.preset, input, draft, 'quote');
     if (!own) return;
+    // Shot Plan review (#26): scene edits are refused here as on the run; they never change the price.
+    if (!shotPlanOrRespond(res, slug, skill.preset, draft, own, input.shot_edits)) return;
     input = { ...input, duration_ms: draft.duration_ms };
     quoteExtras = {
       music_bed: musicBedView(presetMusicBed(skill.preset, input.music, draft.id)),
@@ -249,6 +253,49 @@ export async function quoteSkillRoute(req: Request, res: Response): Promise<void
     sufficient: free === null ? true : free >= credits,
     ...quoteExtras,
   });
+}
+
+/**
+ * POST /v1/skills/:slug/shot-plan — Shot Plan review (#26).
+ *
+ * The shots a Preset render will make, before the user confirms: the same body
+ * as the quote (validated with the same schema, so `shot_edits` too), the same
+ * draft gate (owner-only; not rendered or rendering; the speech band; an
+ * Approved Voice; a Qualified Preset, which operators pass, as when drafting)
+ * and the same Preset inputs. Read-only and free. Each shot: its stable
+ * shot_id, kind, on-screen length, model and fallback, its scene text
+ * (editable, `shot_edits` on the quote and the run) and its locked Guardrails.
+ */
+export async function shotPlanRoute(req: Request, res: Response): Promise<void> {
+  const userId = (req as { userId?: string }).userId;
+  if (!userId) {
+    res.status(401).json({ error: 'unauthorized' });
+    return;
+  }
+  const slug = String(req.params.slug ?? '');
+  const skill = getSkill(slug);
+  if (!skill) {
+    res.status(404).json({ error: 'unknown_skill', slug });
+    return;
+  }
+  if (!skill.preset) {
+    res.status(404).json({ error: 'not_a_preset_skill', skill: slug, detail: 'Only a Preset render skill has a Shot Plan.' });
+    return;
+  }
+  if (hasCaptionsField(req.body)) return sendRenderRefusal(res, slug, captionsMoved());
+  const parsed = skill.inputSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_input', skill: slug, detail: parsed.error.flatten() });
+    return;
+  }
+  const input = parsed.data as Record<string, unknown>;
+  const draft = await resolveDraftOrRespond(res, userId, slug, skill.preset, input);
+  if (!draft) return;
+  const own = await presetInputsOrRespond(res, userId, slug, skill.preset, input, draft, 'quote');
+  if (!own) return;
+  const plan = shotPlanOrRespond(res, slug, skill.preset, draft, own, input.shot_edits);
+  if (!plan) return;
+  res.status(200).json(shotPlanView(slug, skill.preset, draft, plan));
 }
 
 /**
@@ -738,7 +785,29 @@ function sendInsufficientCredits(
 }
 
 function sendRenderRefusal(res: Response, slug: string, refusal: RenderRefusal): void {
-  res.status(refusal.status).json({ error: refusal.code, skill: slug, detail: refusal.message });
+  res.status(refusal.status).json({ error: refusal.code, skill: slug, detail: refusal.message, ...(refusal.details ?? {}) });
+}
+
+/**
+ * The Shot Plan of a Preset render call (#26), with its `shot_edits` checked;
+ * else the refusal (422 SHOT_EDIT_INVALID / SHOT_EDIT_BREAKS_GUARDRAIL) is
+ * sent and null returned. Shared by the shot-plan, quote and run routes.
+ */
+function shotPlanOrRespond(
+  res: Response,
+  slug: string,
+  preset: PresetDefinition,
+  draft: RenderableDraft,
+  own: PresetInputs,
+  edits: unknown,
+): ShotPlanShot[] | null {
+  try {
+    return composeRenderShotPlan(preset, draft, own, edits);
+  } catch (err) {
+    if (err instanceof RenderRefusal) sendRenderRefusal(res, slug, err);
+    else res.status(500).json({ error: 'shot_plan_failed', skill: slug, detail: errorMessage(err) });
+    return null;
+  }
 }
 
 /** The draft a Preset render call names, if the caller may render it as that
@@ -861,6 +930,11 @@ async function dispatchPresetRender(
   // The Preset's own inputs (Reaction #19: saved character, Modesty Default).
   const own = await presetInputsOrRespond(res, userId, slug, preset, body, draft, 'run');
   if (!own) return;
+  // Shot Plan review (#26): the scene edits, checked against the plan the worker will render.
+  const plan = shotPlanOrRespond(res, slug, preset, draft, own, body.shot_edits);
+  if (!plan) return;
+  const shotEdits = runShotEdits(plan);
+  const edited = Object.keys(shotEdits).length > 0;
 
   let productImageUrl: string;
   try {
@@ -886,6 +960,8 @@ async function dispatchPresetRender(
     music: body.music !== false,
     music_bed: musicBed.on ? musicBed.track.id : null,
     ...own.run,
+    // #26: the scene text the user edited, by shot id (the Short's final_output.shots has each final prompt).
+    ...(edited ? { shot_edits: shotEdits } : {}),
   };
 
   const preflight = await preflightCreditCheck(userId, slug, runInput);
@@ -969,6 +1045,8 @@ async function dispatchPresetRender(
     // #25: the draft's Product Interaction, for every hands and person prompt.
     product_interaction: draft.product_interaction ?? null,
     ...own.workflow,
+    // #26: only validated scene text; the worker re-checks it and adds its own Guardrails.
+    ...(edited ? { shot_edits: shotEdits } : {}),
   };
 
   try {
