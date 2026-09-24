@@ -78,7 +78,14 @@ import {
   type ScriptDialect,
 } from '@agentmedia/schema';
 import { generatedScriptIssues, scriptTextIssues, type ScriptIssue } from './script-check.js';
-import { guardrailIssue, productInteractionGuardrailIssue, type InteractionGuardrailIssue } from '@agentmedia/shot-prompts';
+import {
+  bannedMotionIssue,
+  bannedMotionMessage,
+  choosePlaybook,
+  guardrailIssue,
+  productInteractionGuardrailIssue,
+  type InteractionGuardrailIssue,
+} from '@agentmedia/shot-prompts';
 import { interactionStateIssue } from './interaction-state.js';
 import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
 import { PresetError, assertDialectDraftable, type PresetAccess } from '../presets/qualification.js';
@@ -544,6 +551,42 @@ function interactionRefused(issue: InteractionGuardrailIssue, interaction: strin
   });
 }
 
+/** A Product Interaction asking for a motion its Playbook bans (#32): which Playbook and rule, the words, and why. */
+interface InteractionMotionIssue {
+  playbook: string;
+  rule: string;
+  matched: string;
+  message: string;
+}
+
+/**
+ * The first motion `interaction` asks for that the Playbook of `profile`'s
+ * category bans (#32, English or Arabic); null when it asks for none, or
+ * there is no Profile (so no Playbook).
+ */
+export function interactionMotionIssue(interaction: string | null, profile: ProductProfile | null): InteractionMotionIssue | null {
+  const chosen = choosePlaybook(profile);
+  if (!interaction || !chosen) return null;
+  const issue = bannedMotionIssue(interaction, chosen.playbook);
+  if (!issue) return null;
+  return {
+    playbook: issue.playbook,
+    rule: issue.rule,
+    matched: issue.matched,
+    message: `${bannedMotionMessage('The Product Interaction', issue, chosen.playbook.name)} Describe one simple action the Playbook allows.`,
+  };
+}
+
+/** A Product Interaction refused for a banned motion (#32), for the user to edit. */
+function interactionBannedMotion(issue: InteractionMotionIssue, interaction: string): DraftError {
+  return new DraftError(422, 'PRODUCT_INTERACTION_BANNED_MOTION', issue.message, {
+    playbook: issue.playbook,
+    rule: issue.rule,
+    matched: issue.matched,
+    product_interaction: interaction,
+  });
+}
+
 /**
  * Ask the writer for a Script and hold it to the Script check (Arabic-only,
  * allowed Delivery Tags, Targeted Diacritics) and its Product Interaction to
@@ -558,19 +601,27 @@ async function writeChecked(deps: DraftDeps, request: WriteScriptInput): Promise
   let guardrail = productInteractionGuardrailIssue(written.product_interaction);
   // The Product Interaction written from a Profile keeps the product in its used state (#30).
   let state = interactionStateIssue(written.product_interaction, profile);
-  if (issues.length === 0 && !guardrail && !state) return written;
-  const interactionRefusal = guardrail ?? state;
+  // …and to its Playbook's banned motions (#32).
+  let motion = interactionMotionIssue(written.product_interaction, profile);
+  if (issues.length === 0 && !guardrail && !state && !motion) return written;
+  const interactionRefusal = guardrail ?? state ?? motion;
   written = await write(deps, {
     ...request,
     rejected: {
       script: written.script,
-      reasons: [...issues.map((i) => i.message), ...(guardrail ? [guardrail.message] : []), ...(state ? [state.message] : [])],
+      reasons: [
+        ...issues.map((i) => i.message),
+        ...(guardrail ? [guardrail.message] : []),
+        ...(state ? [state.message] : []),
+        ...(motion ? [motion.message] : []),
+      ],
       ...(interactionRefusal && written.product_interaction ? { product_interaction: written.product_interaction } : {}),
     },
   });
   issues = generatedScriptIssues(written.script, written.product_terms);
   guardrail = productInteractionGuardrailIssue(written.product_interaction);
   state = interactionStateIssue(written.product_interaction, profile);
+  motion = interactionMotionIssue(written.product_interaction, profile);
   if (issues.length > 0) {
     throw new DraftError(
       422,
@@ -582,6 +633,7 @@ async function writeChecked(deps: DraftDeps, request: WriteScriptInput): Promise
   }
   if (guardrail) throw interactionRefused(guardrail, written.product_interaction ?? '');
   if (state) throw interactionNotInUsedState(state.message, state.matched, written.product_interaction ?? '');
+  if (motion) throw interactionBannedMotion(motion, written.product_interaction ?? '');
   return written;
 }
 
@@ -679,7 +731,9 @@ function profileGuardrailIssue(profile: ProductProfile): ProfileGuardrailIssue |
  */
 async function interactionFromProfile(deps: DraftDeps, request: WriteInteractionInput): Promise<string | null> {
   const check = (text: string | null) =>
-    productInteractionGuardrailIssue(text) ?? interactionStateIssue(text, request.product_profile);
+    productInteractionGuardrailIssue(text) ??
+    interactionStateIssue(text, request.product_profile) ??
+    interactionMotionIssue(text, request.product_profile);
   let text = tidyProductInteraction((await deps.writeProductInteraction(request)).product_interaction);
   let issue = check(text);
   if (!issue) return text;
@@ -691,6 +745,8 @@ async function interactionFromProfile(deps: DraftDeps, request: WriteInteraction
   if (guardrail) throw interactionRefused(guardrail, text ?? '');
   const state = interactionStateIssue(text, request.product_profile);
   if (state) throw interactionNotInUsedState(state.message, state.matched, text ?? '');
+  const motion = interactionMotionIssue(text, request.product_profile);
+  if (motion) throw interactionBannedMotion(motion, text ?? '');
   return text;
 }
 
@@ -818,6 +874,11 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
   }
   const voice = await approvedVoice(deps, voiceId, input.dialect);
   if (photoKey) profile = (await profileChecked(deps, { photo_key: photoKey, brief, product_details: productDetails })).profile;
+  // …and the user's own Product Interaction to its Playbook's banned motions (#32): the Playbook of the Profile this draft carries.
+  if (input.product_interaction !== undefined && productInteraction) {
+    const motion = interactionMotionIssue(productInteraction, profile);
+    if (motion) throw interactionBannedMotion(motion, productInteraction);
+  }
   // An edited Profile re-writes the Product Interaction from it, unless the user edited that too.
   const profileEdited = !!input.product_profile && JSON.stringify(input.product_profile) !== JSON.stringify(parentProfile);
   if (profile && profileEdited && input.product_interaction === undefined) {

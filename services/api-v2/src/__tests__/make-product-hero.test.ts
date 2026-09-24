@@ -652,6 +652,7 @@ describe('make_product_hero in the OpenAPI spec', () => {
     expect(runStatus.properties.credits.properties?.refund_status.enum).toEqual(['not_due', 'pending', 'refunded']);
     expect(Object.keys(RENDER_REFUSALS).sort()).toEqual(
       [
+        'SHOT_EDIT_BANNED_MOTION', // #32
         'SHOT_EDIT_BREAKS_GUARDRAIL', // #26
         'SHOT_EDIT_INVALID', // #26
         'captions_moved',

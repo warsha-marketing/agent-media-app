@@ -14,6 +14,7 @@ import { decideMakeUgcRoute, type MakeUgcProps } from './make-ugc-router.js';
 // Shared take planner — the SAME module the worker plans with, so quote and run
 // cannot disagree. See packages/schema/src/take-planner.ts.
 import { countWords, fitDuration, planTakeDurations, quotePresetCredits, VIDEO_CLIP_CREDITS } from '@agentmedia/schema';
+import { playbookPreset, resolvePlaybookChoice } from '@agentmedia/shot-prompts';
 import { SKILLS } from './registry.js';
 
 // Portraits are free; a character sheet is charged only standalone (a sheet
@@ -153,7 +154,11 @@ export function quoteSkillCredits(
     const raw = (i as { duration_ms?: unknown }).duration_ms;
     // #31: the In-use Reference step, as the route decided it (renderMakesInUseReference) and the run stored it.
     const inUseReference = (i as { in_use_reference?: unknown }).in_use_reference === true;
-    return quotePresetCredits(preset, typeof raw === 'number' ? raw : Number.NaN, { inUseReference });
+    // A Playbook's shot pattern (#32) replaces the Preset's order with its own
+    // kinds: priced as the worker plans it. An unknown or stale choice throws
+    // (PlaybookError): fail closed, like a missing duration.
+    const planned = playbookPreset(preset, resolvePlaybookChoice((i as { playbook?: unknown }).playbook));
+    return quotePresetCredits(planned, typeof raw === 'number' ? raw : Number.NaN, { inUseReference });
   }
   switch (slug) {
     case 'make_portrait':
