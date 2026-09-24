@@ -63,6 +63,7 @@ import {
   type ScriptDialect,
 } from '@agentmedia/schema';
 import { generatedScriptIssues, scriptTextIssues, type ScriptIssue } from './script-check.js';
+import { productInteractionGuardrailIssue, type InteractionGuardrailIssue } from './interaction-check.js';
 import { VoiceError, approvedVoiceFor, type VoiceDeps, type VoiceRow } from '../voices/catalog.js';
 import { PresetError, assertDialectDraftable, type PresetAccess } from '../presets/qualification.js';
 
@@ -195,8 +196,12 @@ export interface WriteScriptInput {
   delivery_tags: boolean;
   /** Set on the duration rewrite: what the last Script measured and which way to go. */
   previous?: { script: string; duration_ms: number; direction: 'shorten' | 'lengthen' };
-  /** Set on the check rewrite: the last Script and why the Script check refused it. */
-  rejected?: { script: string; reasons: string[] };
+  /**
+   * Set on the check rewrite: the last Script and why the checks refused it —
+   * the Script check, and the Product Interaction guardrail check (then with
+   * the refused Product Interaction).
+   */
+  rejected?: { script: string; reasons: string[]; product_interaction?: string };
 }
 
 export interface WrittenScript {
@@ -443,26 +448,48 @@ async function write(deps: DraftDeps, request: WriteScriptInput): Promise<Writte
   return { ...written, script, product_interaction: tidyProductInteraction(written.product_interaction) };
 }
 
+/** A Product Interaction refused by the guardrail check (#25), for the user to edit. */
+function interactionRefused(issue: InteractionGuardrailIssue, interaction: string): DraftError {
+  return new DraftError(422, 'PRODUCT_INTERACTION_BREAKS_GUARDRAIL', issue.message, {
+    guardrail: issue.guardrail,
+    matched: issue.matched,
+    product_interaction: interaction,
+  });
+}
+
 /**
  * Ask the writer for a Script and hold it to the Script check (Arabic-only,
- * allowed Delivery Tags, Targeted Diacritics). A refused Script gets ONE
- * rewrite told why; a second refusal goes back to the user with the Script and
- * the reasons, so they can fix it in the editor and re-voice.
+ * allowed Delivery Tags, Targeted Diacritics) and its Product Interaction to
+ * the Guardrails (#25). A refused reply gets ONE rewrite told why; a second
+ * refusal goes back to the user with the Script (or the Product Interaction)
+ * and the reasons, so they can fix it in the editor and re-voice.
  */
 async function writeChecked(deps: DraftDeps, request: WriteScriptInput): Promise<WrittenScript> {
   let written = await write(deps, request);
   let issues = generatedScriptIssues(written.script, written.product_terms);
-  if (issues.length === 0) return written;
-  written = await write(deps, { ...request, rejected: { script: written.script, reasons: issues.map((i) => i.message) } });
+  let guardrail = productInteractionGuardrailIssue(written.product_interaction);
+  if (issues.length === 0 && !guardrail) return written;
+  written = await write(deps, {
+    ...request,
+    rejected: {
+      script: written.script,
+      reasons: [...issues.map((i) => i.message), ...(guardrail ? [guardrail.message] : [])],
+      ...(guardrail && written.product_interaction ? { product_interaction: written.product_interaction } : {}),
+    },
+  });
   issues = generatedScriptIssues(written.script, written.product_terms);
-  if (issues.length === 0) return written;
-  throw new DraftError(
-    422,
-    'SCRIPT_CHECK_FAILED',
-    `The written Script did not pass the Script check: ${issues.map((i) => i.message).join(' ')} ` +
-      'Fix it in the editor and re-voice, or add Product Details and write again.',
-    { script: written.script, issues },
-  );
+  guardrail = productInteractionGuardrailIssue(written.product_interaction);
+  if (issues.length > 0) {
+    throw new DraftError(
+      422,
+      'SCRIPT_CHECK_FAILED',
+      `The written Script did not pass the Script check: ${issues.map((i) => i.message).join(' ')} ` +
+        'Fix it in the editor and re-voice, or add Product Details and write again.',
+      { script: written.script, issues },
+    );
+  }
+  if (guardrail) throw interactionRefused(guardrail, written.product_interaction ?? '');
+  return written;
 }
 
 /** Write a checked Script, then voice and measure it. */
@@ -552,6 +579,12 @@ export async function revoiceDraft(deps: DraftDeps, userId: string, input: Revoi
   await assertQualified(deps, userId, input.dialect);
   const issues = scriptTextIssues(input.script);
   if (issues.length) throw refuseEditedScript(issues);
+  // The user's own Product Interaction is held to the Guardrails (#25); one
+  // carried over from the parent was checked when that draft was saved.
+  if (input.product_interaction !== undefined && productInteraction) {
+    const guardrail = productInteractionGuardrailIssue(productInteraction);
+    if (guardrail) throw interactionRefused(guardrail, productInteraction);
+  }
   if (!voiceId) {
     throw new DraftError(400, 'VOICE_REQUIRED', 'Pick an Approved Voice for this Dialect (voice_id) and re-voice.');
   }

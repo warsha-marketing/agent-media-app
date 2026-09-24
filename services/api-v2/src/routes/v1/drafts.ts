@@ -146,6 +146,8 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
   });
   const voiceRefused = 'VOICE_NOT_APPROVED: voice_id is not an Approved Voice of the Dialect (unknown, pending, revoked or another Dialect)';
   const tagList = formatDeliveryTags();
+  const guardrail =
+    'PRODUCT_INTERACTION_BREAKS_GUARDRAIL: the Product Interaction contradicts a Guardrail — speech, removing the hijab/headscarf/abaya, bare arms/shoulders/skin, undressing (carries guardrail, matched and product_interaction)';
   const outOfBand = `SCRIPT_TOO_SHORT / SCRIPT_TOO_LONG: voiced speech outside ${MIN_SPEECH_MS / 1000}–${MAX_SPEECH_MS / 1000} s (carries action, duration_ms and the Script)`;
   return {
     paths: {
@@ -153,13 +155,13 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
         'createProductHeroDraft',
         'Product Hero draft: write a Script (plain dialect spelling, Targeted Diacritics, Delivery Tags) that sells the Product Details, in a Dialect, and voice it. Free (no credits).',
         bodySchema(CreateDraftInputSchema, 'create_draft_input'),
-        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, stray brackets, Latin letters) — carries the Script and issues, to fix in the editor and re-voice; ${PRESET_NOT_QUALIFIED}: no Preset is a Qualified Preset in this Dialect yet (carries dialect and available; see GET /v1/presets); BRIEF_REFUSED; ${voiceRefused}`,
+        `${outOfBand}; SCRIPT_CHECK_FAILED: the written Script failed the Script check twice (unmarked product nouns, unknown tags, stray brackets, Latin letters) — carries the Script and issues, to fix in the editor and re-voice; ${guardrail}, after one rewrite; ${PRESET_NOT_QUALIFIED}: no Preset is a Qualified Preset in this Dialect yet (carries dialect and available; see GET /v1/presets); BRIEF_REFUSED; ${voiceRefused}`,
       ),
       '/v1/drafts/product-hero/revoice': post(
         'revoiceProductHeroDraft',
         `Voice an edited Script verbatim as a NEW draft. With parent_draft_id, the parent's Brief, Product Details and Dialect carry over. The Script may carry Delivery Tags: ${tagList}.`,
         bodySchema(RevoiceDraftInputSchema, 'revoice_draft_input'),
-        `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_STRAY_BRACKETS: a [ or ] outside a Delivery Tag (carries found); SCRIPT_NO_ARABIC: no Arabic text to speak (Latin words such as a brand name are allowed in an edit); DIALECT_MISMATCH (dialect differs from the parent's); ${PRESET_NOT_QUALIFIED}; ${voiceRefused}`,
+        `${outOfBand}; UNKNOWN_DELIVERY_TAG: a bracketed tag that is not an allowed Delivery Tag (carries tags and allowed); SCRIPT_STRAY_BRACKETS: a [ or ] outside a Delivery Tag (carries found); SCRIPT_NO_ARABIC: no Arabic text to speak (Latin words such as a brand name are allowed in an edit); DIALECT_MISMATCH (dialect differs from the parent's); ${guardrail}; ${PRESET_NOT_QUALIFIED}; ${voiceRefused}`,
       ),
       '/v1/drafts/{id}': {
         get: {
@@ -248,6 +250,9 @@ export function draftOpenApi(): { paths: Record<string, unknown>; schemas: Recor
               tags: { type: 'array', items: { type: 'string' }, description: 'On UNKNOWN_DELIVERY_TAG: the refused tags, as written (e.g. "[wisper]").' },
               allowed: { type: 'array', items: { type: 'string' }, description: 'On UNKNOWN_DELIVERY_TAG: the allowed Delivery Tags.' },
               found: { type: 'array', items: { type: 'string' }, description: 'On SCRIPT_STRAY_BRACKETS: the stray brackets found.' },
+              guardrail: { type: 'string', enum: ['speech', 'hijab', 'exposed', 'undress'], description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL: which Guardrail it contradicts.' },
+              matched: { type: 'string', description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL: the words that matched.' },
+              product_interaction: { type: 'string', description: 'On PRODUCT_INTERACTION_BREAKS_GUARDRAIL: the refused Product Interaction, to edit.' },
               preset: { type: 'string', description: 'The Preset refused, where one is named (skill routes).' },
               available: { type: 'array', items: { type: 'string' }, description: 'On PRESET_NOT_QUALIFIED: the Dialects some Preset is qualified for.' },
               issues: {

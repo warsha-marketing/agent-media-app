@@ -1029,3 +1029,81 @@ describe('Product Interaction — edited by the user, like the Script', () => {
     ).toBe(false);
   });
 });
+
+describe('Product Interaction — held to the Guardrails when saved', () => {
+  const create = (h: Harness) =>
+    call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Ad', product_details: RUMI_DETAILS, dialect: 'levantine', voice_id: VOICE });
+
+  it('rewrites a written interaction that breaks a Guardrail once, telling the writer why', async () => {
+    const h = await start({
+      durations: [9000],
+      scripts: [
+        { script: LIVE_SCRIPT, product_terms: LIVE_TERMS, product_interaction: 'takes off her hijab and sprays her hair' },
+        { script: LIVE_SCRIPT, product_terms: LIVE_TERMS, product_interaction: PERFUME },
+      ],
+    });
+    const r = await create(h);
+    expect(r.status).toBe(201);
+    expect(r.body.draft.product_interaction).toBe(PERFUME);
+    expect(h.calls.write).toHaveLength(2);
+    const rejected = h.calls.write[1].rejected as { reasons: string[]; product_interaction?: string };
+    expect(rejected.reasons.join(' ')).toMatch(/Guardrail/);
+    expect(rejected.reasons.join(' ')).toContain('takes off her hijab');
+    expect(rejected.product_interaction).toBe('takes off her hijab and sprays her hair');
+    // The rewrite prompt shows the writer the refused interaction.
+    expect(userPrompt(h.calls.write[1] as never)).toContain('takes off her hijab and sprays her hair');
+  });
+
+  it('a second refusal is a 422 PRODUCT_INTERACTION_BREAKS_GUARDRAIL with the matched reason, before any voice is paid for', async () => {
+    const h = await start({
+      durations: [9000],
+      scripts: [
+        { script: LIVE_SCRIPT, product_terms: LIVE_TERMS, product_interaction: 'sprays it and talks to the camera' },
+        { script: LIVE_SCRIPT, product_terms: LIVE_TERMS, product_interaction: 'sprays it and says wow' },
+      ],
+    });
+    const r = await create(h);
+    expect(r.status).toBe(422);
+    expect(r.body.error.code).toBe('PRODUCT_INTERACTION_BREAKS_GUARDRAIL');
+    expect(r.body.error.guardrail).toBe('speech');
+    expect(r.body.error.matched).toBe('says');
+    expect(r.body.error.product_interaction).toBe('sprays it and says wow');
+    expect(h.calls.voice).toHaveLength(0);
+    expect(h.rows).toHaveLength(0);
+  });
+
+  it.each<[string, string]>([
+    ['sprays on her bare shoulders', 'exposed'],
+    ['تخلع الحجاب وترش العطر', 'hijab'],
+    ['تتكلّم للكاميرا عن الرائحة', 'speech'],
+    ['undresses and sprays', 'undress'],
+  ])('refuses the user’s edit on re-voice: %s', async (text, guardrail) => {
+    const h = await start({ durations: [9000, 9000], scripts: [{ script: SCRIPT_A, product_terms: [], product_interaction: PERFUME }] });
+    const first = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Ad', dialect: 'levantine', voice_id: VOICE })).body.draft;
+    const r = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', {
+      script: first.script, dialect: 'levantine', parent_draft_id: first.id, product_interaction: text,
+    });
+    expect(r.status).toBe(422);
+    expect(r.body.error.code).toBe('PRODUCT_INTERACTION_BREAKS_GUARDRAIL');
+    expect(r.body.error.guardrail).toBe(guardrail);
+    expect(r.body.error.message).toContain(r.body.error.matched);
+    expect(h.calls.voice).toHaveLength(1); // only the first draft's
+    expect(h.rows).toHaveLength(1);
+  });
+
+  it('saves a realistic edit (perfume spray on the wrist) and carries an old parent’s over unchecked', async () => {
+    const h = await start({ durations: [9000, 9000, 9000], scripts: [{ script: SCRIPT_A, product_terms: [], product_interaction: COFFEE }] });
+    const first = (await call(h, 'POST', '/v1/drafts/product-hero', 'user-a', { brief: 'Ad', dialect: 'levantine', voice_id: VOICE })).body.draft;
+    const ok = await call(h, 'POST', '/v1/drafts/product-hero/revoice', 'user-a', {
+      script: first.script, dialect: 'levantine', parent_draft_id: first.id, product_interaction: PERFUME,
+    });
+    expect(ok.status).toBe(201);
+    expect(ok.body.draft.product_interaction).toBe(PERFUME);
+  });
+
+  it('documents the code', () => {
+    const spec = draftOpenApi();
+    expect((spec.paths['/v1/drafts/product-hero'] as any).post.responses['422'].description).toContain('PRODUCT_INTERACTION_BREAKS_GUARDRAIL');
+    expect((spec.paths['/v1/drafts/product-hero/revoice'] as any).post.responses['422'].description).toContain('PRODUCT_INTERACTION_BREAKS_GUARDRAIL');
+  });
+});
