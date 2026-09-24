@@ -1,14 +1,18 @@
-// Shot Plan review in the web flow (#26): reading the plan, turning the cards'
-// text into `shot_edits` (only what changed), the request and its
-// Idempotency-Key lifecycle with edits, what ran on the finished Short, and the
-// mirrors of @agentmedia/shot-prompts (the length cap, the tidy, the local
-// hints, the model names) held equal to the originals.
+// Shot Plan review in the web flow (#26, the Shot List of #28): reading the
+// plan (structured fields, Guardrails per stage), turning the cards' fields
+// into `shot_edits` ({ shot_id: { field: value } }, only what changed), the
+// request and its Idempotency-Key lifecycle with edits, what ran on the
+// finished Short, and the mirrors of @agentmedia/shot-prompts (the length cap,
+// the energies, the tidy, the local hints, the model names) held equal to the
+// originals.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ENERGIES,
   MODEL_NAMES,
   SCENE_TEXT_MAX,
+  fieldRows,
   kindLabel,
   lengthLabel,
   modelLine,
@@ -29,23 +33,48 @@ import {
   type RenderEvent,
   type RenderState,
 } from '../../apps/web/lib/product-hero-flow.ts';
-import {
-  SCENE_TEXT_MAX_CHARS,
-  VIDEO_MODEL_LABELS,
-  sceneTextProblem,
-  tidySceneText,
-} from '../../packages/shot-prompts/src/shot-plan.ts';
+import { VIDEO_MODEL_LABELS } from '../../packages/shot-prompts/src/shot-plan.ts';
+import { SHOT_ENERGIES, SHOT_FIELD_MAX_CHARS, shotFieldProblem, tidyFieldText } from '../../packages/shot-prompts/src/shot-fields.ts';
 
 const DRAFT = '11111111-1111-4111-8111-111111111111';
 const RUN = '22222222-2222-4222-8222-222222222222';
 const PHOTO = 'https://media.example/vnext/uploads/u/photo.png';
 
+const FIELDS = (over: Record<string, string>) => ({
+  framing: '',
+  scene: '',
+  blocking: '',
+  environment_interaction: '',
+  performance: '',
+  action: '',
+  energy: 'calm',
+  camera_move: '',
+  lens_feel: '',
+  lighting: '',
+  ...over,
+});
+const REACTION_FIELDS = FIELDS({
+  framing: 'UGC-style reaction shot, medium close-up.',
+  scene: 'The person holds the product and smiles.',
+  performance: 'A small approving nod.',
+  energy: 'natural',
+  camera_move: 'Gentle handheld feel.',
+});
+const PRODUCT_FIELDS = FIELDS({ scene: 'A slow push-in on the product.' });
+
 const PLAN_BODY = {
   skill: 'make_reaction',
-  scene_text_max_chars: 1000,
+  set: null,
+  fields: [
+    { id: 'framing', label: 'Framing', max_chars: 300, required: false },
+    { id: 'scene', label: 'Scene', max_chars: 1000, required: true },
+    { id: 'performance', label: 'Performance', max_chars: 300, required: false },
+    { id: 'energy', label: 'Energy', choices: ['calm', 'natural', 'lively'], required: false },
+    { id: 'camera_move', label: 'Camera move', max_chars: 300, required: false },
+  ],
   shots: [
     {
-      shot_id: 'shot-1-reaction',
+      shot_id: 'reaction-1',
       number: 1,
       kind: 'reaction',
       shows: 'person',
@@ -53,16 +82,19 @@ const PLAN_BODY = {
       starting_frame: null,
       model: { id: 'kling-o3-pro', name: 'Kling O3 Pro' },
       fallback: { id: 'veo-3.1', name: 'Veo 3.1' },
-      scene_text: 'The person holds the product and smiles.',
-      default_scene_text: 'The person holds the product and smiles.',
+      fields: REACTION_FIELDS,
+      default_fields: REACTION_FIELDS,
       edited: false,
-      guardrails: [
-        { id: 'no_speaking', label: 'Nobody speaks', text: 'The person never speaks…', enforced_by: 'prompt' },
-        { id: 'audio_off', label: 'Model audio off', text: 'The video model’s own audio is off…', enforced_by: 'request' },
-      ],
+      guardrails: {
+        image: [],
+        video: [
+          { id: 'no_speaking', label: 'Nobody speaks', text: 'The person never speaks…', enforced_by: 'prompt' },
+          { id: 'audio_off', label: 'Model audio off', text: 'The video model’s own audio is off…', enforced_by: 'request' },
+        ],
+      },
     },
     {
-      shot_id: 'shot-2-product',
+      shot_id: 'product-1',
       number: 2,
       kind: 'product',
       shows: 'product',
@@ -70,69 +102,96 @@ const PLAN_BODY = {
       starting_frame: null,
       model: { id: 'seedance-2.0', name: 'Seedance 2.0' },
       fallback: null,
-      scene_text: 'A slow push-in on the product.',
-      default_scene_text: 'A slow push-in on the product.',
+      fields: PRODUCT_FIELDS,
+      default_fields: PRODUCT_FIELDS,
       edited: false,
-      guardrails: [{ id: 'no_people', label: 'No people', text: 'No people, no hands.', enforced_by: 'prompt' }],
+      guardrails: { image: [], video: [{ id: 'no_people', label: 'No people', text: 'No people, no hands.', enforced_by: 'prompt' }] },
     },
   ],
 };
 
 describe('parseShotPlan', () => {
-  it('reads every card: number, kind, length, model → fallback, scene, locked Guardrails', () => {
+  it('reads every card: number, kind, length, model → fallback, fields, locked Guardrails per stage', () => {
     const plan = parseShotPlan(PLAN_BODY)!;
     assert.equal(plan.shots.length, 2);
+    assert.equal(plan.sceneTextMax, 1000);
     const [r, p] = plan.shots;
-    assert.equal(r.shotId, 'shot-1-reaction');
+    assert.equal(r.shotId, 'reaction-1');
     assert.equal(kindLabel(r.shows), 'Person');
     assert.equal(lengthLabel(r.onScreenMs), '4.5 s');
     assert.equal(modelLine(r), 'Kling O3 Pro → Veo 3.1');
     assert.equal(modelLine(p), 'Seedance 2.0');
-    assert.deepEqual(r.guardrails.map((g) => [g.id, g.enforcedBy]), [['no_speaking', 'prompt'], ['audio_off', 'request']]);
+    assert.equal(r.fields.scene, 'The person holds the product and smiles.');
+    assert.equal(r.fields.energy, 'natural');
+    assert.deepEqual(r.guardrails.image, []);
+    assert.deepEqual(r.guardrails.video.map((g) => [g.id, g.enforcedBy]), [['no_speaking', 'prompt'], ['audio_off', 'request']]);
   });
 
-  it('is null for anything that is not a plan', () => {
-    for (const b of [null, {}, { shots: 'x' }, { shots: [{ shot_id: 'a' }] }]) assert.equal(parseShotPlan(b), null);
+  it('lists the structured fields read-only, labelled, in the server’s order — not the ones the card edits, nor empty ones', () => {
+    const plan = parseShotPlan(PLAN_BODY)!;
+    assert.deepEqual(fieldRows(plan, plan.shots[0]), [
+      { id: 'framing', label: 'Framing', value: 'UGC-style reaction shot, medium close-up.' },
+      { id: 'performance', label: 'Performance', value: 'A small approving nod.' },
+      { id: 'camera_move', label: 'Camera move', value: 'Gentle handheld feel.' },
+    ]);
+    assert.deepEqual(fieldRows(plan, plan.shots[1]), []);
+  });
+
+  it('is null for anything that is not a plan (#26’s scene_text shape too)', () => {
+    const old = { shots: [{ shot_id: 'shot-1-reaction', scene_text: 'x', model: { id: 'veo-3.1' } }] };
+    for (const b of [null, {}, { shots: 'x' }, { shots: [{ shot_id: 'a' }] }, old]) assert.equal(parseShotPlan(b), null);
   });
 });
 
-describe('shotEditsOf: only the shots whose scene changed', () => {
+describe('shotEditsOf: only the fields that changed', () => {
   const plan = parseShotPlan(PLAN_BODY)!;
 
   it('sends nothing for untouched, reset, re-spaced or emptied cards', () => {
     assert.deepEqual(shotEditsOf(plan, {}), {});
     assert.deepEqual(
       shotEditsOf(plan, {
-        'shot-1-reaction': '  The person  holds the product and smiles. ',
-        'shot-2-product': '   ',
+        'reaction-1': { scene: '  The person  holds the product and smiles. ', energy: 'natural' },
+        'product-1': { scene: '   ' },
       }),
       {},
     );
   });
 
-  it('sends the changed scene, tidied, by shot id', () => {
-    assert.deepEqual(shotEditsOf(plan, { 'shot-1-reaction': ' The person sniffs\n the wrist. ' }), { 'shot-1-reaction': 'The person sniffs the wrist.' });
+  it('sends the changed fields, tidied, by shot id then field', () => {
+    assert.deepEqual(shotEditsOf(plan, { 'reaction-1': { scene: ' The person sniffs\n the wrist. ', energy: 'natural' } }), {
+      'reaction-1': { scene: 'The person sniffs the wrist.' },
+    });
+    assert.deepEqual(shotEditsOf(plan, { 'reaction-1': { energy: 'lively' }, 'product-1': { scene: 'A quick whip pan to the product.' } }), {
+      'reaction-1': { energy: 'lively' },
+      'product-1': { scene: 'A quick whip pan to the product.' },
+    });
   });
 
-  it('ignores ids the plan does not have', () => {
-    assert.deepEqual(shotEditsOf(plan, { 'shot-9-x': 'anything' }), {});
+  it('ignores ids and fields the plan does not have', () => {
+    assert.deepEqual(shotEditsOf(plan, { 'shot-9-x': { scene: 'anything' }, 'reaction-1': { mood: 'happy' } }), {});
   });
 });
 
 describe('the request with edits', () => {
-  const choice = (shotEdits?: Record<string, string> | null): RenderChoice => ({ draftId: DRAFT, photoUrl: PHOTO, music: true, skill: 'make_reaction', shotEdits });
+  const choice = (shotEdits?: Record<string, Record<string, string>> | null): RenderChoice => ({
+    draftId: DRAFT,
+    photoUrl: PHOTO,
+    music: true,
+    skill: 'make_reaction',
+    shotEdits,
+  });
 
   it('carries shot_edits only when there are some; the shot plan is always asked without them', () => {
     assert.equal('shot_edits' in renderBody(choice()), false);
     assert.equal('shot_edits' in renderBody(choice({})), false);
-    assert.deepEqual(renderBody(choice({ 'shot-1-reaction': 'x' })).shot_edits, { 'shot-1-reaction': 'x' });
-    assert.equal('shot_edits' in shotPlanBody(choice({ 'shot-1-reaction': 'x' })), false);
+    assert.deepEqual(renderBody(choice({ 'reaction-1': { scene: 'x' } })).shot_edits, { 'reaction-1': { scene: 'x' } });
+    assert.equal('shot_edits' in shotPlanBody(choice({ 'reaction-1': { scene: 'x' } })), false);
   });
 
-  it('an edit is a new request: a new Idempotency-Key; the same edits (any key order) keep the key', () => {
-    const first = confirmationFor(null, choice({ a: '1', b: '2' }), 'k1');
-    assert.equal(confirmationFor(first, choice({ b: '2', a: '1' }), 'k2').key, 'k1');
-    assert.equal(confirmationFor(first, choice({ a: '1' }), 'k2').key, 'k2');
+  it('an edit is a new request: a new Idempotency-Key; the same edits (any shot or field order) keep the key', () => {
+    const first = confirmationFor(null, choice({ a: { scene: '1', energy: 'lively' }, b: { scene: '2' } }), 'k1');
+    assert.equal(confirmationFor(first, choice({ b: { scene: '2' }, a: { energy: 'lively', scene: '1' } }), 'k2').key, 'k1');
+    assert.equal(confirmationFor(first, choice({ a: { scene: '1' }, b: { scene: '2' } }), 'k2').key, 'k2');
     assert.equal(confirmationFor(first, choice(), 'k3').key, 'k3');
   });
 });
@@ -142,8 +201,8 @@ describe('what ran, on the finished Short', () => {
     video_url: 'https://m/s.mp4',
     duration_ms: 9000,
     shots: [
-      { shot_id: 'shot-1-reaction', kind: 'reaction', model: 'veo-3.1', edited: true, scene: 's', guardrails: [], prompt: 'P1' },
-      { shot_id: 'shot-2-product', kind: 'product', model: 'seedance-2.0', edited: false, scene: 's', guardrails: [], prompt: 'P2' },
+      { shot_id: 'reaction-1', kind: 'reaction', model: 'veo-3.1', edited: true, fields: {}, guardrails: { image: [], video: [] }, prompt: 'P1' },
+      { shot_id: 'hands-1', kind: 'hands', model: 'seedance-2.0', edited: false, fields: {}, guardrails: { image: [], video: [] }, frame_prompt: 'F2', prompt: 'P2' },
     ],
   };
 
@@ -154,9 +213,9 @@ describe('what ran, on the finished Short', () => {
     const done = run(initialRenderState, { type: 'resume', runId: RUN }, { type: 'run_polled', runId: RUN, run: { status: 'succeeded', final_output: FINAL } });
     assert.equal(done.render.phase, 'succeeded');
     const shots = done.render.phase === 'succeeded' ? renderedShotsOf(done.render.shots) : [];
-    assert.deepEqual(shots.map((s) => [s.shotId, s.modelName, s.edited, s.prompt]), [
-      ['shot-1-reaction', 'Veo 3.1', true, 'P1'],
-      ['shot-2-product', 'Seedance 2.0', false, 'P2'],
+    assert.deepEqual(shots.map((s) => [s.shotId, s.modelName, s.edited, s.framePrompt, s.prompt]), [
+      ['reaction-1', 'Veo 3.1', true, null, 'P1'],
+      ['hands-1', 'Seedance 2.0', false, 'F2', 'P2'],
     ]);
   });
 
@@ -171,8 +230,9 @@ describe('what ran, on the finished Short', () => {
 });
 
 describe('mirrors of @agentmedia/shot-prompts', () => {
-  it('the same length cap and model names', () => {
-    assert.equal(SCENE_TEXT_MAX, SCENE_TEXT_MAX_CHARS);
+  it('the same scene cap, energies and model names', () => {
+    assert.equal(SCENE_TEXT_MAX, SHOT_FIELD_MAX_CHARS.scene);
+    assert.deepEqual([...ENERGIES], [...SHOT_ENERGIES]);
     assert.deepEqual({ ...MODEL_NAMES }, { ...VIDEO_MODEL_LABELS });
   });
 
@@ -181,7 +241,7 @@ describe('mirrors of @agentmedia/shot-prompts', () => {
       '',
       '   ',
       ' a  b\n c ',
-      'x'.repeat(SCENE_TEXT_MAX_CHARS + 1),
+      'x'.repeat(SHOT_FIELD_MAX_CHARS.scene + 1),
       '[excited] The person smiles.',
       'The person in {person} smiles.',
       'The person in @image2 smiles.',
@@ -189,8 +249,8 @@ describe('mirrors of @agentmedia/shot-prompts', () => {
       'The person sniffs the product and smiles.',
     ];
     for (const s of samples) {
-      assert.equal(tidyScene(s), tidySceneText(s), JSON.stringify(s));
-      const server = sceneTextProblem(s);
+      assert.equal(tidyScene(s), tidyFieldText(s), JSON.stringify(s));
+      const server = shotFieldProblem('scene', s);
       const formRefusal = server !== null && server.reason !== 'guardrail';
       assert.equal(sceneTextHint(s) !== null, formRefusal, JSON.stringify(s).slice(0, 60));
     }

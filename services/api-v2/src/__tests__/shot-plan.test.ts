@@ -1,18 +1,19 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 //
-// Shot Plan review (#26) through the real routes: POST /v1/skills/{slug}/shot-plan
-// composes every shot of a Preset render (stable id, kind, on-screen length,
-// model → fallback, scene text, locked Guardrails) behind the same draft gate as
-// the quote; `shot_edits` on the quote and the run is checked against that plan
-// (422 SHOT_EDIT_INVALID / SHOT_EDIT_BREAKS_GUARDRAIL), never changes the
-// price, is part of the Idempotency-Key fingerprint, and reaches the worker as
-// validated scene text only. Only the edges are faked (database, re-hosting,
+// Shot Plan review (#26, the Shot List of #28) through the real routes: POST
+// /v1/skills/{slug}/shot-plan composes every shot of a Preset render (stable id,
+// kind, on-screen length, model → fallback, structured fields, locked
+// Guardrails per stage) behind the same draft gate as the quote; `shot_edits`
+// ({ shot_id: { field: value } }) on the quote and the run is checked against
+// that plan (422 SHOT_EDIT_INVALID / SHOT_EDIT_BREAKS_GUARDRAIL), never changes
+// the price, is part of the Idempotency-Key fingerprint, and reaches the worker
+// as validated fields only. Only the edges are faked (database, re-hosting,
 // Temporal), as in make-reaction.test.ts.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Request, Response } from 'express';
 import { planPresetShots, REACTION } from '@agentmedia/schema';
-import { NO_SPEAKING_PERSON, REACTION_PROMPTS, SCENE_TEXT_MAX_CHARS, SETTING_WORDS } from '@agentmedia/shot-prompts';
+import { NO_SPEAKING_PERSON, REACTION_PROMPTS, SHOT_FIELDS, SHOT_FIELD_MAX_CHARS, SETTING_WORDS, shotIds } from '@agentmedia/shot-prompts';
 
 type Row = Record<string, unknown>;
 const TABLES: Record<string, Row[]> = {};
@@ -199,6 +200,7 @@ afterEach(() => {
   delete process.env.ADMIN_EMAILS;
 });
 
+type GuardrailView = { id: string; label: string; text: string; enforced_by: string };
 type ShotView = {
   shot_id: string;
   number: number;
@@ -206,64 +208,79 @@ type ShotView = {
   on_screen_ms: number;
   model: { id: string; name: string };
   fallback: { id: string; name: string } | null;
-  scene_text: string;
-  default_scene_text: string;
+  set_id: string | null;
+  fields: Record<string, string>;
+  default_fields: Record<string, string>;
+  edited_fields: string[];
   edited: boolean;
-  guardrails: Array<{ id: string; label: string; text: string; enforced_by: string }>;
-  prompt_preview: string;
+  guardrails: { image: GuardrailView[]; video: GuardrailView[] };
+  prompt_preview: { image: string | null; video: string };
 };
 const shotsOf = (b: Record<string, unknown>) => b.shots as ShotView[];
 const PERFUME = 'removes the cap, sprays once on the inner wrist, brings the wrist to the nose, smiles';
 const EDIT = 'The person sniffs the inner wrist, then nods slowly at the bottle.';
 
 describe('POST /v1/skills/{slug}/shot-plan', () => {
-  it('composes every shot of a Reaction render: ids, kinds, lengths, model → fallback, scene, locked Guardrails', async () => {
+  it('composes every shot of a Reaction render: ids, kinds, lengths, model → fallback, fields, locked Guardrails', async () => {
     const id = seedDraft({ dialect: 'gulf', duration_ms: 12_000, product_interaction: PERFUME });
     const r = await call(shotPlanRoute, OWNER, body(id));
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ skill: 'make_reaction', preset: 'reaction', draft_id: id, duration_ms: 12_000, scene_text_max_chars: SCENE_TEXT_MAX_CHARS });
+    expect(r.body).toMatchObject({ skill: 'make_reaction', preset: 'reaction', draft_id: id, duration_ms: 12_000, set: null });
+    const catalog = r.body.fields as Array<{ id: string; max_chars?: number; choices?: string[]; required: boolean }>;
+    expect(catalog.map((f) => f.id)).toEqual([...SHOT_FIELDS]);
+    expect(catalog.find((f) => f.id === 'scene')).toMatchObject({ max_chars: SHOT_FIELD_MAX_CHARS.scene, required: true });
+    expect(catalog.find((f) => f.id === 'energy')).toMatchObject({ choices: ['calm', 'natural', 'lively'], required: false });
     const shots = shotsOf(r.body);
     const planned = planPresetShots(REACTION, 12_000);
     expect(shots.map((s) => [s.shot_id, s.number, s.kind, s.on_screen_ms])).toEqual(
-      planned.map((p, i) => [`shot-${i + 1}-${p.kind}`, i + 1, p.kind, p.onScreenMs]),
+      planned.map((p, i) => [shotIds(planned.map((q) => q.kind))[i], i + 1, p.kind, p.onScreenMs]),
     );
+    expect(shots.map((s) => s.shot_id)).toEqual(['reaction-1', 'product-1', 'reaction-2', 'product-2']);
     const [reaction, product] = shots;
     expect(reaction.model).toEqual({ id: 'kling-o3-pro', name: 'Kling O3 Pro' });
     expect(reaction.fallback).toEqual({ id: 'veo-3.1', name: 'Veo 3.1' });
     expect(product.model).toEqual({ id: 'seedance-2.0', name: 'Seedance 2.0' });
     expect(product.fallback).toBeNull();
-    expect(reaction.scene_text).toBe(`${REACTION_PROMPTS.scenes.reaction} How the product is used, as a real person uses it: ${PERFUME}.`);
-    expect(reaction.scene_text).toBe(reaction.default_scene_text);
+    expect(reaction.fields.scene).toBe(REACTION_PROMPTS.shots.reaction.scene);
+    expect(reaction.fields.performance).toBe(REACTION_PROMPTS.shots.reaction.performance);
+    expect(reaction.fields.action).toBe(`How the product is used, as a real person uses it: ${PERFUME}.`);
+    expect(reaction.fields.energy).toBe('natural');
+    expect(reaction.fields).toEqual(reaction.default_fields);
     expect(reaction.edited).toBe(false);
-    // A Gulf woman: hijab on by default, locked with the rest.
-    expect(reaction.guardrails.map((g) => g.id)).toEqual(['person_reference', 'product_reference', 'no_speaking', 'modesty', 'hijab', 'format', 'audio_off']);
-    expect(reaction.guardrails.find((g) => g.id === 'no_speaking')!.text).toBe(NO_SPEAKING_PERSON);
-    expect(reaction.guardrails.find((g) => g.id === 'audio_off')!.enforced_by).toBe('request');
-    expect(product.guardrails.map((g) => g.id)).toEqual(['product_reference', 'no_people', 'format', 'audio_off']);
+    expect(reaction.set_id).toBeNull();
+    // A Gulf woman: hijab on by default, locked with the rest. No starting frame: no image stage.
+    expect(reaction.guardrails.video.map((g) => g.id)).toEqual([
+      'person_reference', 'product_reference', 'no_speaking', 'simple_physics', 'modesty', 'hijab', 'format', 'audio_off',
+    ]);
+    expect(reaction.guardrails.image).toEqual([]);
+    expect(reaction.prompt_preview.image).toBeNull();
+    expect(reaction.guardrails.video.find((g) => g.id === 'no_speaking')!.text).toBe(NO_SPEAKING_PERSON);
+    expect(reaction.guardrails.video.find((g) => g.id === 'audio_off')!.enforced_by).toBe('request');
+    expect(product.guardrails.video.map((g) => g.id)).toEqual(['product_reference', 'no_people', 'format', 'audio_off']);
     // The user sees plain words, never a provider's reference syntax.
     for (const s of shots) {
-      expect(s.prompt_preview).not.toMatch(/@image|\{\{/);
-      expect(s.prompt_preview).toContain(s.scene_text);
+      expect(s.prompt_preview.video).not.toMatch(/@image|\{\{/);
+      expect(s.prompt_preview.video).toContain(s.fields.scene);
     }
-    expect(reaction.prompt_preview).toContain('the character’s photo');
+    expect(reaction.prompt_preview.video).toContain('the character’s photo');
   });
 
   it('shows the edits it is given, and refuses a bad one as the quote would', async () => {
     const id = seedDraft();
-    const ok = await call(shotPlanRoute, OWNER, body(id, { shot_edits: { 'shot-1-reaction': EDIT } }));
+    const ok = await call(shotPlanRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { scene: EDIT, energy: 'lively' } } }));
     expect(ok.status).toBe(200);
-    expect(shotsOf(ok.body)[0]).toMatchObject({ scene_text: EDIT, edited: true });
-    const bad = await call(shotPlanRoute, OWNER, body(id, { shot_edits: { 'shot-1-reaction': 'She talks to the camera.' } }));
+    expect(shotsOf(ok.body)[0]).toMatchObject({ fields: { scene: EDIT, energy: 'lively' }, edited_fields: ['scene', 'energy'], edited: true });
+    const bad = await call(shotPlanRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { performance: 'She talks to the camera.' } } }));
     expect(bad.status).toBe(422);
-    expect(bad.body).toMatchObject({ error: 'SHOT_EDIT_BREAKS_GUARDRAIL', shot_id: 'shot-1-reaction', guardrail: 'speech' });
+    expect(bad.body).toMatchObject({ error: 'SHOT_EDIT_BREAKS_GUARDRAIL', shot_id: 'reaction-1', field: 'performance', guardrail: 'speech' });
   });
 
   it('Product Hero and Hands-on: their own shots and scenes, the Hands-on setting filled', async () => {
     const hero = await call(shotPlanRoute, OWNER, { draft_id: seedDraft({ duration_ms: 12_500 }), product_image_url: PHOTO }, 'make_product_hero');
     expect(hero.status).toBe(200);
     expect(shotsOf(hero.body).map((s) => [s.shot_id, s.on_screen_ms])).toEqual([
-      ['shot-1-hero', 10_000],
-      ['shot-2-detail', 2_500],
+      ['hero-1', 10_000],
+      ['detail-1', 2_500],
     ]);
     const hands = await call(
       shotPlanRoute,
@@ -274,9 +291,14 @@ describe('POST /v1/skills/{slug}/shot-plan', () => {
     expect(hands.status).toBe(200);
     const [h, p] = shotsOf(hands.body);
     expect(h.kind).toBe('hands');
-    expect(h.scene_text).toContain(SETTING_WORDS.kitchen);
-    expect(h.guardrails.map((g) => g.id)).toContain('hands_only');
-    expect(p.scene_text).toContain(SETTING_WORDS.kitchen);
+    expect(h.fields.environment_interaction).toContain(SETTING_WORDS.kitchen);
+    expect(h.guardrails.video.map((g) => g.id)).toContain('hands_only');
+    // The starting frame's stage: its own Guardrails, never speech or audio.
+    expect(h.guardrails.image.map((g) => g.id)).toEqual(['product_reference', 'hands_only', 'modesty', 'format']);
+    expect(h.prompt_preview.image).toContain('the product photo');
+    expect(h.prompt_preview.image).not.toMatch(/speaks|audio/);
+    expect(p.fields.environment_interaction).toContain(SETTING_WORDS.kitchen);
+    expect(p.prompt_preview.image).toBeNull();
   });
 
   it('is owner-only: someone else’s draft is as if it did not exist', async () => {
@@ -312,11 +334,15 @@ describe('shot_edits on the quote and the run', () => {
     (TABLES.user_credits ??= []).push({ user_id: OWNER, monthly_credits_remaining: 10_000, purchased_balance: 0 });
     const id = seedDraft({ duration_ms: 12_000 });
     const plain = await call(quoteSkillRoute, OWNER, body(id));
-    const edited = await call(quoteSkillRoute, OWNER, body(id, { shot_edits: { 'shot-1-reaction': EDIT, 'shot-4-product': 'A slow push-in on the product on dark marble.' } }));
+    const edited = await call(
+      quoteSkillRoute,
+      OWNER,
+      body(id, { shot_edits: { 'reaction-1': { scene: EDIT, energy: 'lively' }, 'product-2': { camera_move: 'A quick whip pan that lands on the product.' } } }),
+    );
     expect(plain.status).toBe(200);
     expect(edited.status).toBe(200);
     expect(edited.body.credits).toBe(plain.body.credits);
-    const r = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'shot-1-reaction': EDIT } }));
+    const r = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { scene: EDIT } } }));
     expect(r.status).toBe(202);
     const run = TABLES.skill_runs.find((s) => s.id === r.body.skill_run_id)!;
     expect(quoteSkillCredits('make_reaction', run.input as Record<string, unknown>)).toBe(plain.body.credits);
@@ -330,9 +356,9 @@ describe('shot_edits on the quote and the run', () => {
   ])('refuses an edit that contradicts a Guardrail (%s): 422 SHOT_EDIT_BREAKS_GUARDRAIL, nothing started', async (_l, text, guardrail) => {
     const id = seedDraft();
     for (const route of [quoteSkillRoute, runSkillRoute]) {
-      const r = await call(route, OWNER, body(id, { shot_edits: { 'shot-1-reaction': text } }));
+      const r = await call(route, OWNER, body(id, { shot_edits: { 'reaction-1': { scene: text } } }));
       expect(r.status).toBe(422);
-      expect(r.body).toMatchObject({ error: 'SHOT_EDIT_BREAKS_GUARDRAIL', skill: 'make_reaction', shot_id: 'shot-1-reaction', reason: 'guardrail', guardrail });
+      expect(r.body).toMatchObject({ error: 'SHOT_EDIT_BREAKS_GUARDRAIL', skill: 'make_reaction', shot_id: 'reaction-1', field: 'scene', reason: 'guardrail', guardrail });
       expect(String(r.body.detail)).toMatch(/Guardrail/);
     }
     expect(started).toHaveLength(0);
@@ -342,12 +368,16 @@ describe('shot_edits on the quote and the run', () => {
   });
 
   it.each([
-    ['a shot the plan does not have', { 'shot-9-reaction': EDIT }, 'unknown_shot'],
-    ['a reaction edit on a product shot id', { 'shot-2-reaction': EDIT }, 'unknown_shot'],
-    ['empty scene text', { 'shot-1-reaction': '   ' }, 'empty'],
-    ['scene text over the cap', { 'shot-1-reaction': 'a '.repeat(SCENE_TEXT_MAX_CHARS) + 'b' }, 'too_long'],
-    ['a bracketed tag', { 'shot-1-reaction': '[excited] The person smiles.' }, 'brackets'],
-    ['reference syntax', { 'shot-1-reaction': 'The person in @image2 smiles at @image1.' }, 'reference_syntax'],
+    ['a shot the plan does not have', { 'reaction-9': { scene: EDIT } }, 'unknown_shot'],
+    ['#26’s positional id', { 'shot-1-reaction': { scene: EDIT } }, 'unknown_shot'],
+    ['a field a shot does not have', { 'reaction-1': { mood: 'happy' } }, 'unknown_field'],
+    ['a new model', { 'reaction-1': { model: 'veo-3.1' } }, 'unknown_field'],
+    ['a performance on a product shot', { 'product-1': { performance: 'She waves at the camera.' } }, 'field_not_on_shot'],
+    ['an energy off the list', { 'reaction-1': { energy: 'frantic' } }, 'not_choice'],
+    ['an empty scene', { 'reaction-1': { scene: '   ' } }, 'empty'],
+    ['a scene over the cap', { 'reaction-1': { scene: 'a '.repeat(SHOT_FIELD_MAX_CHARS.scene) + 'b' } }, 'too_long'],
+    ['a bracketed tag', { 'reaction-1': { camera_move: '[fast] whip pan to the product' } }, 'brackets'],
+    ['reference syntax', { 'reaction-1': { blocking: 'The person in @image2 holds @image1.' } }, 'reference_syntax'],
   ])('refuses %s: 422 SHOT_EDIT_INVALID', async (_l, shot_edits, reason) => {
     const id = seedDraft();
     for (const route of [quoteSkillRoute, runSkillRoute]) {
@@ -358,21 +388,33 @@ describe('shot_edits on the quote and the run', () => {
     expect(started).toHaveLength(0);
   });
 
-  it('hands the worker validated scene text only — the edits that change a shot, tidied — and stores them on the run', async () => {
+  it('refuses #26’s { shot_id: text } shape before any check: 400 invalid_input', async () => {
+    const id = seedDraft();
+    const r = await call(quoteSkillRoute, OWNER, body(id, { shot_edits: { 'reaction-1': EDIT } }));
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('invalid_input');
+  });
+
+  it('hands the worker validated fields only — the ones that change a shot, tidied — and stores them on the run', async () => {
     const id = seedDraft();
     const planned = await call(shotPlanRoute, OWNER, body(id));
-    const product = shotsOf(planned.body)[1];
+    const [reaction, product] = shotsOf(planned.body);
     const r = await call(
       runSkillRoute,
       OWNER,
-      body(id, { shot_edits: { 'shot-1-reaction': `  ${EDIT}\n `, [product.shot_id]: product.default_scene_text } }),
+      body(id, {
+        shot_edits: {
+          'reaction-1': { scene: `  ${EDIT}\n `, framing: reaction.default_fields.framing },
+          [product.shot_id]: { scene: product.default_fields.scene },
+        },
+      }),
     );
     expect(r.status).toBe(202);
     const wf = workflowInput();
-    expect(wf.shot_edits).toEqual({ 'shot-1-reaction': EDIT });
+    expect(wf.shot_edits).toEqual({ 'reaction-1': { scene: EDIT } });
     expect(wf).not.toHaveProperty('guardrails');
     const run = TABLES.skill_runs.find((s) => s.id === r.body.skill_run_id)!;
-    expect((run.input as Record<string, unknown>).shot_edits).toEqual({ 'shot-1-reaction': EDIT });
+    expect((run.input as Record<string, unknown>).shot_edits).toEqual({ 'reaction-1': { scene: EDIT } });
   });
 
   it('without edits the workflow input is exactly as before (no shot_edits at all)', async () => {
@@ -386,12 +428,13 @@ describe('shot_edits on the quote and the run', () => {
   it('is part of the Idempotency-Key fingerprint: the same key with other edits is refused, with the same edits replayed', async () => {
     const id = seedDraft();
     const key = 'confirm-26-a';
-    const first = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'shot-1-reaction': EDIT } }), 'make_reaction', key);
+    const first = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { scene: EDIT, energy: 'lively' } } }), 'make_reaction', key);
     expect(first.status).toBe(202);
-    const again = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'shot-1-reaction': EDIT } }), 'make_reaction', key);
+    // The same edits, fields in another order: the same body.
+    const again = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { energy: 'lively', scene: EDIT } } }), 'make_reaction', key);
     expect(again.status).toBe(202);
     expect(again.body).toMatchObject({ skill_run_id: first.body.skill_run_id, idempotent_replay: true });
-    const other = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'shot-1-reaction': 'The person smiles and nods.' } }), 'make_reaction', key);
+    const other = await call(runSkillRoute, OWNER, body(id, { shot_edits: { 'reaction-1': { scene: EDIT, energy: 'calm' } } }), 'make_reaction', key);
     expect(other.status).toBe(409);
     expect(other.body.error).toBe('idempotency_key_reused');
     const none = await call(runSkillRoute, OWNER, body(id), 'make_reaction', key);

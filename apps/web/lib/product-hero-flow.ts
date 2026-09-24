@@ -126,11 +126,11 @@ export interface RenderChoice {
   /** The Preset's own request fields (Reaction #19: character, gender, hijab; lib/reaction-flow.ts). */
   presetInputs?: Readonly<Record<string, unknown>> | null;
   /**
-   * Shot Plan review (#26): the user's scene text for the shots they changed,
-   * by shot id (lib/shot-plan-flow.ts shotEditsOf). Part of the request: an
-   * edit re-quotes and makes the next Confirm a new confirmation.
+   * Shot Plan review (#26, #28): the fields the user changed, by shot id then
+   * field (lib/shot-plan-flow.ts shotEditsOf). Part of the request: an edit
+   * re-quotes and makes the next Confirm a new confirmation.
    */
-  shotEdits?: Readonly<Record<string, string>> | null;
+  shotEdits?: Readonly<Record<string, Readonly<Record<string, string>>>> | null;
 }
 
 /** The skill a choice is quoted and run with. */
@@ -149,11 +149,13 @@ export function renderBody(choice: RenderChoice) {
     product_image_url: choice.photoUrl,
     music: choice.music,
     ...(choice.presetInputs ?? {}),
-    ...(choice.shotEdits && Object.keys(choice.shotEdits).length ? { shot_edits: { ...choice.shotEdits } } : {}),
+    ...(choice.shotEdits && Object.keys(choice.shotEdits).length
+      ? { shot_edits: Object.fromEntries(Object.entries(choice.shotEdits).map(([id, edit]) => [id, { ...edit }])) }
+      : {}),
   };
 }
 
-/** The shot-plan body (#26): the request without any edits, so every scene comes back as the Preset's. */
+/** The shot-plan body (#26): the request without any edits, so every field comes back as the Preset's. */
 export function shotPlanBody(choice: RenderChoice) {
   return renderBody({ ...choice, shotEdits: null });
 }
@@ -409,9 +411,11 @@ export function sameChoice(a: RenderChoice, b: RenderChoice): boolean {
   );
 }
 
-/** The same scene edits (#26), whatever order their keys came in. */
+/** The same shot edits (#26, #28), whatever order their shots and fields came in. */
 function sameEdits(a: RenderChoice['shotEdits'], b: RenderChoice['shotEdits']): boolean {
-  const flat = (e: RenderChoice['shotEdits']) => JSON.stringify(Object.entries(e ?? {}).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
+  const byKey = ([x]: [string, unknown], [y]: [string, unknown]) => (x < y ? -1 : x > y ? 1 : 0);
+  const flat = (e: RenderChoice['shotEdits']) =>
+    JSON.stringify(Object.entries(e ?? {}).sort(byKey).map(([id, edit]) => [id, Object.entries(edit).sort(byKey)]));
   return flat(a) === flat(b);
 }
 

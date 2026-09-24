@@ -12,8 +12,19 @@ import { STANDARD_MODESTY, type Modesty } from '@agentmedia/schema';
 import { startWorkflowHarness, fakeActivities, type WorkflowHarness } from './support/workflow-harness.js';
 import type { TestPresetRenderInput } from './support/test-preset-workflow.js';
 import { PRODUCT_HERO_RENDER, type PresetRenderDefinition } from '../presets/index.js';
-import { MODESTY_PROMPTS } from '../presets/modesty.js';
-import { FORMAT, HANDS_ONLY, NO_PEOPLE, NO_SPEAKING_PERSON, PRODUCT_REFERENCE } from '@agentmedia/shot-prompts';
+import {
+  ENERGY_WORDS,
+  FORMAT,
+  HANDS_ONLY,
+  MODESTY_PROMPTS,
+  NO_PEOPLE,
+  NO_SPEAKING_PERSON,
+  PRODUCT_REFERENCE,
+  SIMPLE_PHYSICS,
+  composeShotPlan,
+  shotPrompt,
+  REFERENCE_TOKENS,
+} from '@agentmedia/shot-prompts';
 import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
 
 const SKILL_RUN_ID = '99999999-3333-4333-8444-555555555555';
@@ -31,15 +42,15 @@ const PEOPLE: PresetRenderDefinition<'person' | 'hands' | 'product'> = {
   musicBed: [],
   modesty: STANDARD_MODESTY,
   budget: { maxCredits: 840, maxProviderUsd: 3.6 },
-  scenes: {
-    person: 'TEST a woman smiles silently at the product, mouth closed.',
-    hands: 'TEST first-person hands open the product.',
-    product: 'TEST product close-up.',
+  shots: {
+    person: { scene: 'TEST a woman smiles silently at the product, mouth closed.', energy: 'calm' },
+    hands: { scene: 'TEST first-person hands open the product.', energy: 'calm' },
+    product: { scene: 'TEST product close-up.', energy: 'calm' },
   },
 };
 
-/** A shot's Shot Prompt (#26): the product reference, its scene, then its rule Guardrails. */
-const prompt = (scene: string, ...rules: string[]) => [PRODUCT_REFERENCE, scene, ...rules, FORMAT].join(' ');
+/** A test shot's Shot Prompt (#26, #28): the product reference, its scene and energy, then its rule Guardrails. */
+const prompt = (scene: string, ...rules: string[]) => [PRODUCT_REFERENCE, scene, ENERGY_WORDS.calm, ...rules, FORMAT].join(' ');
 
 function renderInput(
   durationMs: number,
@@ -100,9 +111,9 @@ describe('the Modesty Default in every people and hands prompt', () => {
     const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => c.shot_kind)).toEqual(['person', 'hands', 'product']);
     const byKind = Object.fromEntries(clips.map((c) => [c.shot_kind, c.prompt]));
-    expect(byKind.person).toBe(prompt(PEOPLE.scenes.person, NO_SPEAKING_PERSON, MODESTY_PROMPTS.person.covered));
-    expect(byKind.hands).toBe(prompt(PEOPLE.scenes.hands, HANDS_ONLY, MODESTY_PROMPTS.hands.covered));
-    expect(byKind.product).toBe(prompt(PEOPLE.scenes.product, NO_PEOPLE));
+    expect(byKind.person).toBe(prompt(PEOPLE.shots.person.scene, NO_SPEAKING_PERSON, SIMPLE_PHYSICS, MODESTY_PROMPTS.person.covered));
+    expect(byKind.hands).toBe(prompt(PEOPLE.shots.hands.scene, HANDS_ONLY, SIMPLE_PHYSICS, MODESTY_PROMPTS.hands.covered));
+    expect(byKind.product).toBe(prompt(PEOPLE.shots.product.scene, NO_PEOPLE));
   });
 
   it('adds the hijab to the person shots only when she wears one', async () => {
@@ -110,9 +121,11 @@ describe('the Modesty Default in every people and hands prompt', () => {
     await harness.execute('renderTestPresetWorkflow', [renderInput(30_000, { arms: 'sleeved', hijab: true })], fakes);
 
     const byKind = Object.fromEntries((fakes.callsTo('presetClip') as PresetClipInput[]).map((c) => [c.shot_kind, c.prompt]));
-    expect(byKind.person).toBe(prompt(PEOPLE.scenes.person, NO_SPEAKING_PERSON, MODESTY_PROMPTS.person.sleeved, MODESTY_PROMPTS.hijab));
-    expect(byKind.hands).toBe(prompt(PEOPLE.scenes.hands, HANDS_ONLY, MODESTY_PROMPTS.hands.sleeved));
-    expect(byKind.product).toBe(prompt(PEOPLE.scenes.product, NO_PEOPLE));
+    expect(byKind.person).toBe(
+      prompt(PEOPLE.shots.person.scene, NO_SPEAKING_PERSON, SIMPLE_PHYSICS, MODESTY_PROMPTS.person.sleeved, MODESTY_PROMPTS.hijab),
+    );
+    expect(byKind.hands).toBe(prompt(PEOPLE.shots.hands.scene, HANDS_ONLY, SIMPLE_PHYSICS, MODESTY_PROMPTS.hands.sleeved));
+    expect(byKind.product).toBe(prompt(PEOPLE.shots.product.scene, NO_PEOPLE));
   });
 
   it('uses the Preset’s default arms for hands when no Modesty was resolved', async () => {
@@ -121,14 +134,14 @@ describe('the Modesty Default in every people and hands prompt', () => {
       id: 'test_hands',
       shotKinds: { hands: { shows: 'hands' }, product: { shows: 'product' } },
       shotPlan: { order: ['hands'], last: 'product' },
-      scenes: { hands: PEOPLE.scenes.hands, product: PEOPLE.scenes.product },
+      shots: { hands: PEOPLE.shots.hands, product: PEOPLE.shots.product },
     };
     const fakes = happyFakes();
     await harness.execute('renderTestPresetWorkflow', [renderInput(12_000, undefined, handsOnly)], fakes);
     const clips = fakes.callsTo('presetClip') as PresetClipInput[];
     expect(clips.map((c) => c.prompt)).toEqual([
-      prompt(PEOPLE.scenes.hands, HANDS_ONLY, MODESTY_PROMPTS.hands.covered),
-      prompt(PEOPLE.scenes.product, NO_PEOPLE),
+      prompt(PEOPLE.shots.hands.scene, HANDS_ONLY, SIMPLE_PHYSICS, MODESTY_PROMPTS.hands.covered),
+      prompt(PEOPLE.shots.product.scene, NO_PEOPLE),
     ]);
   });
 
@@ -170,10 +183,10 @@ describe('Product Hero (no people, no hands): the Modesty Default is a no-op', (
       const { preset: _p, ...heroInput } = renderInput(12_000, modesty, PRODUCT_HERO_RENDER);
       await harness.execute('makeProductHeroWorkflow', [heroInput], fakes);
       const clips = fakes.callsTo('presetClip') as PresetClipInput[];
-      expect(clips.map((c) => c.prompt)).toEqual([
-        prompt(PRODUCT_HERO_RENDER.scenes.hero, NO_PEOPLE),
-        prompt(PRODUCT_HERO_RENDER.scenes.detail, NO_PEOPLE),
-      ]);
+      // Exactly the composed default prompts (pinned word for word by shot-prompts' golden test).
+      const plan = composeShotPlan(PRODUCT_HERO_RENDER, { durationMs: 12_000, modesty: { arms: 'covered', hijab: false } });
+      expect(clips.map((c) => c.prompt)).toEqual(plan.shots.map((s) => shotPrompt(s, 'video', REFERENCE_TOKENS)));
+      for (const c of clips) expect(c.prompt).toContain(NO_PEOPLE);
       for (const c of clips) expect(c.prompt).not.toMatch(/Modest styling/);
     }
   });

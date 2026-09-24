@@ -1,20 +1,31 @@
 // Copyright 2026 agent-media contributors. Apache-2.0 license.
 
 /**
- * Guardrails (CONTEXT.md, #26) — the locked lines of a Shot Prompt.
+ * Guardrails (CONTEXT.md, #26, #28) — the locked lines of a Shot Prompt.
  *
- * A Shot Prompt is the shot's scene text (editable, ./scenes.ts) plus these
+ * A Shot Prompt is the shot's fields (editable, ./shot-fields.ts) plus these
  * lines, which the user sees but can never edit or remove: the fixed product
  * and character references, the no-speaking instruction (ADR 0001: the draft's
- * voice is the only speech), the Modesty Default (#17), no people on a product
- * shot, no text or captions, and the video model's own audio off. The worker
- * builds every final prompt from ITS OWN copy of these lines, whatever a client
- * sent (primitive-worker-vnext workflows/render-preset.ts); api-v2 shows the
- * same lines in the Shot Plan.
+ * voice is the only speech), simple hand–object physics, the Modesty Default
+ * (#17), no people on a product shot, no text or captions, and the video
+ * model's own audio off. The worker builds every final prompt from ITS OWN copy
+ * of these lines, whatever a client sent (primitive-worker-vnext
+ * workflows/render-preset.ts); api-v2 shows the same lines in the Shot Plan.
+ *
+ * Per stage (#28): a shot renders in up to two stages, each with its own list —
+ *   image — the shot's starting frame (#18), an image edit of the product
+ *           photo; only a shot whose kind declares a frame has this stage. A
+ *           still has no speech, no motion and no audio: no no-speaking,
+ *           simple-physics or audio line, and "only the hands" is said as a
+ *           still says it.
+ *   video — the clip, every shot.
+ * Both stages carry the product (and character) reference, the Modesty
+ * Default, nobody on a product shot, and no text. (#27's realism rules will be
+ * a both-stage Guardrail on person shots.)
  *
  * Where a line goes:
  *   before_scene — the references, so "the product" and "the person" in the
- *                  scene are pinned to the images before the scene is read;
+ *                  fields are pinned to the images before the fields are read;
  *   after_scene  — the rules, last, so they are the prompt's final word;
  *   request      — enforced by the request itself (generate_audio: false),
  *                  shown to the user but not prompt text.
@@ -26,12 +37,16 @@ import type { Modesty, ShotSubject } from '@agentmedia/schema';
 import { MODESTY_PROMPTS } from './modesty.js';
 import { REFERENCE_TOKENS } from './references.js';
 
+/** The two prompts a shot may render from: its starting frame's (image), and its clip's (video). */
+export type ShotStage = 'image' | 'video';
+
 export type GuardrailId =
   | 'person_reference'
   | 'product_reference'
   | 'start_frame'
   | 'no_speaking'
   | 'hands_only'
+  | 'simple_physics'
   | 'modesty'
   | 'hijab'
   | 'no_people'
@@ -47,20 +62,34 @@ export interface Guardrail {
   at: 'before_scene' | 'after_scene' | 'request';
 }
 
-/** The no-speaking instruction every shot showing a person carries, verbatim (Reaction #19). */
+/** The no-speaking instruction every clip showing a person carries, verbatim (Reaction #19). Video only. */
 export const NO_SPEAKING_PERSON =
   'The person never speaks: the mouth stays closed the whole shot, lips gently together, no talking, no mouthing words, no lip movement, no singing, no whispering. They react only with their eyes, eyebrows, a closed-mouth smile and small head movements.';
 
-/** Every hands shot: nothing but hands, and nobody speaks. */
+/** Every hands clip: nothing but hands, and nobody speaks. */
 export const HANDS_ONLY = 'Only the hands and forearms are visible: no face, nobody speaks.';
+
+/** Every hands still (a starting frame): nothing but hands. */
+export const HANDS_ONLY_FRAME = 'Only the hands and forearms are in frame: no face, no other person.';
+
+/**
+ * Every hands and person clip: the hands and the product stay physically
+ * simple, however much the camera and the body move (the owner's "alive, not
+ * AI" rule: broken hand–object physics is what gives a Short away).
+ */
+export const SIMPLE_PHYSICS =
+  'The hands and the product stay physically simple: one continuous action, the product already in the state it is used in, no parts appearing, vanishing or coming apart. The camera and the body may move freely.';
 
 /** Every product shot: the product alone. */
 export const NO_PEOPLE = 'No people, no hands.';
 
-/** Every shot: Captions are added after the render, never by the video model (#22). */
+/** Every clip: Captions are added after the render, never by the video model (#22). */
 export const FORMAT = 'No text overlays, no captions. Vertical 9:16.';
 
-/** Every shot: enforced by the request (generate_audio: false), shown as a Guardrail. */
+/** Every still: no text burned into the frame the clip animates. */
+export const FORMAT_FRAME = 'No text overlays, no captions, no watermark.';
+
+/** Every clip: enforced by the request (generate_audio: false), shown as a Guardrail. */
 export const AUDIO_OFF = 'The video model’s own audio is off: the draft’s voice is the only sound.';
 
 export const PRODUCT_REFERENCE = `The product is exactly the product in ${REFERENCE_TOKENS.start}: it keeps its exact shape, colours, logo and label text.`;
@@ -72,27 +101,45 @@ export interface ShotGuardrailContext {
   shows: ShotSubject;
   /** The shot is animated from a generated starting frame (#18), not the product photo. */
   startingFrame: boolean;
-  /** The person's reference image goes with the shot (a person shot with a character, #19). */
+  /** The person's reference image goes with the shot (shotHasPersonReference). */
   personReference: boolean;
   /** The resolved Modesty Default (#17). */
   modesty: Modesty;
 }
 
-/** The Guardrails of one shot, in prompt order. */
-export function shotGuardrails(ctx: ShotGuardrailContext): Guardrail[] {
-  const out: Guardrail[] = [];
+/** One shot's Guardrails per stage, each list in prompt order. `image` is empty for a shot with no starting frame. */
+export interface StageGuardrails {
+  image: Guardrail[];
+  video: Guardrail[];
+}
+
+/** The Guardrails of one stage of one shot, in prompt order. */
+export function stageGuardrails(stage: ShotStage, ctx: ShotGuardrailContext): Guardrail[] {
+  const video = stage === 'video';
   const person = ctx.shows === 'person';
   const hands = ctx.shows === 'hands';
+  const out: Guardrail[] = [];
+  // References, both stages: the frame is an edit of the product photo; the clip is animated from the frame, else the photo.
   if (person && ctx.personReference) {
     out.push({ id: 'person_reference', label: 'Same character', text: PERSON_REFERENCE, at: 'before_scene' });
   }
   out.push(
-    ctx.startingFrame
+    video && ctx.startingFrame
       ? { id: 'start_frame', label: 'Starts from the frame, exact product', text: START_FRAME_REFERENCE, at: 'before_scene' }
       : { id: 'product_reference', label: 'Exact product', text: PRODUCT_REFERENCE, at: 'before_scene' },
   );
-  if (person) out.push({ id: 'no_speaking', label: 'Nobody speaks', text: NO_SPEAKING_PERSON, at: 'after_scene' });
-  if (hands) out.push({ id: 'hands_only', label: 'Hands only, nobody speaks', text: HANDS_ONLY, at: 'after_scene' });
+  // The rules. Speech and motion are the video stage's; a still says "only hands" its own way.
+  if (person && video) out.push({ id: 'no_speaking', label: 'Nobody speaks', text: NO_SPEAKING_PERSON, at: 'after_scene' });
+  if (hands) {
+    out.push(
+      video
+        ? { id: 'hands_only', label: 'Hands only, nobody speaks', text: HANDS_ONLY, at: 'after_scene' }
+        : { id: 'hands_only', label: 'Hands only', text: HANDS_ONLY_FRAME, at: 'after_scene' },
+    );
+  }
+  if ((person || hands) && video) {
+    out.push({ id: 'simple_physics', label: 'One simple hand action', text: SIMPLE_PHYSICS, at: 'after_scene' });
+  }
   if (person || hands) {
     out.push({
       id: 'modesty',
@@ -103,7 +150,19 @@ export function shotGuardrails(ctx: ShotGuardrailContext): Guardrail[] {
   }
   if (person && ctx.modesty.hijab) out.push({ id: 'hijab', label: 'Hijab', text: MODESTY_PROMPTS.hijab, at: 'after_scene' });
   if (!person && !hands) out.push({ id: 'no_people', label: 'No people', text: NO_PEOPLE, at: 'after_scene' });
-  out.push({ id: 'format', label: 'No text or captions, 9:16', text: FORMAT, at: 'after_scene' });
-  out.push({ id: 'audio_off', label: 'Model audio off', text: AUDIO_OFF, at: 'request' });
+  out.push(
+    video
+      ? { id: 'format', label: 'No text or captions, 9:16', text: FORMAT, at: 'after_scene' }
+      : { id: 'format', label: 'No text or watermark', text: FORMAT_FRAME, at: 'after_scene' },
+  );
+  if (video) out.push({ id: 'audio_off', label: 'Model audio off', text: AUDIO_OFF, at: 'request' });
   return out;
+}
+
+/** Every stage's Guardrails of one shot: the image stage only when it starts from a frame. */
+export function shotGuardrails(ctx: ShotGuardrailContext): StageGuardrails {
+  return {
+    image: ctx.startingFrame ? stageGuardrails('image', ctx) : [],
+    video: stageGuardrails('video', ctx),
+  };
 }

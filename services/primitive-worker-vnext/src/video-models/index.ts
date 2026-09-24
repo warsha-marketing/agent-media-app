@@ -33,6 +33,7 @@ import { providerFailure } from '../client/provider-failure.js';
 
 /** One shot, as every model is asked for it. */
 export interface VideoShotRequest {
+  /** The Shot Prompt already in this model's reference syntax (promptFor): generate() sends it as is. */
   prompt: string;
   /** The image the shot is animated from (`@image1`): its starting frame, else the product photo. */
   startImageUrl: string;
@@ -91,7 +92,10 @@ export interface FalVideoModel extends VideoModelClient {
 
 /**
  * A prompt as fal gets it: the reference tokens in fal's words, and any
- * EvoLink `@image1` / `@image2` too (a prompt from before #26).
+ * EvoLink `@image1` / `@image2` too. Kept for workflow history: a presetClip
+ * scheduled by a render that started before #26 (fal models shipped with #25)
+ * still carries an `@image` prompt in its recorded input, and a retry of it
+ * runs this worker's activity with that input.
  */
 export function falPrompt(prompt: string): string {
   return withReferences(prompt, FAL_REFERENCES)
@@ -142,7 +146,8 @@ const seedance: VideoModelClient = {
     }
     try {
       const result = await generateSimpleSelfieEvolink({
-        prompt: withReferences(shot.prompt, EVOLINK_REFERENCES),
+        // Already in EvoLink's syntax: presetClip sent it through promptFor.
+        prompt: shot.prompt,
         // @image1 the start image; @image2 the person, on a shot that shows one.
         imageUrls: references(shot),
         duration: shot.seconds,
@@ -169,7 +174,7 @@ const seedance: VideoModelClient = {
 
 /** Kling O3 Pro on fal: 1080×1920, 24 fps, the planned length (it renders 3–15 s). */
 const klingO3Pro = falModel('kling-o3-pro', 'fal-ai/kling-video/o3/pro/reference-to-video', (shot) => ({
-  prompt: falPrompt(shot.prompt),
+  prompt: shot.prompt,
   image_urls: references(shot),
   aspect_ratio: '9:16',
   duration: String(shot.seconds),
@@ -180,7 +185,7 @@ const klingO3Pro = falModel('kling-o3-pro', 'fal-ai/kling-video/o3/pro/reference
 const veo31 = falModel('veo-3.1', 'fal-ai/veo3.1/reference-to-video', (shot) => {
   if (shot.seconds > 8) throw ApplicationFailure.nonRetryable(`veo-3.1 renders 8 s; a ${shot.seconds} s shot does not fit`, 'INVALID_INPUT');
   return {
-    prompt: falPrompt(shot.prompt),
+    prompt: shot.prompt,
     image_urls: references(shot),
     aspect_ratio: '9:16',
     resolution: '720p',

@@ -38,6 +38,12 @@ export function hasReferenceTokens(prompt: string): boolean {
   return prompt.includes(REFERENCE_TOKENS.start) || prompt.includes(REFERENCE_TOKENS.person);
 }
 
+/**
+ * The image stage's words (#28): a starting frame is an image edit of the
+ * product photo, its one reference image.
+ */
+export const IMAGE_REFERENCES: ReferenceWords = { start: 'the reference image', person: 'the second reference image' };
+
 /** The reference images in plain words, as the Shot Plan shows them to the user. */
 export function displayReferences(startingFrame: boolean): ReferenceWords {
   return { start: startingFrame ? 'the starting image' : 'the product photo', person: 'the character’s photo' };

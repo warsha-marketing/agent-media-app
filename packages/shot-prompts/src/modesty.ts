@@ -11,7 +11,7 @@
  * imports this.
  */
 
-import type { ArmCoverage, Modesty, ShotSubject } from '@agentmedia/schema';
+import type { ArmCoverage } from '@agentmedia/schema';
 
 export const MODESTY_PROMPTS = {
   hands: {
@@ -31,14 +31,3 @@ export const MODESTY_PROMPTS = {
   person: Record<ArmCoverage, string>;
   hijab: string;
 };
-
-/** The Modesty Default's words for one shot showing `subject`; empty for a product shot. */
-export function modestyPrompt(subject: ShotSubject, modesty: Modesty): string {
-  if (subject === 'hands') return MODESTY_PROMPTS.hands[modesty.arms];
-  if (subject === 'person') {
-    return modesty.hijab
-      ? `${MODESTY_PROMPTS.person[modesty.arms]} ${MODESTY_PROMPTS.hijab}`
-      : MODESTY_PROMPTS.person[modesty.arms];
-  }
-  return '';
-}

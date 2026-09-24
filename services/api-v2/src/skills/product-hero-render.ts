@@ -105,14 +105,14 @@ export const RENDER_REFUSALS = {
     status: 422,
     when: "the draft's Voice is not an Approved Voice of its Dialect now (revoked, or voiced before the catalog); re-voice",
   },
-  // Shot Plan review (#26, skills/shot-plan.ts): a refused `shot_edits` entry, with its shot_id and reason.
+  // Shot Plan review (#26, #28, skills/shot-plan.ts): a refused `shot_edits` entry, with its shot_id, field and reason.
   SHOT_EDIT_INVALID: {
     status: 422,
-    when: 'a `shot_edits` entry names a shot the Shot Plan does not have, or its scene text is empty, over the length cap, or carries bracketed tags or reference syntax (@image1, "reference image")',
+    when: 'a `shot_edits` entry names a shot the Shot Plan does not have, is not an object of fields, names a field a shot does not have (a length or model, or performance/action on a product shot), gives an energy other than calm | natural | lively, or a field that is not text, over its length cap, an empty scene, or carries bracketed tags or reference syntax (@image1, "reference image")',
   },
   SHOT_EDIT_BREAKS_GUARDRAIL: {
     status: 422,
-    when: 'a `shot_edits` scene contradicts a Guardrail: someone speaks, a hijab comes off, arms or skin are bared, someone undresses (English or Arabic)',
+    when: 'a `shot_edits` field contradicts a Guardrail: someone speaks, a hijab comes off, arms or skin are bared, someone undresses (English or Arabic)',
   },
 } as const;
 export type RenderRefusalCode = keyof typeof RENDER_REFUSALS;

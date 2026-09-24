@@ -15,8 +15,17 @@ import { startWorkflowHarness, fakeActivities, type CannedActivities, type Workf
 import type { TestPresetRenderInput } from './support/test-preset-workflow.js';
 import type { PresetRenderDefinition } from '../presets/index.js';
 import { PRODUCT_HERO_RENDER } from '../presets/index.js';
-import { MODESTY_PROMPTS } from '../presets/modesty.js';
-import { FORMAT, NO_PEOPLE, NO_SPEAKING_PERSON, PRODUCT_REFERENCE } from '@agentmedia/shot-prompts';
+import {
+  ENERGY_WORDS,
+  FORMAT,
+  MODESTY_PROMPTS,
+  NO_PEOPLE,
+  NO_SPEAKING_PERSON,
+  PRODUCT_REFERENCE,
+  SIMPLE_PHYSICS,
+  composeFields,
+  composeShotPlan,
+} from '@agentmedia/shot-prompts';
 import type { FetchDraftAudioInput, PresetClipInput, PresetMuxInput } from '../activities/preset-render.js';
 
 const SKILL_RUN_ID = '99999999-2222-4333-8444-555555555555';
@@ -36,17 +45,16 @@ const INTERCUT: PresetRenderDefinition<'person' | 'product'> = {
   musicBed: [],
   modesty: STANDARD_MODESTY,
   budget: { maxCredits: 420, maxProviderUsd: 1.8 },
-  scenes: {
-    person: 'TEST person reacting silently to the product, mouth closed.',
-    product: 'TEST product close-up.',
+  shots: {
+    person: { scene: 'TEST person reacting silently to the product, mouth closed.', energy: 'calm' },
+    product: { scene: 'TEST product close-up.', energy: 'calm' },
   },
 };
 
-/** Product Hero's Shot Prompts as the pipeline hands them to presetClip: the reference, the scene, the Guardrails (#26). */
-const HERO_PROMPTS = [
-  `${PRODUCT_REFERENCE} ${PRODUCT_HERO_RENDER.scenes.hero} ${NO_PEOPLE} ${FORMAT}`,
-  `${PRODUCT_REFERENCE} ${PRODUCT_HERO_RENDER.scenes.detail} ${NO_PEOPLE} ${FORMAT}`,
-];
+/** Product Hero's Shot Prompts as the pipeline hands them to presetClip: the reference, the fields, the Guardrails (#26, #28). */
+const HERO_PROMPTS = composeShotPlan(PRODUCT_HERO_RENDER, { durationMs: 12_000, modesty: { arms: 'covered', hijab: false } }).shots.map(
+  (s) => `${PRODUCT_REFERENCE} ${composeFields(s.fields)} ${NO_PEOPLE} ${FORMAT}`,
+);
 
 function renderInput(durationMs: number, preset: PresetRenderDefinition = INTERCUT): TestPresetRenderInput {
   return {
@@ -108,8 +116,8 @@ describe('renderPreset — a second Preset on the same pipeline (test-only drive
     // Each is its scene plus its Guardrails (#26): the person shot's no-speaking
     // and Modesty Default (#17; see modesty.workflow.test.ts), the product shot's nobody.
     expect(clips.map((c) => c.prompt)).toEqual([
-      `${PRODUCT_REFERENCE} ${INTERCUT.scenes.person} ${NO_SPEAKING_PERSON} ${MODESTY_PROMPTS.person.covered} ${FORMAT}`,
-      `${PRODUCT_REFERENCE} ${INTERCUT.scenes.product} ${NO_PEOPLE} ${FORMAT}`,
+      `${PRODUCT_REFERENCE} ${INTERCUT.shots.person.scene} ${ENERGY_WORDS.calm} ${NO_SPEAKING_PERSON} ${SIMPLE_PHYSICS} ${MODESTY_PROMPTS.person.covered} ${FORMAT}`,
+      `${PRODUCT_REFERENCE} ${INTERCUT.shots.product.scene} ${ENERGY_WORDS.calm} ${NO_PEOPLE} ${FORMAT}`,
     ]);
     for (const c of clips) expect(c.preset).toBe('test_intercut');
   });
