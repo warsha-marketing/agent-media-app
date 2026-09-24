@@ -44,6 +44,7 @@ import {
 import type { InteractionGuardrail } from './guardrail-check.js';
 import { shotGuardrails, stageGuardrails, type Guardrail, type ShotStage, type StageGuardrails } from './guardrails.js';
 import { personDescriptionLine, type PersonWords } from './person.js';
+import { inUseReferenceLine, scaleAnchorLine, type ShotProductContext } from './product-reference.js';
 import { withReferences, type ReferenceWords } from './references.js';
 import { fillPrompt, productInteractionAction, type PresetPrompts } from './scenes.js';
 import {
@@ -178,6 +179,12 @@ export interface ShotPlanContext {
   person?: PersonWords | null;
   /** Where the person's reference image came from; absent = 'rehosted' (every saved character today). */
   personImage?: PersonImageSource;
+  /**
+   * #31: the Product Profile and whether the render made an In-use Reference —
+   * the Scale Anchor and In-use Reference lines of every hands and person shot.
+   * Absent: neither line (drafts from before the Product Profile).
+   */
+  product?: ShotProductContext | null;
 }
 
 export interface ShotPlanShot {
@@ -254,6 +261,8 @@ export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, ed
   }
   const set = ctx.set ?? null;
   const personLine = personDescriptionLine(ctx.person);
+  const profile = ctx.product?.profile ?? null;
+  const inUseLine = ctx.product?.inUseReference && profile ? inUseReferenceLine(profile) : null;
   let elapsed = 0;
   const shots = planned.map((s, index): ShotPlanShot => {
     const { kind } = s;
@@ -275,6 +284,8 @@ export function composeShotPlan(preset: ShotPlanPreset, ctx: ShotPlanContext, ed
       personReference: shotHasPersonReference(preset, kind, model, ctx.personImage),
       personDescription: personLine,
       modesty: ctx.modesty,
+      inUseReference: inUseLine,
+      scaleAnchor: scaleAnchorLine(profile, shows === 'person' ? ctx.person?.gender : ctx.product?.handGender),
     });
     const video_guardrails_by_model: Partial<Record<VideoModelId, Guardrail[]>> = {};
     for (const m of shotModelChain(video)) video_guardrails_by_model[m] = stageGuardrails('video', guardrailCtx(m));

@@ -104,9 +104,10 @@ describe('the Hands-on price includes the image step', () => {
     );
   });
 
-  it('declares a budget that covers the image step at the longest speech', () => {
-    expect(HANDS_ON.budget.maxCredits).toBe(quotePresetCredits(HANDS_ON, HANDS_ON.maxSpeechMs));
-    expect(HANDS_ON.budget.maxProviderUsd).toBeCloseTo(presetProviderUsd(HANDS_ON, HANDS_ON.maxSpeechMs), 9);
+  it('declares a budget that covers the image steps (frame and In-use Reference, #31) at the longest speech', () => {
+    const opts = { inUseReference: true };
+    expect(HANDS_ON.budget.maxCredits).toBe(quotePresetCredits(HANDS_ON, HANDS_ON.maxSpeechMs, opts));
+    expect(HANDS_ON.budget.maxProviderUsd).toBeCloseTo(presetProviderUsd(HANDS_ON, HANDS_ON.maxSpeechMs, opts), 9);
   });
 });
 

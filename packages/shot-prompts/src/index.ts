@@ -19,3 +19,4 @@ export * from './guardrails.js';
 export * from './scenes.js';
 export * from './shot-fields.js';
 export * from './shot-plan.js';
+export * from './product-reference.js';

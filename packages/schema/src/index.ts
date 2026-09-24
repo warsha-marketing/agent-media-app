@@ -47,3 +47,5 @@ export * from './music-bed/index.js';
 export * from './dialects.js';
 // Product Profile (#30) — the vision understanding of one product (category, size, parts, used state, risks).
 export * from './product-profile.js';
+// In-use Reference (#31) — whether a render makes one (quote == charge), its price, the parts it removes.
+export * from './in-use-reference.js';
