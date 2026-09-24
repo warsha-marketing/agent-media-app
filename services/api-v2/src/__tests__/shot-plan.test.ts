@@ -481,7 +481,7 @@ describe('the draft’s Playbook (#32)', () => {
     const shots = shotsOf(r.body);
     expect(shots.map((s) => s.shot_id)).toEqual(['reaction-spray', 'reaction-smell', 'product-closer']);
     const line = shots[1].guardrails.video.find((g) => g.id === 'playbook')!;
-    expect(line).toMatchObject({ label: 'Fragrance & oud rules', enforced_by: 'prompt' });
+    expect(line).toMatchObject({ label: 'Fragrance & oud Playbook', enforced_by: 'prompt' });
     expect(shots[1].prompt_preview.video).toContain('never brings the bottle itself to their face or nose');
   });
 

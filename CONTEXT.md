@@ -39,7 +39,7 @@ What one stage of a shot is asked for — the image stage (its starting frame, w
 _Avoid_: prompt (alone), shot description, template
 
 **Guardrail**:
-A locked line of a Shot Prompt that the user sees but can never edit or remove, listed per stage: the fixed product and character references, the Modesty Default, nobody on a product shot and no text or captions (both stages); the realism rules on person and hands shots (both stages: a raw phone look, flat everyday light, a sharp background, matte skin with pores, no beauty filter; ADR 0003), the no-speaking instruction on person and hands shots (ADR 0001), one simple hand action with the product already in its used state, and the video model's own audio off (video only). The server adds them to every stage of every shot whatever the client sends, and refuses a shot field (or a Product Interaction) that contradicts one: speech, a hijab removed, bare arms or skin, undressing, in English or Arabic.
+A locked line of a Shot Prompt that the user sees but can never edit or remove, listed per stage: the fixed product and character references (or the character described in words, on a video model that refuses the face; ADR 0003), the Modesty Default, nobody on a product shot and no text or captions (both stages); on hands and person shots, the In-use Reference line (the product exactly as in the draft's In-use Reference, its removed parts nowhere in the scene, when the render uses one) and the Scale Anchor (both stages), and the realism Guardrail (both stages: a raw phone look, flat everyday light, a sharp background, matte skin with pores, no beauty filter; ADR 0003); the no-speaking instruction on person and hands shots (ADR 0001), one simple hand action with the product already in its used state, the product's Playbook line — its negatives, shown as "<name> Playbook" (on product shots too, when the Playbook has product negatives) — and the video model's own audio off (video only). The server adds them to every stage of every shot whatever the client sends, and refuses a shot field (or a Product Interaction) that contradicts one: speech, a hijab removed, bare arms or skin, undressing, in English or Arabic — or a motion the product's Playbook bans.
 _Avoid_: safety filter, rule, constraint, negative prompt
 
 ### Product intelligence
@@ -57,7 +57,7 @@ A physical comparison in a Shot Prompt that fixes the product's real size (e.g. 
 _Avoid_: size hint
 
 **Playbook**:
-Shared, tested shot and interaction rules for one product category, used by every product in it.
+Shared, tested shot and interaction rules for one product category, used by every product in it: chosen by the Product Profile's category, and the conservative General Playbook for a category without its own and for a draft with no Product Profile.
 _Avoid_: template, category prompt
 
 **Critic**:

@@ -399,7 +399,7 @@ describe('the Shot Plan under a Playbook', () => {
     const plan = composeShotPlan(REACT, { durationMs: 8_000, modesty: GULF, interaction: PERFUME, playbook: fragrance });
     const [spray, , closer] = plan.shots;
     const line = spray.guardrails.video.find((g) => g.id === 'playbook')!;
-    expect(line.label).toBe('Fragrance & oud rules');
+    expect(line.label).toBe('Fragrance & oud Playbook');
     expect(line.text).toContain('never brings the bottle itself to their face or nose');
     // Before the format line: no text / 9:16 stays last.
     const ids = spray.guardrails.video.map((g) => g.id);
@@ -569,7 +569,7 @@ describe('adding a Playbook needs no pipeline change', () => {
     expect(plan.playbook).toEqual({ id: 'jewellery', version: 3, pattern: 'turn-then-show' });
     expect(plan.shots.map((s) => s.shot_id)).toEqual(['reaction-turn', 'product-closer']);
     expect(plan.shots[0].fields.action).toBe('The hand turns slowly so the ring catches the light.');
-    expect(plan.shots[0].guardrails.video.find((g) => g.id === 'playbook')?.label).toBe('Jewellery rules');
+    expect(plan.shots[0].guardrails.video.find((g) => g.id === 'playbook')?.label).toBe('Jewellery Playbook');
     expect(quotePresetCredits(playbookPreset(REACTION, chosen), 12_000)).toBeLessThanOrEqual(REACTION.budget.maxCredits);
     const e = refusal(() => composeShotPlan(REACT, { durationMs: 12_000, modesty: GULF, playbook: chosen }, { 'reaction-turn': { action: 'She fastens the clasp.' } }));
     expect([e.code, e.playbook, e.rule]).toEqual(['SHOT_EDIT_BANNED_MOTION', 'jewellery', 'clasp']);

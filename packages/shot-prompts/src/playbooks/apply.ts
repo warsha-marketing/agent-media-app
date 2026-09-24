@@ -70,7 +70,7 @@ export function playbookGuardrail(resolved: ResolvedPlaybook | null | undefined,
   const { negatives, name } = resolved.playbook;
   const lines = shows === 'product' ? negatives.product ?? [] : negatives.people;
   if (lines.length === 0) return null;
-  return { id: 'playbook', label: `${name} rules`, text: lines.join(' '), at: 'after_scene' };
+  return { id: 'playbook', label: `${name} Playbook`, text: lines.join(' '), at: 'after_scene' };
 }
 
 /**
