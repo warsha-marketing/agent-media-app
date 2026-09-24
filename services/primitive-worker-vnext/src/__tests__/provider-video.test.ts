@@ -27,6 +27,8 @@ describe('isAllowedProviderVideoUrl', () => {
     'https://v3b.fal.media/files/b/x.mp4',
     'https://files.evolink.ai/videos/x.mp4',
     'https://ark-content-generation-ap-southeast-1.tos-ap-southeast-1.bytepluses.com/x.mp4',
+    // ModelArk's real result host (live, 2026-09-24).
+    'https://ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com/doubao-seedance-2-0/abc.mp4?X-Tos-Signature=x',
   ])('allows %s', (url) => expect(isAllowedProviderVideoUrl(url)).toBe(true));
 
   it.each([
@@ -36,6 +38,9 @@ describe('isAllowedProviderVideoUrl', () => {
     'https://evolink.ai/x.mp4',
     'https://api.evolink.ai/x.mp4',
     'https://bytepluses.com.evil.example/x.mp4',
+    // Any other bucket on volces.com is someone else's.
+    'https://other-bucket.tos-ap-southeast-1.volces.com/x.mp4',
+    'https://volces.com/x.mp4',
     'https://169.254.169.254/latest/meta-data',
     'https://u:p@v3.fal.media/x.mp4',
     'https://v3.fal.media:8443/x.mp4',

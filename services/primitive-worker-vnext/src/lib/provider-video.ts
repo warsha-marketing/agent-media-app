@@ -9,6 +9,9 @@
  *   fal.media, *.fal.media   fal's CDN (results come back as v3.fal.media/files/…)
  *   files.evolink.ai         EvoLink's result files
  *   *.bytepluses.com         BytePlus (ModelArk, which EvoLink's Seedance runs on)
+ *   ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com
+ *                            ModelArk's own result bucket (seen live 2026-09-24); the
+ *                            exact host only — anyone can host on volces.com
  *
  * A URL off the list, a redirect off it, or a clip over the cap is
  * PROVIDER_DOWNLOAD_REFUSED (final; the shot's fallback model may still run).
@@ -16,7 +19,7 @@
 
 import { providerFailure } from '../client/provider-failure.js';
 
-export const PROVIDER_VIDEO_HOSTS: readonly string[] = ['fal.media', '.fal.media', 'files.evolink.ai', '.bytepluses.com'];
+export const PROVIDER_VIDEO_HOSTS: readonly string[] = ['fal.media', '.fal.media', 'files.evolink.ai', '.bytepluses.com', 'ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com'];
 /** A 10 s 1080p clip is tens of MB; nothing we render is near this. */
 export const PROVIDER_VIDEO_MAX_BYTES = 200 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
